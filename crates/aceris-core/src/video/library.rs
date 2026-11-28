@@ -10601,6 +10601,106 @@ mod tests {
     }
 
     #[test]
+    fn console_collection_rail_tabs_and_game_cards_are_interactive() {
+        let mut library = library(6);
+
+        // The three-card shelf selects a cover on the first tap and activates
+        // the already selected cover on the second tap.
+        assert_eq!(
+            library.click_responsive(364, 215, 1000, 600),
+            ClickResult::Selected
+        );
+        assert_eq!(library.selected_entry().unwrap().title, "Game 1");
+        assert_eq!(
+            library.click_responsive(364, 215, 1000, 600),
+            ClickResult::Activated
+        );
+
+        // Recent and Homebrew are compact collection tabs below the title.
+        assert_eq!(
+            library.click_responsive(238, 96, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.page(), LibraryPage::Recent);
+        assert_eq!(
+            library.click_responsive(350, 96, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.page(), LibraryPage::Homebrew);
+
+        // The shared icon rail routes to Home, Favorites and Settings.
+        let favorites_y = ui::home::sidebar_item_center_y(3, 600.0) as i32;
+        assert_eq!(
+            library.click_responsive(38, favorites_y, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.page(), LibraryPage::Favorites);
+
+        let home_y = ui::home::sidebar_item_center_y(0, 600.0) as i32;
+        assert_eq!(
+            library.click_responsive(38, home_y, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.page(), LibraryPage::Home);
+
+        let settings_y = ui::home::sidebar_item_center_y(4, 600.0) as i32;
+        assert_eq!(
+            library.click_responsive(38, settings_y, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.page(), LibraryPage::Settings);
+    }
+
+    #[test]
+    fn console_collection_toolbar_clears_search_and_changes_view_and_sort() {
+        let mut library = library(4);
+        library.search_query = "Game 2".to_string();
+        library.search_focused = true;
+        assert_eq!(library.visible_entry_count(), 1);
+
+        assert_eq!(
+            library.click_responsive(632, 96, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert!(library.search_query.is_empty());
+        assert!(library.search_focused);
+        assert_eq!(library.visible_entry_count(), 4);
+
+        assert_eq!(
+            library.click_responsive(816, 96, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.view_mode, LibraryViewMode::List);
+
+        let previous_order = library.sort_descending;
+        assert_eq!(
+            library.click_responsive(925, 96, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_ne!(library.sort_descending, previous_order);
+
+        assert_eq!(
+            library.click_responsive(840, 570, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.page(), LibraryPage::Settings);
+    }
+
+    #[test]
+    fn console_collection_renders_sidebar_grid_and_selected_title_panel() {
+        let mut library = library(3);
+        let frame = library.render_responsive(1000, 600);
+        let pixel = |x: usize, y: usize| {
+            let offset = (y * 1000 + x) * 4;
+            &frame[offset..offset + 3]
+        };
+
+        assert_eq!(pixel(8, 8), &brand::rgb(brand::SURFACE_HEADER));
+        assert_eq!(pixel(90, 8), &brand::rgb(brand::SURFACE_BASE));
+        assert_eq!(pixel(670, 145), &brand::rgb(brand::SURFACE_PANEL));
+    }
+
+    #[test]
     fn landscape_home_sidebar_navigates_and_imports_from_its_own_icon() {
         let dir =
             std::env::temp_dir().join(format!("aceris-landscape-sidebar-{}", std::process::id()));
