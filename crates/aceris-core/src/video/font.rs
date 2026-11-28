@@ -456,7 +456,8 @@ pub fn draw_text_with_weight(
     let mut cursor = x;
     for ch in text.chars() {
         if ch == ' ' {
-            cursor = cursor.saturating_add((character_advance_with_weight(ch, weight) * scale) as i32);
+            cursor =
+                cursor.saturating_add((character_advance_with_weight(ch, weight) * scale) as i32);
             continue;
         }
         let rows = glyph_with_weight(ch, weight);
@@ -595,8 +596,10 @@ mod tests {
 
     #[test]
     fn semibold_weight_adds_stroke_presence_without_losing_portuguese_glyphs() {
-        assert!(measure_text_with_weight("Aceris UI", 2, TextWeight::Semibold)
-            >= measure_text("Aceris UI", 2));
+        assert!(
+            measure_text_with_weight("Aceris UI", 2, TextWeight::Semibold)
+                >= measure_text("Aceris UI", 2)
+        );
         assert_ne!(
             glyph_with_weight('á', TextWeight::Semibold),
             glyph_with_weight('á', TextWeight::Regular)
@@ -605,13 +608,32 @@ mod tests {
         let mut regular = vec![0u8; 24 * 16 * 4];
         let mut semibold = vec![0u8; 24 * 16 * 4];
         draw_text_with_weight(
-            &mut regular, 24, 16, 0, 0, 2, "A", [255, 255, 255], TextWeight::Regular,
+            &mut regular,
+            24,
+            16,
+            0,
+            0,
+            2,
+            "A",
+            [255, 255, 255],
+            TextWeight::Regular,
         );
         draw_text_with_weight(
-            &mut semibold, 24, 16, 0, 0, 2, "A", [255, 255, 255], TextWeight::Semibold,
+            &mut semibold,
+            24,
+            16,
+            0,
+            0,
+            2,
+            "A",
+            [255, 255, 255],
+            TextWeight::Semibold,
         );
         let regular_pixels = regular.chunks_exact(4).filter(|pixel| pixel[0] > 0).count();
-        let semibold_pixels = semibold.chunks_exact(4).filter(|pixel| pixel[0] > 0).count();
+        let semibold_pixels = semibold
+            .chunks_exact(4)
+            .filter(|pixel| pixel[0] > 0)
+            .count();
         assert!(semibold_pixels > regular_pixels);
     }
 
