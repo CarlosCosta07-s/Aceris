@@ -661,16 +661,15 @@ fn browse_library(
                         }
                     } else {
                         library.finish_search();
-                        activate = if library.page()
-                            == aceris_core::video::library::LibraryPage::Home
-                        {
-                            library.activate_home_selection(
-                                window::CANVAS_WIDTH as u32,
-                                window::CANVAS_HEIGHT as u32,
-                            ) == ClickResult::Activated
-                        } else {
-                            true
-                        };
+                        activate =
+                            if library.page() == aceris_core::video::library::LibraryPage::Home {
+                                library.activate_home_selection(
+                                    window::CANVAS_WIDTH as u32,
+                                    window::CANVAS_HEIGHT as u32,
+                                ) == ClickResult::Activated
+                            } else {
+                                true
+                            };
                     }
                 }
                 window::WindowEvent::Scroll(rows) => library.move_selection_responsive(
