@@ -989,21 +989,23 @@ fn choose_library_folder() -> Result<Option<PathBuf>, String> {
             return Err("O aplicativo do macOS não está disponível.".to_string());
         }
         let selector = |name: &'static [u8]| sel_registerName(name.as_ptr().cast());
-        let send_id: unsafe extern "C" fn(Id, Selector) -> Id = std::mem::transmute(objc_msgSend);
+        let message_send = objc_msgSend as *const ();
+        let send_id: unsafe extern "C" fn(Id, Selector) -> Id =
+            std::mem::transmute(message_send);
         let _application = send_id(application_class, selector(b"sharedApplication\0"));
         let class = objc_getClass(b"NSOpenPanel\0".as_ptr().cast());
         if class.is_null() {
             return Err("O painel de pastas do macOS não está disponível.".to_string());
         }
-        let send_bool: unsafe extern "C" fn(Id, Selector, i8) = std::mem::transmute(objc_msgSend);
+        let send_bool: unsafe extern "C" fn(Id, Selector, i8) = std::mem::transmute(message_send);
         let send_integer: unsafe extern "C" fn(Id, Selector) -> isize =
-            std::mem::transmute(objc_msgSend);
+            std::mem::transmute(message_send);
         let send_count: unsafe extern "C" fn(Id, Selector) -> usize =
-            std::mem::transmute(objc_msgSend);
+            std::mem::transmute(message_send);
         let send_index: unsafe extern "C" fn(Id, Selector, usize) -> Id =
-            std::mem::transmute(objc_msgSend);
+            std::mem::transmute(message_send);
         let send_pointer: unsafe extern "C" fn(Id, Selector) -> *const c_char =
-            std::mem::transmute(objc_msgSend);
+            std::mem::transmute(message_send);
 
         let panel = send_id(class, selector(b"openPanel\0"));
         if panel.is_null() {
