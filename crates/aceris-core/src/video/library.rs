@@ -5237,7 +5237,6 @@ impl Library {
                     0xB6C7D5,
                 );
             } else {
-
                 responsive_text(
                     frame,
                     width,
@@ -5391,7 +5390,6 @@ impl Library {
                     0xB6C7D5,
                 );
             }
-
         }
         if let Some(status) = &self.status {
             responsive_text(
