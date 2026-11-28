@@ -412,24 +412,6 @@ fn play_intro(
         {
             return Err("could not allocate the startup animation frame".to_string());
         }
-        if diagnostics_visible && !menu_open {
-            let unhandled = system.unhandled_requests();
-            let host_performance = performance
-                .as_ref()
-                .and_then(DesktopPerformanceMonitor::latest_report);
-            if !quick_menu::render_diagnostics_overlay(
-                &mut frame,
-                frame_width as u32,
-                frame_height as u32,
-                MenuPixelFormat::Bgrx8,
-                system.cpu().pc(),
-                unhandled.len(),
-                unhandled.first().map(String::as_str),
-                host_performance,
-            ) {
-                return Err("could not render the diagnostics overlay".to_string());
-            }
-        }
         let composition_elapsed = composition_started
             .map(|composition_started| composition_started.elapsed())
             .unwrap_or_default();
@@ -1117,6 +1099,24 @@ fn emulate(
             ) {
                 Ok(path) => println!("Screenshot salvo em {}", path.display()),
                 Err(error) => eprintln!("Não foi possível salvar o screenshot: {error}"),
+            }
+        }
+        if diagnostics_visible && !menu_open {
+            let unhandled = system.unhandled_requests();
+            let host_performance = performance
+                .as_ref()
+                .and_then(DesktopPerformanceMonitor::latest_report);
+            if !quick_menu::render_diagnostics_overlay(
+                &mut frame,
+                frame_width as u32,
+                frame_height as u32,
+                MenuPixelFormat::Bgrx8,
+                system.cpu().pc(),
+                unhandled.len(),
+                unhandled.first().map(String::as_str),
+                host_performance,
+            ) {
+                return Err("could not render the diagnostics overlay".to_string());
             }
         }
         if menu_open {
