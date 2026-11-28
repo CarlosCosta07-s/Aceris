@@ -2806,7 +2806,7 @@ impl Library {
             logical_width,
             logical_height,
             scale,
-            0x111820,
+            brand::SURFACE_BASE,
         );
         if let Some(background) = background {
             responsive_blend_background(frame, width, height, background);
@@ -2841,7 +2841,7 @@ impl Library {
             400.0,
             84.0,
             scale,
-            0x141C25,
+            brand::SURFACE_HEADER,
         );
         responsive_fill(
             frame,
@@ -2872,7 +2872,7 @@ impl Library {
             54.0,
             small_scale,
             "Emulador de Nintendo 3DS",
-            0xB6C7D5,
+            brand::TEXT_MUTED,
         );
 
         // Four compact destinations keep Home reachable on narrow phone screens.
@@ -2893,9 +2893,9 @@ impl Library {
                 44.0,
                 scale,
                 if self.page == page {
-                    0x17485D
+                    brand::SURFACE_SELECTED
                 } else {
-                    0x243543
+                    brand::SURFACE_CARD
                 },
             );
             responsive_text(
@@ -2938,14 +2938,14 @@ impl Library {
                 212.0,
                 small_scale,
                 "Sua coleção pessoal de Nintendo 3DS",
-                0xB6C7D5,
+                brand::TEXT_MUTED,
             );
             responsive_panel(
                 frame, width, height, 20.0, 250.0, 360.0, 184.0, scale, 0x1B2D3D,
             );
             if self.home_focus == HomeFocus::Actions {
                 responsive_panel(
-                    frame, width, height, 32.0, 374.0, 336.0, 50.0, scale, 0x55C8E8,
+                    frame, width, height, 32.0, 374.0, 336.0, 50.0, scale, brand::ACCENT_RED_LIGHT,
                 );
             }
             if let Some(entry) = home_entries
@@ -3003,7 +3003,7 @@ impl Library {
                     } else {
                         "PRONTO PARA INICIAR"
                     },
-                    0xB7C5D0,
+                    brand::TEXT_MUTED,
                 );
                 responsive_panel(
                     frame,
@@ -3058,7 +3058,7 @@ impl Library {
                     } else {
                         "Explore os jogos disponíveis."
                     },
-                    0xB6C7D5,
+                    brand::TEXT_MUTED,
                 );
                 responsive_panel(
                     frame,
@@ -3099,11 +3099,11 @@ impl Library {
                 } else {
                     "SUA COLEÇÃO"
                 },
-                0x55C8E8,
+                brand::ACCENT_RED_LIGHT,
             );
             if home_entries.is_empty() {
                 responsive_panel(
-                    frame, width, height, 20.0, 482.0, 360.0, 142.0, scale, 0x243543,
+                    frame, width, height, 20.0, 482.0, 360.0, 142.0, scale, brand::SURFACE_CARD,
                 );
                 responsive_text_centered(
                     frame,
@@ -3113,7 +3113,7 @@ impl Library {
                     542.0,
                     small_scale,
                     "Importe uma pasta para começar",
-                    0xB7C5D0,
+                    brand::TEXT_MUTED,
                 );
             } else {
                 let first_visible = self.home_first_visible(3);
@@ -3161,7 +3161,7 @@ impl Library {
                 400.0,
                 54.0,
                 scale,
-                0x141C25,
+                brand::SURFACE_HEADER,
             );
             let dock_actions = [
                 ("R", "REC."),
@@ -3182,10 +3182,10 @@ impl Library {
                         94.0,
                         50.0,
                         scale,
-                        0x55C8E8,
+                        brand::ACCENT_RED_LIGHT,
                     );
                 }
-                responsive_panel(frame, width, height, x, 676.0, 88.0, 44.0, scale, 0x243543);
+                responsive_panel(frame, width, height, x, 676.0, 88.0, 44.0, scale, brand::SURFACE_CARD);
                 responsive_panel(
                     frame,
                     width,
@@ -3198,7 +3198,7 @@ impl Library {
                     if slot == 2 {
                         brand::ACCENT_RED
                     } else {
-                        0x17485D
+                        brand::SURFACE_SELECTED
                     },
                 );
                 responsive_text_centered(
@@ -3232,7 +3232,7 @@ impl Library {
                         58.0,
                         2.0,
                         scale,
-                        0x55C8E8,
+                        brand::ACCENT_RED_LIGHT,
                     );
                 }
             }
@@ -3245,7 +3245,7 @@ impl Library {
                 212.0,
                 small_scale,
                 self.settings_section.description(),
-                0xB6C7D5,
+                brand::TEXT_MUTED,
             );
 
             let settings_tabs = [
@@ -3264,7 +3264,7 @@ impl Library {
                     tab_width,
                     42.0,
                     scale,
-                    if selected { 0x17485D } else { 0x243543 },
+                    if selected { brand::SURFACE_SELECTED } else { brand::SURFACE_CARD },
                 );
                 responsive_text_centered(
                     frame,
@@ -3274,7 +3274,7 @@ impl Library {
                     246.0,
                     small_scale,
                     section.label(),
-                    if selected { brand::TEXT } else { 0xB6C7D5 },
+                    if selected { brand::TEXT } else { brand::TEXT_MUTED },
                 );
             }
 
@@ -3287,7 +3287,7 @@ impl Library {
                 360.0,
                 (logical_height - 300.0).max(360.0),
                 scale,
-                0x192B3A,
+                brand::SURFACE_PANEL,
             );
 
             match self.settings_section {
@@ -3310,7 +3310,7 @@ impl Library {
                     {
                         let row_y = 332.0 + index as f32 * 32.0;
                         responsive_panel(
-                            frame, width, height, 34.0, row_y, 340.0, 28.0, scale, 0x2B4255,
+                            frame, width, height, 34.0, row_y, 340.0, 28.0, scale, brand::SURFACE_RAISED,
                         );
                         responsive_text(
                             frame,
@@ -3331,7 +3331,7 @@ impl Library {
                             36.0,
                             24.0,
                             scale,
-                            0x17485D,
+                            brand::SURFACE_SELECTED,
                         );
                         responsive_text_centered(
                             frame,
@@ -3356,7 +3356,7 @@ impl Library {
                                 "+ {} outra(s) pasta(s)",
                                 self.scan_config.directories.len() - 3
                             ),
-                            0xB6C7D5,
+                            brand::TEXT_MUTED,
                         );
                     }
                     responsive_panel(
@@ -3369,9 +3369,9 @@ impl Library {
                         44.0,
                         scale,
                         if self.scan_config.options.recursive {
-                            0x28543F
+                            brand::SUCCESS_SURFACE
                         } else {
-                            0x23394B
+                            brand::SURFACE_CARD
                         },
                     );
                     responsive_text_centered(
@@ -3400,7 +3400,7 @@ impl Library {
                         if self.scan_path_input_focused {
                             brand::ACCENT_RED
                         } else {
-                            0x23394B
+                            brand::SURFACE_CARD
                         },
                     );
                     responsive_text_centered(
@@ -3436,7 +3436,7 @@ impl Library {
                             brand::ACCENT_GREEN_LIGHT,
                         );
                         responsive_panel(
-                            frame, width, height, 38.0, 590.0, 156.0, 40.0, scale, 0x23394B,
+                            frame, width, height, 38.0, 590.0, 156.0, 40.0, scale, brand::SURFACE_CARD,
                         );
                         responsive_text_centered(
                             frame,
@@ -3453,7 +3453,7 @@ impl Library {
                             brand::TEXT,
                         );
                         responsive_panel(
-                            frame, width, height, 204.0, 590.0, 158.0, 40.0, scale, 0x23394B,
+                            frame, width, height, 204.0, 590.0, 158.0, 40.0, scale, brand::SURFACE_CARD,
                         );
                         responsive_text_centered(
                             frame,
@@ -3492,9 +3492,9 @@ impl Library {
                         64.0,
                         scale,
                         if self.performance_mode {
-                            0x28543F
+                            brand::SUCCESS_SURFACE
                         } else {
-                            0x23394B
+                            brand::SURFACE_CARD
                         },
                     );
                     responsive_text(
@@ -3519,7 +3519,7 @@ impl Library {
                         380.0,
                         small_scale,
                         "Aplicado ao iniciar o próximo jogo",
-                        0xB6C7D5,
+                        brand::TEXT_MUTED,
                     );
                     responsive_text(
                         frame,
@@ -3532,7 +3532,7 @@ impl Library {
                         brand::ACCENT_GREEN_LIGHT,
                     );
                     responsive_panel(
-                        frame, width, height, 38.0, 450.0, 324.0, 64.0, scale, 0x23394B,
+                        frame, width, height, 38.0, 450.0, 324.0, 64.0, scale, brand::SURFACE_CARD,
                     );
                     responsive_text(
                         frame,
@@ -3552,7 +3552,7 @@ impl Library {
                         488.0,
                         small_scale,
                         &format!("{}%  ·  toque para alterar", self.gamepad_deadzone_percent),
-                        0xB6C7D5,
+                        brand::TEXT_MUTED,
                     );
                 }
                 SettingsSection::Controls => {
@@ -3577,9 +3577,9 @@ impl Library {
                             56.0,
                             scale,
                             if self.virtual_controls_visible {
-                                0x28543F
+                                brand::SUCCESS_SURFACE
                             } else {
-                                0x23394B
+                                brand::SURFACE_CARD
                             },
                         );
                         responsive_text_centered(
@@ -3615,7 +3615,7 @@ impl Library {
                         ];
                         for (x, label, value) in control_options {
                             responsive_panel(
-                                frame, width, height, x, 424.0, 104.0, 64.0, scale, 0x23394B,
+                                frame, width, height, x, 424.0, 104.0, 64.0, scale, brand::SURFACE_CARD,
                             );
                             responsive_text_centered(
                                 frame,
@@ -3625,7 +3625,7 @@ impl Library {
                                 438.0,
                                 small_scale,
                                 label,
-                                0xB6C7D5,
+                                brand::TEXT_MUTED,
                             );
                             responsive_text_centered(
                                 frame,
@@ -3640,7 +3640,7 @@ impl Library {
                         }
                     } else {
                         responsive_panel(
-                            frame, width, height, 38.0, 342.0, 324.0, 100.0, scale, 0x23394B,
+                            frame, width, height, 38.0, 342.0, 324.0, 100.0, scale, brand::SURFACE_CARD,
                         );
                         responsive_text(
                             frame,
@@ -3660,7 +3660,7 @@ impl Library {
                             390.0,
                             small_scale,
                             "pelos frontends com suporte a tela sensível ao toque.",
-                            0xB6C7D5,
+                            brand::TEXT_MUTED,
                         );
                     }
                 }
@@ -3681,7 +3681,7 @@ impl Library {
                 212.0,
                 small_scale,
                 &count_text,
-                0xB6C7D5,
+                brand::TEXT_MUTED,
             );
             if matches!(
                 self.page,
@@ -3691,7 +3691,7 @@ impl Library {
                     | LibraryPage::Homebrew
             ) {
                 responsive_panel(
-                    frame, width, height, 20.0, 222.0, 360.0, 26.0, scale, 0x23394B,
+                    frame, width, height, 20.0, 222.0, 360.0, 26.0, scale, brand::SURFACE_CARD,
                 );
                 responsive_text_centered(
                     frame,
@@ -3705,7 +3705,7 @@ impl Library {
                 );
             }
             responsive_panel(
-                frame, width, height, 306.0, 170.0, 78.0, 44.0, scale, 0x23394B,
+                frame, width, height, 306.0, 170.0, 78.0, 44.0, scale, brand::SURFACE_CARD,
             );
             responsive_text(
                 frame,
@@ -3731,7 +3731,7 @@ impl Library {
                     360.0,
                     card_height,
                     scale,
-                    0x192B3A,
+                    brand::SURFACE_PANEL,
                 );
                 // Rows keep at least one text line of clearance: the "Pasta de
                 // jogos" label sits 22 units above `path_y`, and it used to
@@ -3813,7 +3813,7 @@ impl Library {
                     line_one_y,
                     small_scale,
                     first_line,
-                    0xB6C7D5,
+                    brand::TEXT_MUTED,
                 );
                 responsive_text_centered(
                     frame,
@@ -3823,7 +3823,7 @@ impl Library {
                     line_two_y,
                     small_scale,
                     second_line,
-                    0xB6C7D5,
+                    brand::TEXT_MUTED,
                 );
                 responsive_text(
                     frame,
@@ -3836,7 +3836,7 @@ impl Library {
                     brand::ACCENT_GREEN_LIGHT,
                 );
                 responsive_panel(
-                    frame, width, height, 38.0, path_y, 324.0, 48.0, scale, 0x23394B,
+                    frame, width, height, 38.0, path_y, 324.0, 48.0, scale, brand::SURFACE_CARD,
                 );
                 responsive_text(
                     frame,
@@ -3877,7 +3877,7 @@ impl Library {
                     formats_y,
                     small_scale,
                     formats,
-                    0xB6C7D5,
+                    brand::TEXT_MUTED,
                 );
             } else {
                 let row_height = 58.0;
@@ -3902,9 +3902,9 @@ impl Library {
                         50.0,
                         scale,
                         if row == self.selected {
-                            0x17485D
+                            brand::SURFACE_SELECTED
                         } else {
-                            0x192B3A
+                            brand::SURFACE_PANEL
                         },
                     );
                     responsive_panel(
@@ -3916,7 +3916,7 @@ impl Library {
                         46.0,
                         36.0,
                         scale,
-                        0x23394B,
+                        brand::SURFACE_CARD,
                     );
                     responsive_text(
                         frame,
@@ -3978,7 +3978,7 @@ impl Library {
             400.0,
             36.0,
             scale,
-            0x141C25,
+            brand::SURFACE_HEADER,
         );
         responsive_text(
             frame,
@@ -3988,7 +3988,7 @@ impl Library {
             (logical_height - 22.0).max(0.0),
             small_scale,
             "Aceris  |  Rust  |  Seus arquivos, suas regras",
-            0xB6C7D5,
+            brand::TEXT_MUTED,
         );
     }
 
@@ -4050,7 +4050,7 @@ impl Library {
     ) {
         let top = search_keyboard_top(logical_height);
         responsive_panel(
-            frame, width, height, 128.0, top, 842.0, 174.0, scale, 0x192B3A,
+            frame, width, height, 128.0, top, 842.0, 174.0, scale, brand::SURFACE_PANEL,
         );
         if self.scan_path_input_focused {
             responsive_text(
@@ -4080,7 +4080,7 @@ impl Library {
             let y = top + 8.0 + row as f32 * 40.0;
             for (column, character) in keys.chars().enumerate() {
                 let x = *start_x + column as f32 * 66.0;
-                responsive_panel(frame, width, height, x, y, 58.0, 34.0, scale, 0x2B4255);
+                responsive_panel(frame, width, height, x, y, 58.0, 34.0, scale, brand::SURFACE_RAISED);
                 let label = character.to_ascii_uppercase().to_string();
                 responsive_text_centered(
                     frame,
@@ -4109,7 +4109,7 @@ impl Library {
                 key_width,
                 34.0,
                 scale,
-                0x17485D,
+                brand::SURFACE_SELECTED,
             );
             responsive_text_centered(
                 frame,
@@ -4161,7 +4161,7 @@ impl Library {
             1000.0,
             70.0,
             scale,
-            0x141C25,
+            brand::SURFACE_HEADER,
         );
         responsive_fill(
             frame,
@@ -4172,7 +4172,7 @@ impl Library {
             1000.0,
             2.0,
             scale,
-            0x35BCE2,
+            brand::ACCENT_RED,
         );
         responsive_panel(
             frame,
@@ -4236,7 +4236,7 @@ impl Library {
                     tab_width,
                     42.0,
                     scale,
-                    if selected { 0x17485D } else { 0x243543 },
+                    if selected { brand::SURFACE_SELECTED } else { brand::SURFACE_CARD },
                 );
                 if selected {
                     responsive_fill(
@@ -4248,7 +4248,7 @@ impl Library {
                         tab_width - 8.0,
                         3.0,
                         scale,
-                        0x55C8E8,
+                        brand::ACCENT_RED_LIGHT,
                     );
                 }
                 responsive_text_centered(
@@ -4259,7 +4259,7 @@ impl Library {
                     27.0,
                     text_scale,
                     label,
-                    if selected { brand::TEXT } else { 0xB6C7D5 },
+                    if selected { brand::TEXT } else { brand::TEXT_MUTED },
                 );
             }
             responsive_panel(
@@ -4274,7 +4274,7 @@ impl Library {
                 if self.page == LibraryPage::Settings {
                     brand::ACCENT_RED
                 } else {
-                    0x23394B
+                    brand::SURFACE_CARD
                 },
             );
             responsive_text_centered(
@@ -4299,7 +4299,7 @@ impl Library {
             1000.0,
             logical_height - 70.0,
             scale,
-            0x18232D,
+            brand::SURFACE_BASE,
         );
         if self.page != LibraryPage::Home {
             responsive_panel(
@@ -4342,7 +4342,7 @@ impl Library {
                 180.0,
                 1.0,
                 scale,
-                0x3B6578,
+                brand::BORDER,
             );
         }
 
@@ -4369,12 +4369,12 @@ impl Library {
                 } else {
                     "Escolha um jogo para começar"
                 },
-                0xB7C5D0,
+                brand::TEXT_MUTED,
             );
 
             if home_entries.is_empty() {
                 responsive_panel(
-                    frame, width, height, 28.0, 142.0, 924.0, 210.0, scale, 0x243543,
+                    frame, width, height, 28.0, 142.0, 924.0, 210.0, scale, brand::SURFACE_CARD,
                 );
                 responsive_folder_icon(frame, width, height, 150.0, 250.0, scale);
                 responsive_text(
@@ -4395,7 +4395,7 @@ impl Library {
                     225.0,
                     text_scale,
                     "Importe uma pasta para adicionar seus jogos.",
-                    0xB7C5D0,
+                    brand::TEXT_MUTED,
                 );
                 responsive_panel(
                     frame,
@@ -4461,7 +4461,7 @@ impl Library {
                         truncate(&entry.title, 48),
                         extension.to_ascii_uppercase()
                     ),
-                    0x75D8F1,
+                    brand::ACCENT_RED_LIGHT,
                 );
             } else {
                 responsive_text(
@@ -4472,7 +4472,7 @@ impl Library {
                     358.0,
                     small_scale,
                     "ADICIONE UMA PASTA COM SEUS JOGOS PARA COMEÇAR",
-                    0xB7C5D0,
+                    brand::TEXT_MUTED,
                 );
             }
 
@@ -4502,12 +4502,12 @@ impl Library {
                     if selected_entry.is_some() {
                         brand::ACCENT_RED
                     } else {
-                        0x304A5E
+                        brand::SURFACE_BUTTON
                     },
                 ),
-                (260.0, favorite_label, 0x17485D),
+                (260.0, favorite_label, brand::SURFACE_SELECTED),
                 (492.0, "IMPORTAR PASTA", brand::ACCENT_RED),
-                (724.0, "ATUALIZAR", 0x304A5E),
+                (724.0, "ATUALIZAR", brand::SURFACE_BUTTON),
             ];
             for (slot, (x, label, color)) in home_actions.into_iter().enumerate() {
                 if self.home_focus == HomeFocus::Actions && self.home_action_selected == slot {
@@ -4520,7 +4520,7 @@ impl Library {
                         228.0,
                         52.0,
                         scale,
-                        0x55C8E8,
+                        brand::ACCENT_RED_LIGHT,
                     );
                 }
                 responsive_panel(frame, width, height, x, 380.0, 220.0, 44.0, scale, color);
@@ -4544,7 +4544,7 @@ impl Library {
                 924.0,
                 64.0,
                 scale,
-                0x141C25,
+                brand::SURFACE_HEADER,
             );
             let dock_items = [
                 (LibraryPage::Recent, "R", "RECENTES"),
@@ -4568,7 +4568,7 @@ impl Library {
                         182.0,
                         58.0,
                         scale,
-                        0x55C8E8,
+                        brand::ACCENT_RED_LIGHT,
                     );
                 }
                 responsive_panel(
@@ -4580,7 +4580,7 @@ impl Library {
                     176.0,
                     52.0,
                     scale,
-                    if selected { 0x17485D } else { 0x243543 },
+                    if selected { brand::SURFACE_SELECTED } else { brand::SURFACE_CARD },
                 );
                 responsive_panel(
                     frame,
@@ -4594,7 +4594,7 @@ impl Library {
                     if selected {
                         brand::ACCENT_RED
                     } else {
-                        0x304A5E
+                        brand::SURFACE_BUTTON
                     },
                 );
                 responsive_text_centered(
@@ -4615,7 +4615,7 @@ impl Library {
                     464.0,
                     small_scale,
                     label,
-                    if selected { brand::TEXT } else { 0xB7C5D0 },
+                    if selected { brand::TEXT } else { brand::TEXT_MUTED },
                 );
                 if focused {
                     responsive_fill(
@@ -4627,7 +4627,7 @@ impl Library {
                         80.0,
                         2.0,
                         scale,
-                        0x55C8E8,
+                        brand::ACCENT_RED_LIGHT,
                     );
                 }
             }
@@ -4650,7 +4650,7 @@ impl Library {
                 109.0,
                 text_scale,
                 self.settings_section.description(),
-                0xB6C7D5,
+                brand::TEXT_MUTED,
             );
 
             let settings_tabs = [
@@ -4669,7 +4669,7 @@ impl Library {
                     tab_width,
                     38.0,
                     scale,
-                    if selected { 0x17485D } else { 0x243543 },
+                    if selected { brand::SURFACE_SELECTED } else { brand::SURFACE_CARD },
                 );
                 responsive_text_centered(
                     frame,
@@ -4679,7 +4679,7 @@ impl Library {
                     151.0,
                     text_scale,
                     section.label(),
-                    if selected { brand::TEXT } else { 0xB6C7D5 },
+                    if selected { brand::TEXT } else { brand::TEXT_MUTED },
                 );
             }
             responsive_panel(
@@ -4691,7 +4691,7 @@ impl Library {
                 702.0,
                 (bottom - 184.0).max(270.0),
                 scale,
-                0x192B3A,
+                brand::SURFACE_PANEL,
             );
 
             match self.settings_section {
@@ -4714,7 +4714,7 @@ impl Library {
                     {
                         let row_y = 226.0 + index as f32 * 28.0;
                         responsive_panel(
-                            frame, width, height, 44.0, row_y, 620.0, 24.0, scale, 0x2B4255,
+                            frame, width, height, 44.0, row_y, 620.0, 24.0, scale, brand::SURFACE_RAISED,
                         );
                         responsive_text(
                             frame,
@@ -4735,7 +4735,7 @@ impl Library {
                             48.0,
                             22.0,
                             scale,
-                            0x17485D,
+                            brand::SURFACE_SELECTED,
                         );
                         responsive_text_centered(
                             frame,
@@ -4760,11 +4760,11 @@ impl Library {
                                 "+ {} outra(s) pasta(s)",
                                 self.scan_config.directories.len() - 3
                             ),
-                            0xB6C7D5,
+                            brand::TEXT_MUTED,
                         );
                     }
                     responsive_panel(
-                        frame, width, height, 44.0, 344.0, 322.0, 44.0, scale, 0x23394B,
+                        frame, width, height, 44.0, 344.0, 322.0, 44.0, scale, brand::SURFACE_CARD,
                     );
                     responsive_text_centered(
                         frame,
@@ -4786,9 +4786,9 @@ impl Library {
                         44.0,
                         scale,
                         if self.scan_config.options.recursive {
-                            0x28543F
+                            brand::SUCCESS_SURFACE
                         } else {
-                            0x23394B
+                            brand::SURFACE_CARD
                         },
                     );
                     responsive_text_centered(
@@ -4824,7 +4824,7 @@ impl Library {
                             426.0,
                             small_scale,
                             "Digite o caminho completo e pressione Enter/OK.",
-                            0xB6C7D5,
+                            brand::TEXT_MUTED,
                         );
                     } else {
                         responsive_text(
@@ -4838,7 +4838,7 @@ impl Library {
                             brand::ACCENT_GREEN_LIGHT,
                         );
                         responsive_panel(
-                            frame, width, height, 44.0, 420.0, 322.0, 42.0, scale, 0x23394B,
+                            frame, width, height, 44.0, 420.0, 322.0, 42.0, scale, brand::SURFACE_CARD,
                         );
                         responsive_text_centered(
                             frame,
@@ -4855,7 +4855,7 @@ impl Library {
                             brand::TEXT,
                         );
                         responsive_panel(
-                            frame, width, height, 382.0, 420.0, 322.0, 42.0, scale, 0x23394B,
+                            frame, width, height, 382.0, 420.0, 322.0, 42.0, scale, brand::SURFACE_CARD,
                         );
                         responsive_text_centered(
                             frame,
@@ -4894,9 +4894,9 @@ impl Library {
                         118.0,
                         scale,
                         if self.performance_mode {
-                            0x28543F
+                            brand::SUCCESS_SURFACE
                         } else {
-                            0x23394B
+                            brand::SURFACE_CARD
                         },
                     );
                     responsive_text_centered(
@@ -4921,7 +4921,7 @@ impl Library {
                         306.0,
                         small_scale,
                         "Aplicado ao iniciar o próximo jogo",
-                        0xB6C7D5,
+                        brand::TEXT_MUTED,
                     );
                     responsive_text(
                         frame,
@@ -4934,7 +4934,7 @@ impl Library {
                         brand::ACCENT_GREEN_LIGHT,
                     );
                     responsive_panel(
-                        frame, width, height, 390.0, 244.0, 306.0, 118.0, scale, 0x23394B,
+                        frame, width, height, 390.0, 244.0, 306.0, 118.0, scale, brand::SURFACE_CARD,
                     );
                     responsive_text_centered(
                         frame,
@@ -4964,7 +4964,7 @@ impl Library {
                         336.0,
                         small_scale,
                         "Toque para alterar o nível",
-                        0xB6C7D5,
+                        brand::TEXT_MUTED,
                     );
                 }
                 SettingsSection::Controls => {
@@ -4989,9 +4989,9 @@ impl Library {
                             72.0,
                             scale,
                             if self.virtual_controls_visible {
-                                0x28543F
+                                brand::SUCCESS_SURFACE
                             } else {
-                                0x23394B
+                                brand::SURFACE_CARD
                             },
                         );
                         responsive_text_centered(
@@ -5027,7 +5027,7 @@ impl Library {
                         ];
                         for (x, label, value) in control_options {
                             responsive_panel(
-                                frame, width, height, x, 338.0, 210.0, 92.0, scale, 0x23394B,
+                                frame, width, height, x, 338.0, 210.0, 92.0, scale, brand::SURFACE_CARD,
                             );
                             responsive_text_centered(
                                 frame,
@@ -5037,7 +5037,7 @@ impl Library {
                                 360.0,
                                 small_scale,
                                 label,
-                                0xB6C7D5,
+                                brand::TEXT_MUTED,
                             );
                             responsive_text_centered(
                                 frame,
@@ -5052,7 +5052,7 @@ impl Library {
                         }
                     } else {
                         responsive_panel(
-                            frame, width, height, 48.0, 244.0, 644.0, 112.0, scale, 0x23394B,
+                            frame, width, height, 48.0, 244.0, 644.0, 112.0, scale, brand::SURFACE_CARD,
                         );
                         responsive_text_centered(
                             frame,
@@ -5072,7 +5072,7 @@ impl Library {
                             312.0,
                             small_scale,
                             "As opções aparecem nos frontends com suporte a toque.",
-                            0xB6C7D5,
+                            brand::TEXT_MUTED,
                         );
                     }
                 }
@@ -5103,10 +5103,10 @@ impl Library {
                 109.0,
                 text_scale,
                 &format!("{} item(ns) disponíveis", self.visible_entry_count()),
-                0xB6C7D5,
+                brand::TEXT_MUTED,
             );
             responsive_panel(
-                frame, width, height, 28.0, 126.0, 702.0, 32.0, scale, 0x192B3A,
+                frame, width, height, 28.0, 126.0, 702.0, 32.0, scale, brand::SURFACE_PANEL,
             );
             responsive_panel(
                 frame,
@@ -5118,9 +5118,9 @@ impl Library {
                 24.0,
                 scale,
                 if self.search_focused {
-                    0x17485D
+                    brand::SURFACE_SELECTED
                 } else {
-                    0x2B4255
+                    brand::SURFACE_RAISED
                 },
             );
             let search_label = if self.search_query.is_empty() {
@@ -5139,11 +5139,11 @@ impl Library {
                 if self.search_focused {
                     brand::ACCENT_GREEN_LIGHT
                 } else {
-                    0xB6C7D5
+                    brand::TEXT_MUTED
                 },
             );
             responsive_panel(
-                frame, width, height, 368.0, 130.0, 34.0, 24.0, scale, 0x17485D,
+                frame, width, height, 368.0, 130.0, 34.0, 24.0, scale, brand::SURFACE_SELECTED,
             );
             responsive_text_centered(
                 frame,
@@ -5156,7 +5156,7 @@ impl Library {
                 brand::TEXT,
             );
             responsive_panel(
-                frame, width, height, 410.0, 130.0, 108.0, 24.0, scale, 0x23394B,
+                frame, width, height, 410.0, 130.0, 108.0, 24.0, scale, brand::SURFACE_CARD,
             );
             responsive_text_centered(
                 frame,
@@ -5180,7 +5180,7 @@ impl Library {
                 if self.view_mode == LibraryViewMode::List {
                     brand::ACCENT_RED
                 } else {
-                    0x23394B
+                    brand::SURFACE_CARD
                 },
             );
             responsive_text_centered(
@@ -5198,7 +5198,7 @@ impl Library {
                 brand::TEXT,
             );
             responsive_panel(
-                frame, width, height, 630.0, 130.0, 92.0, 24.0, scale, 0x23394B,
+                frame, width, height, 630.0, 130.0, 92.0, 24.0, scale, brand::SURFACE_CARD,
             );
             responsive_text_centered(
                 frame,
@@ -5226,7 +5226,7 @@ impl Library {
                     702.0,
                     (bottom - 190.0).max(190.0),
                     scale,
-                    0x192B3A,
+                    brand::SURFACE_PANEL,
                 );
                 responsive_folder_icon(frame, width, height, 140.0, 270.0, scale);
                 let (empty_title, first_line) = if self.page == LibraryPage::Homebrew {
@@ -5256,7 +5256,7 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_text(
-                    frame, width, height, 232.0, 270.0, text_scale, first_line, 0xB6C7D5,
+                    frame, width, height, 232.0, 270.0, text_scale, first_line, brand::TEXT_MUTED,
                 );
                 responsive_panel(
                     frame,
@@ -5304,9 +5304,9 @@ impl Library {
                         row_height,
                         scale,
                         if row == self.selected {
-                            0x17485D
+                            brand::SURFACE_SELECTED
                         } else {
-                            0x192B3A
+                            brand::SURFACE_PANEL
                         },
                     );
                     render_cover_art(
@@ -5421,7 +5421,7 @@ impl Library {
                     205.0,
                     small_scale,
                     "PASTAS ATIVAS",
-                    0xB6C7D5,
+                    brand::TEXT_MUTED,
                 );
                 responsive_text(
                     frame,
@@ -5441,7 +5441,7 @@ impl Library {
                     266.0,
                     small_scale,
                     "JOGOS E HOMEBREW",
-                    0xB6C7D5,
+                    brand::TEXT_MUTED,
                 );
                 responsive_text(
                     frame,
@@ -5461,7 +5461,7 @@ impl Library {
                     330.0,
                     small_scale,
                     "CATEGORIA ATUAL",
-                    0xB6C7D5,
+                    brand::TEXT_MUTED,
                 );
                 responsive_text(
                     frame,
@@ -5474,7 +5474,7 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_panel(
-                    frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, 0x17485D,
+                    frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, brand::SURFACE_SELECTED,
                 );
                 responsive_text_centered(
                     frame,
@@ -5494,7 +5494,7 @@ impl Library {
                     (bottom - 34.0).max(0.0),
                     small_scale,
                     "PASTAS E JOGOS LOCAIS",
-                    0xB6C7D5,
+                    brand::TEXT_MUTED,
                 );
             } else {
                 responsive_text(
@@ -5535,7 +5535,7 @@ impl Library {
                         220.0,
                         small_scale,
                         &format!(".{}", extension.to_ascii_uppercase()),
-                        0xB6C7D5,
+                        brand::TEXT_MUTED,
                     );
                 } else {
                     responsive_text(
@@ -5556,7 +5556,7 @@ impl Library {
                         220.0,
                         small_scale,
                         &format!("{} homebrew(s)", homebrew_count),
-                        0xB6C7D5,
+                        brand::TEXT_MUTED,
                     );
                 }
                 responsive_panel(
@@ -5571,7 +5571,7 @@ impl Library {
                     if selected_entry.is_some() {
                         brand::ACCENT_RED
                     } else {
-                        0x23394B
+                        brand::SURFACE_CARD
                     },
                 );
                 responsive_text_centered(
@@ -5585,7 +5585,7 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_panel(
-                    frame, width, height, 776.0, 286.0, 188.0, 42.0, scale, 0x23394B,
+                    frame, width, height, 776.0, 286.0, 188.0, 42.0, scale, brand::SURFACE_CARD,
                 );
                 responsive_text_centered(
                     frame,
@@ -5623,7 +5623,7 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_panel(
-                    frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, 0x23394B,
+                    frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, brand::SURFACE_CARD,
                 );
                 responsive_text_centered(
                     frame,
@@ -5647,7 +5647,7 @@ impl Library {
                         "{} PASTA(S) MONITORADA(S)",
                         self.scan_config.directories.len()
                     ),
-                    0xB6C7D5,
+                    brand::TEXT_MUTED,
                 );
             }
         }
@@ -5672,7 +5672,7 @@ impl Library {
             1000.0,
             18.0,
             scale,
-            0x141C25,
+            brand::SURFACE_HEADER,
         );
         responsive_text(
             frame,
@@ -5682,7 +5682,7 @@ impl Library {
             (logical_height - 13.0).max(0.0),
             small_scale,
             "ACERIS  |  RUST  |  SEUS ARQUIVOS, SUAS REGRAS",
-            0xB6C7D5,
+            brand::TEXT_MUTED,
         );
         if self.touch_keyboard_open {
             self.render_touch_keyboard(frame, width, height, scale, logical_height, text_scale);
@@ -6021,7 +6021,7 @@ fn render_home_game_tile(
             card_width + 6.0,
             card_height + 6.0,
             scale,
-            0x55C8E8,
+            brand::ACCENT_RED_LIGHT,
         );
     }
     responsive_panel(
@@ -6033,7 +6033,7 @@ fn render_home_game_tile(
         card_width,
         card_height,
         scale,
-        if selected { 0x173B4A } else { 0x243543 },
+        if selected { 0x173B4A } else { brand::SURFACE_CARD },
     );
     responsive_fill(
         frame,
@@ -6044,7 +6044,7 @@ fn render_home_game_tile(
         card_width - 6.0,
         if selected { 3.0 } else { 1.0 },
         scale,
-        if selected { 0x55C8E8 } else { 0x344754 },
+        if selected { brand::ACCENT_RED_LIGHT } else { 0x344754 },
     );
     let cover_height = (card_height - 52.0).max(70.0);
     render_cover_art(
@@ -6072,7 +6072,7 @@ fn render_home_game_tile(
             badge_width,
             18.0,
             scale,
-            0x17485D,
+            brand::SURFACE_SELECTED,
         );
         responsive_text_centered(
             frame,
@@ -6156,7 +6156,7 @@ fn render_home_game_tile(
         y + card_height - 17.0,
         small_scale,
         &format!(".{}", extension.to_ascii_uppercase()),
-        if selected { 0x75D8F1 } else { 0x9EAFBA },
+        if selected { brand::ACCENT_RED_LIGHT } else { 0x9EAFBA },
     );
 }
 
@@ -6186,7 +6186,7 @@ fn render_library_tile(
         card_width,
         card_height,
         scale,
-        if selected { 0x17485D } else { 0x192B3A },
+        if selected { brand::SURFACE_SELECTED } else { brand::SURFACE_PANEL },
     );
     if let Some(icon) = smdh_icon {
         draw_smdh_icon(
@@ -6256,7 +6256,7 @@ fn render_library_tile(
             20.0,
             20.0,
             scale,
-            0x17485D,
+            brand::SURFACE_SELECTED,
         );
         responsive_text_centered(
             frame,
@@ -6720,7 +6720,7 @@ fn responsive_folder_icon(frame: &mut [u8], width: u32, height: u32, x: f32, y: 
         62.0,
         38.0,
         scale,
-        0x23394B,
+        brand::SURFACE_CARD,
     );
 }
 
@@ -6879,7 +6879,7 @@ mod tests {
             40.0,
             24.0,
             1.0,
-            0x192B3A,
+            brand::SURFACE_PANEL,
         );
 
         let pixel = |x: usize, y: usize| {
