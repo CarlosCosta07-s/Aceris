@@ -948,6 +948,7 @@ impl App {
             7 => self.toggle_virtual_control_edit_scope(),
             8 => self.begin_control_editor(),
             9 => self.capture_screenshot(),
+            _ => {}
         }
     }
 
@@ -959,7 +960,13 @@ impl App {
             };
             let layout = self.game_layout();
             let mut rgba = Vec::new();
-            if !compose_game_into(system.display(), &layout, self.width, self.height, &mut rgba) {
+            if !compose_game_into(
+                system.display(),
+                &layout,
+                self.width,
+                self.height,
+                &mut rgba,
+            ) {
                 self.library
                     .set_status("NÃO FOI POSSÍVEL COMPOR A CAPTURA DE TELA.");
                 return;
@@ -1175,10 +1182,8 @@ mod screenshot_tests {
 
     #[test]
     fn screenshot_writer_creates_a_valid_png_in_the_requested_directory() {
-        let directory = std::env::temp_dir().join(format!(
-            "aceris-app-screenshot-{}",
-            std::process::id()
-        ));
+        let directory =
+            std::env::temp_dir().join(format!("aceris-app-screenshot-{}", std::process::id()));
         let rgba = [255, 0, 0, 255];
         let path = write_screenshot_rgba8(&directory, 1, 1, &rgba).unwrap();
         let encoded = fs::read(&path).unwrap();
