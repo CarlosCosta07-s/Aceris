@@ -4474,32 +4474,17 @@ impl Library {
             ];
             for (x, tab_width, page, label) in tabs {
                 let selected = self.page == page;
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    x,
-                    12.0,
-                    tab_width,
-                    42.0,
-                    scale,
-                    if selected {
-                        brand::SURFACE_SELECTED
-                    } else {
-                        brand::SURFACE_CARD
-                    },
-                );
                 if selected {
                     responsive_fill(
                         frame,
                         width as usize,
                         height as usize,
-                        x + 4.0,
-                        52.0,
-                        tab_width - 8.0,
-                        3.0,
+                        x + tab_width * 0.2,
+                        53.0,
+                        tab_width * 0.6,
+                        2.0,
                         scale,
-                        brand::ACCENT_RED_LIGHT,
+                        brand::ACCENT_RED,
                     );
                 }
                 responsive_text_centered(
@@ -4517,21 +4502,20 @@ impl Library {
                     },
                 );
             }
-            responsive_panel(
-                frame,
-                width,
-                height,
-                875.0,
-                12.0,
-                107.0,
-                42.0,
-                scale,
-                if self.page == LibraryPage::Settings {
-                    brand::ACCENT_RED
-                } else {
-                    brand::SURFACE_CARD
-                },
-            );
+            let settings_selected = self.page == LibraryPage::Settings;
+            if settings_selected {
+                responsive_fill(
+                    frame,
+                    width as usize,
+                    height as usize,
+                    888.0,
+                    53.0,
+                    80.0,
+                    2.0,
+                    scale,
+                    brand::ACCENT_RED,
+                );
+            }
             responsive_text_centered(
                 frame,
                 width,
@@ -4540,7 +4524,11 @@ impl Library {
                 27.0,
                 text_scale,
                 "AJUSTES",
-                brand::TEXT,
+                if settings_selected {
+                    brand::TEXT
+                } else {
+                    brand::TEXT_MUTED
+                },
             );
         }
 
