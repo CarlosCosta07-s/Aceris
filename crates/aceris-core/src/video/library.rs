@@ -3046,7 +3046,7 @@ impl Library {
                 22.0,
                 212.0,
                 small_scale,
-                "Escolha uma categoria para organizar suas preferências",
+                self.settings_section.description(),
                 0xB6C7D5,
             );
 
@@ -4253,7 +4253,7 @@ impl Library {
                 30.0,
                 109.0,
                 text_scale,
-                "Todas as opções organizadas por categoria",
+                self.settings_section.description(),
                 0xB6C7D5,
             );
 
@@ -4904,7 +4904,7 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_text(
-                    frame, width, height, 780.0, 266.0, small_scale, "JOGOS E HOMEbrew".to_uppercase().as_str(),
+                    frame, width, height, 780.0, 266.0, small_scale, "JOGOS E HOMEBREW",
                     0xB6C7D5,
                 );
                 responsive_text(
@@ -7179,7 +7179,7 @@ mod tests {
 
         // Desktop / landscape Library category groups view and sort side by side.
         library.click_responsive(136, 440, 1000, 600);
-        library.click_responsive(365, 440, 1000, 600);
+        library.click_responsive(543, 440, 1000, 600);
         assert!(library.is_list_view());
         assert!(library.sort_descending);
 
