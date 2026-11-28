@@ -1901,7 +1901,7 @@ mod screenshot_tests {
         assert!(app.set_gamepad_axes(0.0, 0.0));
         app.library.home_focus = HomeFocus::Games;
         app.library.home_action_selected = 0;
-        assert!(app.set_gamepad_axes(0.0, -0.8));
+        assert!(app.set_gamepad_axes(0.0, 0.8));
         assert_eq!(app.library.home_focus, HomeFocus::Actions);
         let _ = fs::remove_dir_all(directory);
     }
