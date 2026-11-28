@@ -586,7 +586,10 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
 
         android_log(ANDROID_LOG_INFO, "NativeActivity callbacks registered");
         let games_dir = games_directory(&*activity);
-        android_log(ANDROID_LOG_INFO, &format!("Games directory: {}", games_dir.display()));
+        android_log(
+            ANDROID_LOG_INFO,
+            &format!("Games directory: {}", games_dir.display()),
+        );
         let host = std::sync::Arc::new(Host {
             shared: Mutex::new(Shared::default()),
             thread: Mutex::new(None),
@@ -880,7 +883,10 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
     lock(&host.shared).looper = Raw::new(looper);
     android_log(ANDROID_LOG_INFO, "Android looper ready; constructing App");
     let mut app = App::new(&games_dir);
-    android_log(ANDROID_LOG_INFO, "App::new completed; waiting for native surface");
+    android_log(
+        ANDROID_LOG_INFO,
+        "App::new completed; waiting for native surface",
+    );
     let settings_directory = games_dir.join(".aceris");
     let gpu_pipeline_cache_directory = settings_directory.join("gpu_pipeline_cache");
     let gpu_backend_recovery_file = settings_directory.join("android_gpu_backend_recovery_v1.txt");
@@ -1392,7 +1398,10 @@ fn render(
             reserved: [0; 6],
         };
         if ANativeWindow_lock(window.get(), &mut buffer, ptr::null_mut()) != 0 {
-            android_log(ANDROID_LOG_ERROR, "ANativeWindow_lock failed for CPU presentation");
+            android_log(
+                ANDROID_LOG_ERROR,
+                "ANativeWindow_lock failed for CPU presentation",
+            );
             record_performance_sample(
                 performance_monitor,
                 app,
