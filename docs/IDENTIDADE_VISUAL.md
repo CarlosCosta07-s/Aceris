@@ -78,11 +78,13 @@ assets originais do projeto.
 
 ## Launcher horizontal, abertura e áudio externo
 
-O aplicativo Android opera exclusivamente em paisagem (`landscape`), fixada no manifesto. A renderização retrato continua disponível apenas para outros contextos de janela e não é uma opção do frontend Android. A home partilha o renderer Rust com o desktop e apresenta Início, Jogos, Favoritos, Recentes, Homebrew e Configurações.
+O aplicativo Android opera exclusivamente em paisagem (`landscape`), fixada no manifesto. A renderização retrato continua disponível apenas para outros contextos de janela e não é uma opção do frontend Android. A Home e as telas de coleção partilham o renderer Rust com o desktop.
 
-- A barra lateral permanece fixa; a home destaca Continuar jogando, contagens de Favoritos/Homebrew e o indicador de mídia externa.
-- Jogos, Favoritos, Recentes e Homebrew usam cartões em grade de três colunas, com ordenação A–Z/Z–A e ações por toque/clique. Favoritos e Recentes persistem na pasta interna `.aceris` da pasta de jogos.
-- Android: toque único, D-pad, arraste/scroll. Desktop: teclado, mouse e navegação horizontal/vertical.
+- A Home usa a composição aprovada a partir do mockup conceitual fornecido pelo usuário: barra lateral estreita, cinco destinos com ícones originais Aceris (Início, Jogos, Importar, Favoritos e Ajustes), Energia no rodapé, jogo selecionado centralizado, fileira horizontal de capas verticais e comandos de controle na parte inferior.
+- A seleção usa destaque vermelho Aceris e estados de foco próprios para controle, teclado, mouse e toque. O fundo das telas de console usa um degradê sutil derivado da paleta original.
+- Jogos, Favoritos, Recentes e Homebrew compartilham uma tela de coleção com grade de três colunas, busca, filtro de formato, ordenação A–Z/Z–A e painel de detalhes. A visualização em lista continua disponível.
+- Quando há metadados SMDH, o ícone do jogo é exibido sem distorção; quando não há, a biblioteca usa arte geométrica original baseada no título, sem baixar ou incorporar capas de terceiros. Isso é um estado visual de substituição, não uma capa oficial do jogo.
+- Android: toque único, D-pad, arraste/scroll. Desktop: teclado, mouse e navegação horizontal/vertical. Favoritos e Recentes persistem na pasta interna `.aceris` da pasta de jogos.
 - A abertura original foi reamostrada de 150 quadros (2,5 s) para 84 quadros (1,4 s). Android limita a resolução interna a cerca de 600×360; RGBA e BGRX são reutilizados entre quadros.
 - A biblioteca mostra o estado de mídia externa, mas não informa faixa/artista: no Android API 28+ a camada Rust consulta sessões ativas anônimas e somente a categoria de uso de áudio. Com mídia `USAGE_MEDIA`, o AAudio marcado como `USAGE_GAME` é silenciado até a sessão externa terminar. Abaixo da API 28, essa detecção fica desativada.
 - Nenhuma permissão de notificações é solicitada. Título, artista, capa e nome de Spotify/YouTube Music exigem autorização de Notification Listener/MediaSession e uma integração Android adicional; não fazem parte desta versão Rust-only.
