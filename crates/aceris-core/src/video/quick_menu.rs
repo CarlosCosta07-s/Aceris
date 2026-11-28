@@ -1198,6 +1198,42 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_overlay_renders_for_both_host_pixel_formats() {
+        for format in [PixelFormat::Rgba8, PixelFormat::Bgrx8] {
+            let (width, height) = (400u32, 800u32);
+            let mut frame = vec![0u8; width as usize * height as usize * 4];
+            let original = frame.clone();
+            assert!(render_diagnostics_overlay(
+                &mut frame,
+                width,
+                height,
+                format,
+                0x0010_2030,
+                2,
+                Some("srv:GetServiceHandle(dsp::DSP)"),
+                Some("presented_fps=58.5, frame_ms_p95=19.3"),
+            ));
+            assert_ne!(frame, original);
+            let outside = ((height as usize - 4) * width as usize + width as usize - 4) * 4;
+            assert_eq!(&frame[outside..outside + 3], &original[outside..outside + 3]);
+        }
+
+        let mut invalid = vec![7u8; 8];
+        let before = invalid.clone();
+        assert!(!render_diagnostics_overlay(
+            &mut invalid,
+            400,
+            800,
+            PixelFormat::Rgba8,
+            0,
+            0,
+            None,
+            None,
+        ));
+        assert_eq!(invalid, before);
+    }
+
+    #[test]
     fn invalid_dimensions_or_buffer_lengths_leave_the_frame_unchanged() {
         let mut frame = vec![17u8; 16];
         let before = frame.clone();
@@ -1248,6 +1284,8 @@ mod tests {
                 "RESTAURAR CONTROLES",
                 "ESCOPO DOS CONTROLES",
                 "EDITAR CONTROLES",
+                "CAPTURAR TELA",
+                "DIAGNÓSTICO",
             ];
             assert_eq!(
                 menu_row_text_scale(
