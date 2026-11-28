@@ -8,8 +8,6 @@ use gilrs::{Axis, Button, GamepadId, Gilrs};
 
 use crate::window::KeyboardInput;
 
-const STICK_DEADZONE: f32 = 0.16;
-
 pub(crate) struct GamepadManager {
     gilrs: Option<Gilrs>,
     active_gamepad: Option<GamepadId>,
@@ -32,8 +30,13 @@ impl GamepadManager {
 
     /// Combines the keyboard and the active physical controller without one
     /// device releasing a button that is still held by the other.
-    pub(crate) fn apply(&mut self, keyboard: &KeyboardInput, input: &mut InputState) {
-        let (gamepad_buttons, gamepad_axes) = self.read_active_gamepad();
+    pub(crate) fn apply(
+        &mut self,
+        keyboard: &KeyboardInput,
+        input: &mut InputState,
+        deadzone_percent: u8,
+    ) {
+        let (gamepad_buttons, gamepad_axes) = self.read_active_gamepad(deadzone_percent);
         input.set_buttons(keyboard.button_mask() | gamepad_buttons);
 
         let keyboard_axes = keyboard.circle_pad();
@@ -50,7 +53,7 @@ impl GamepadManager {
         input.set_circle_pad(i32::from(x), i32::from(y));
     }
 
-    fn read_active_gamepad(&mut self) -> (u32, (i16, i16)) {
+    fn read_active_gamepad(&mut self, deadzone_percent: u8) -> (u32, (i16, i16)) {
         let Some(gilrs) = self.gilrs.as_mut() else {
             self.active_gamepad = None;
             return (0, (0, 0));
@@ -76,8 +79,8 @@ impl GamepadManager {
         let gamepad = gilrs.gamepad(id);
         let buttons = button_mask(&gamepad);
         let axes = (
-            axis_to_circle_pad(gamepad.value(Axis::LeftStickX)),
-            axis_to_circle_pad(-gamepad.value(Axis::LeftStickY)),
+            axis_to_circle_pad(gamepad.value(Axis::LeftStickX), deadzone_percent),
+            axis_to_circle_pad(-gamepad.value(Axis::LeftStickY), deadzone_percent),
         );
         (buttons, axes)
     }
@@ -126,16 +129,17 @@ fn button_mask(gamepad: &gilrs::Gamepad<'_>) -> u32 {
     })
 }
 
-fn axis_to_circle_pad(value: f32) -> i16 {
+fn axis_to_circle_pad(value: f32, deadzone_percent: u8) -> i16 {
     if !value.is_finite() {
         return 0;
     }
+    let deadzone = f32::from(deadzone_percent.min(99)) / 100.0;
     let clamped = value.clamp(-1.0, 1.0);
     let magnitude = clamped.abs();
-    if magnitude <= STICK_DEADZONE {
+    if magnitude <= deadzone {
         return 0;
     }
-    let normalized = (magnitude - STICK_DEADZONE) / (1.0 - STICK_DEADZONE);
+    let normalized = (magnitude - deadzone) / (1.0 - deadzone);
     let sign = if clamped.is_sign_negative() {
         -1.0
     } else {
@@ -163,12 +167,14 @@ mod tests {
 
     #[test]
     fn gamepad_stick_uses_deadzone_and_clamps_to_circle_pad_range() {
-        assert_eq!(axis_to_circle_pad(0.0), 0);
-        assert_eq!(axis_to_circle_pad(0.15), 0);
-        assert_eq!(axis_to_circle_pad(-0.16), 0);
-        assert_eq!(axis_to_circle_pad(1.0), CIRCLE_PAD_LIMIT);
-        assert_eq!(axis_to_circle_pad(-1.0), -CIRCLE_PAD_LIMIT);
-        assert_eq!(axis_to_circle_pad(f32::NAN), 0);
-        assert_eq!(axis_to_circle_pad(f32::INFINITY), 0);
+        assert_eq!(axis_to_circle_pad(0.0, 16), 0);
+        assert_eq!(axis_to_circle_pad(0.15, 16), 0);
+        assert_eq!(axis_to_circle_pad(-0.16, 16), 0);
+        assert_eq!(axis_to_circle_pad(1.0, 16), CIRCLE_PAD_LIMIT);
+        assert_eq!(axis_to_circle_pad(-1.0, 16), -CIRCLE_PAD_LIMIT);
+        assert_eq!(axis_to_circle_pad(f32::NAN, 16), 0);
+        assert_eq!(axis_to_circle_pad(f32::INFINITY, 16), 0);
+        assert_eq!(axis_to_circle_pad(0.07, 8), 0);
+        assert!(axis_to_circle_pad(0.10, 8) > 0);
     }
 }
