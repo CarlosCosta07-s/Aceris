@@ -37,7 +37,7 @@ Use a consistent spacing scale, predictable alignment, restrained borders, subtl
 
 ### Desktop
 
-- A fixed, narrow left rail matching the supplied concept's proportions. Place the Aceris mark at the top and vertically stacked original glyphs for Início, Jogos, Importar, Favoritos, Recentes, Homebrew and Configurações; do not add text labels beside the rail icons.
+- A fixed, narrow left rail matching the supplied concept's proportions. Place the Aceris mark at the top, five vertically stacked original glyphs for Início, Jogos, Importar, Favoritos and Configurações, and the power symbol anchored near the bottom; do not add text labels beside the rail icons. Recentes and Homebrew remain accessible through the Games/library screen rather than adding extra rail entries.
 - Center the selected game's identity in the upper content area: available game icon/artwork, title and concise metadata.
 - Place one horizontal shelf of tall portrait game covers beneath the featured identity. Show five card slots, with the fifth naturally clipped at the right edge when the viewport cannot fit all five. Selection uses an unmistakable Aceris red focus frame and horizontal navigation scrolls the shelf.
 - Use a compact bottom command strip with controller/action hints. Do not restore the old horizontal Home tab bar, oversized featured panel, four-button row or collection-summary panel.
