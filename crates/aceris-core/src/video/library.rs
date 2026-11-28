@@ -8062,27 +8062,29 @@ fn render_cover_art(
         &monogram,
         brand::TEXT,
     );
-    responsive_panel(
-        frame,
-        width,
-        height,
-        x + 8.0,
-        y + cover_height - 28.0,
-        42.0,
-        18.0,
-        scale,
-        brand::SURFACE_HEADER,
-    );
-    responsive_text_centered(
-        frame,
-        width,
-        height,
-        x + 29.0,
-        y + cover_height - 23.0,
-        text_scale.max(1),
-        "3DS",
-        brand::TEXT,
-    );
+    if cover_width >= 58.0 && cover_height >= 50.0 {
+        responsive_panel(
+            frame,
+            width,
+            height,
+            x + 8.0,
+            y + cover_height - 28.0,
+            42.0,
+            18.0,
+            scale,
+            brand::SURFACE_HEADER,
+        );
+        responsive_text_centered(
+            frame,
+            width,
+            height,
+            x + 29.0,
+            y + cover_height - 23.0,
+            text_scale.max(1),
+            "3DS",
+            brand::TEXT,
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
