@@ -2199,7 +2199,7 @@ impl Library {
         }
 
         // The selected-game actions remain available regardless of the current tab.
-        if (760.0..980.0).contains(&x) {
+        if self.page != LibraryPage::Home && (760.0..980.0).contains(&x) {
             if (238.0..282.0).contains(&y) {
                 if self.selected_entry().is_some() {
                     return ClickResult::Activated;
@@ -2220,18 +2220,18 @@ impl Library {
 
         match self.page {
             LibraryPage::Home => {
-                if (140.0..330.0).contains(&y) && (28.0..730.0).contains(&x) {
+                if (140.0..356.0).contains(&y) && (28.0..960.0).contains(&x) {
                     if self.home_entries().is_empty() {
                         self.request_folder_picker();
                         return ClickResult::Ignored;
                     }
-                    let index = if (28.0..192.0).contains(&x) {
+                    let index = if (28.0..248.0).contains(&x) {
                         Some(0)
-                    } else if (204.0..368.0).contains(&x) {
+                    } else if (260.0..480.0).contains(&x) {
                         Some(1)
-                    } else if (380.0..544.0).contains(&x) {
+                    } else if (492.0..712.0).contains(&x) {
                         Some(2)
-                    } else if (556.0..720.0).contains(&x) {
+                    } else if (724.0..944.0).contains(&x) {
                         Some(3)
                     } else {
                         None
@@ -2247,24 +2247,33 @@ impl Library {
                             return ClickResult::Selected;
                         }
                     }
-                } else if (340.0..430.0).contains(&y) {
+                } else if (380.0..424.0).contains(&y) {
                     if (28.0..248.0).contains(&x) {
-                        self.select_page(LibraryPage::Games);
-                    } else if (258.0..478.0).contains(&x) {
-                        self.select_page(LibraryPage::Favorites);
-                    } else if (488.0..730.0).contains(&x) {
-                        self.select_page(LibraryPage::Homebrew);
+                        return if self.selected_entry().is_some() {
+                            ClickResult::Activated
+                        } else {
+                            self.request_folder_picker();
+                            ClickResult::Ignored
+                        };
+                    } else if (260.0..480.0).contains(&x) {
+                        if self.selected_entry().is_some() {
+                            self.toggle_selected_favorite();
+                        }
+                    } else if (492.0..712.0).contains(&x) {
+                        self.request_folder_picker();
+                    } else if (724.0..944.0).contains(&x) {
+                        self.reload();
                     }
                 } else if (438.0..502.0).contains(&y) {
-                    let page = if (28.0..160.0).contains(&x) {
+                    let page = if (28.0..204.0).contains(&x) {
                         Some(LibraryPage::Recent)
-                    } else if (170.0..302.0).contains(&x) {
+                    } else if (212.0..388.0).contains(&x) {
                         Some(LibraryPage::Games)
-                    } else if (312.0..444.0).contains(&x) {
+                    } else if (396.0..572.0).contains(&x) {
                         Some(LibraryPage::Favorites)
-                    } else if (454.0..586.0).contains(&x) {
+                    } else if (580.0..756.0).contains(&x) {
                         Some(LibraryPage::Homebrew)
-                    } else if (596.0..728.0).contains(&x) {
+                    } else if (764.0..940.0).contains(&x) {
                         Some(LibraryPage::Settings)
                     } else {
                         None
@@ -3909,14 +3918,14 @@ impl Library {
 
             if home_entries.is_empty() {
                 responsive_panel(
-                    frame, width, height, 28.0, 142.0, 702.0, 174.0, scale, 0x202A34,
+                    frame, width, height, 28.0, 142.0, 924.0, 210.0, scale, 0x202A34,
                 );
-                responsive_folder_icon(frame, width, height, 116.0, 232.0, scale);
+                responsive_folder_icon(frame, width, height, 150.0, 250.0, scale);
                 responsive_text(
                     frame,
                     width,
                     height,
-                    202.0,
+                    246.0,
                     194.0,
                     title_scale,
                     "Sua coleção começa aqui",
@@ -3926,7 +3935,7 @@ impl Library {
                     frame,
                     width,
                     height,
-                    204.0,
+                    248.0,
                     225.0,
                     text_scale,
                     "Importe uma pasta para adicionar seus jogos.",
@@ -3936,9 +3945,9 @@ impl Library {
                     frame,
                     width,
                     height,
-                    520.0,
-                    238.0,
-                    180.0,
+                    690.0,
+                    232.0,
+                    210.0,
                     48.0,
                     scale,
                     brand::ACCENT_RED,
@@ -3947,8 +3956,8 @@ impl Library {
                     frame,
                     width,
                     height,
-                    610.0,
-                    255.0,
+                    795.0,
+                    249.0,
                     text_scale,
                     "IMPORTAR PASTA",
                     brand::TEXT,
@@ -3957,7 +3966,7 @@ impl Library {
                 let first_visible = self.home_first_visible(4);
                 for (slot, entry) in home_entries.iter().skip(first_visible).take(4).enumerate() {
                     let index = first_visible + slot;
-                    let card_x = 28.0 + slot as f32 * 176.0;
+                    let card_x = 28.0 + slot as f32 * 232.0;
                     render_home_game_tile(
                         frame,
                         width,
@@ -3965,8 +3974,8 @@ impl Library {
                         scale,
                         card_x,
                         142.0,
-                        164.0,
-                        184.0,
+                        220.0,
+                        210.0,
                         entry,
                         index == self.selected,
                         text_scale,
@@ -3975,54 +3984,71 @@ impl Library {
                 }
             }
 
-            responsive_text(
-                frame,
-                width,
-                height,
-                28.0,
-                318.0,
-                text_scale,
-                "ACESSO RÁPIDO",
-                0x55C8E8,
-            );
-            let cards = [
-                (28.0, 340.0, 220.0, "JOGOS", game_count),
-                (258.0, 340.0, 220.0, "FAVORITOS", self.favorite_count()),
-                (488.0, 340.0, 242.0, "HOMEBREW & DEMOS", homebrew_count),
-            ];
-            for (x, y, card_width, label, count) in cards {
-                responsive_panel(
-                    frame, width, height, x, y, card_width, 82.0, scale, 0x202A34,
-                );
+            if let Some(entry) = self.selected_entry() {
+                let extension = entry
+                    .path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("3ds");
                 responsive_text(
                     frame,
                     width,
                     height,
-                    x + 16.0,
-                    y + 17.0,
+                    30.0,
+                    358.0,
+                    small_scale,
+                    &format!(
+                        "SELECIONADO  ·  {}  ·  .{}",
+                        truncate(&entry.title, 48),
+                        extension.to_ascii_uppercase()
+                    ),
+                    0x75D8F1,
+                );
+            } else {
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    30.0,
+                    358.0,
+                    small_scale,
+                    "ADICIONE UMA PASTA COM SEUS JOGOS PARA COMEÇAR",
+                    0xB7C5D0,
+                );
+            }
+
+            let favorite_label = if selected_entry.is_some_and(|entry| self.is_favorite(entry)) {
+                "REMOVER FAVORITO"
+            } else {
+                "ADICIONAR FAVORITO"
+            };
+            let home_actions = [
+                (
+                    28.0,
+                    "JOGAR AGORA",
+                    if selected_entry.is_some() {
+                        brand::ACCENT_RED
+                    } else {
+                        0x2D4150
+                    },
+                ),
+                (260.0, favorite_label, 0x17485D),
+                (492.0, "IMPORTAR PASTA", brand::ACCENT_RED),
+                (724.0, "ATUALIZAR", 0x2D4150),
+            ];
+            for (x, label, color) in home_actions {
+                responsive_panel(
+                    frame, width, height, x, 380.0, 220.0, 44.0, scale, color,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    x + 110.0,
+                    394.0,
                     small_scale,
                     label,
-                    0x55C8E8,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    x + 16.0,
-                    y + 43.0,
-                    title_scale,
-                    &count.to_string(),
                     brand::TEXT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    x + card_width - 74.0,
-                    y + 51.0,
-                    small_scale,
-                    "EXPLORAR",
-                    0xB7C5D0,
                 );
             }
             responsive_fill(
@@ -4031,7 +4057,7 @@ impl Library {
                 height as usize,
                 20.0,
                 436.0,
-                718.0,
+                924.0,
                 64.0,
                 scale,
                 0x141C25,
@@ -4044,7 +4070,7 @@ impl Library {
                 (LibraryPage::Settings, "A", "AJUSTES"),
             ];
             for (slot, (page, symbol, label)) in dock_items.into_iter().enumerate() {
-                let x = 28.0 + slot as f32 * 142.0;
+                let x = 28.0 + slot as f32 * 184.0;
                 let selected = self.page == page;
                 responsive_panel(
                     frame,
@@ -4052,7 +4078,7 @@ impl Library {
                     height,
                     x,
                     442.0,
-                    132.0,
+                    176.0,
                     52.0,
                     scale,
                     if selected { 0x17485D } else { 0x202A34 },
@@ -4061,7 +4087,7 @@ impl Library {
                     frame,
                     width,
                     height,
-                    x + 8.0,
+                    x + 12.0,
                     453.0,
                     30.0,
                     30.0,
@@ -4076,7 +4102,7 @@ impl Library {
                     frame,
                     width,
                     height,
-                    x + 23.0,
+                    x + 27.0,
                     462.0,
                     small_scale,
                     symbol,
@@ -4086,7 +4112,7 @@ impl Library {
                     frame,
                     width,
                     height,
-                    x + 46.0,
+                    x + 54.0,
                     464.0,
                     small_scale,
                     label,
@@ -4700,23 +4726,22 @@ impl Library {
             }
         }
 
-        // Persistent right-hand actions mirror a console's selected-game panel.
-        responsive_text(
-            frame,
-            width,
-            height,
-            780.0,
-            174.0,
-            small_scale,
-            if self.page == LibraryPage::Home {
-                "ULTIMO JOGO"
-            } else if self.page == LibraryPage::Settings {
-                "BIBLIOTECA"
-            } else {
-                "SELECIONADO"
-            },
-            brand::ACCENT_GREEN_LIGHT,
-        );
+        // Detail and management actions stay on library pages. Home uses the full width.
+        if self.page != LibraryPage::Home {
+            responsive_text(
+                frame,
+                width,
+                height,
+                780.0,
+                174.0,
+                small_scale,
+                if self.page == LibraryPage::Settings {
+                    "BIBLIOTECA"
+                } else {
+                    "SELECIONADO"
+                },
+                brand::ACCENT_GREEN_LIGHT,
+            );
         if let Some(entry) = selected_entry {
             responsive_text(
                 frame,
@@ -4842,19 +4867,20 @@ impl Library {
             brand::TEXT,
         );
 
-        responsive_text(
-            frame,
-            width,
-            height,
-            780.0,
-            (bottom - 34.0).max(0.0),
-            small_scale,
-            &format!(
-                "{} PASTA(S) MONITORADA(S)",
-                self.scan_config.directories.len()
-            ),
-            0xBBAFC7,
-        );
+            responsive_text(
+                frame,
+                width,
+                height,
+                780.0,
+                (bottom - 34.0).max(0.0),
+                small_scale,
+                &format!(
+                    "{} PASTA(S) MONITORADA(S)",
+                    self.scan_config.directories.len()
+                ),
+                0xBBAFC7,
+            );
+        }
         if let Some(status) = &self.status {
             responsive_text(
                 frame,
@@ -6272,6 +6298,78 @@ mod tests {
     }
 
     #[test]
+    fn landscape_home_action_row_launches_favorites_import_and_refresh() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-home-actions-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("home-game.3ds");
+        fs::write(&path, b"fixture").unwrap();
+        let entry = Entry {
+            title: "Home action game".into(),
+            path: path.clone(),
+        };
+        let mut library = Library::new(vec![entry], dir.display().to_string());
+
+        assert_eq!(
+            library.click_responsive(100, 400, 1000, 600),
+            ClickResult::Activated
+        );
+        assert_eq!(
+            library.click_responsive(360, 400, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.favorite_count(), 1);
+
+        assert_eq!(
+            library.click_responsive(600, 400, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert!(library.take_folder_picker_request());
+
+        library.select_page(LibraryPage::Home);
+        assert_eq!(
+            library.click_responsive(830, 400, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.page(), LibraryPage::Home);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn landscape_home_fourth_wide_tile_can_be_selected_and_activated() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-home-fourth-tile-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let mut entries = Vec::new();
+        for index in 0..4 {
+            let path = dir.join(format!("wide-{index}.3ds"));
+            fs::write(&path, b"fixture").unwrap();
+            entries.push(Entry {
+                title: format!("Wide Game {index}"),
+                path,
+            });
+        }
+        let mut library = Library::new(entries, dir.display().to_string());
+
+        assert_eq!(
+            library.click_responsive(830, 220, 1000, 600),
+            ClickResult::Selected
+        );
+        assert_eq!(library.selected_entry().unwrap().title, "Wide Game 3");
+        assert_eq!(
+            library.click_responsive(830, 220, 1000, 600),
+            ClickResult::Activated
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn search_matches_titles_paths_and_ignores_case_and_accents() {
         let entries = vec![
             Entry {
@@ -7008,7 +7106,7 @@ mod tests {
         library.set_touch_keyboard_enabled(true);
 
         assert_eq!(
-            library.click_responsive(870, 355, 1000, 600),
+            library.click_responsive(600, 400, 1000, 600),
             ClickResult::Ignored
         );
         assert_eq!(library.page(), LibraryPage::Settings);
