@@ -5,7 +5,7 @@
 //! process-memory layout. It does not create an ARM11 session or claim that a
 //! homebrew executable can yet be launched by the emulator.
 
-use crate::loader::smdh::{Smdh, SMDH_FILE_SIZE};
+use crate::loader::smdh::{SMDH_FILE_SIZE, Smdh};
 use std::io::{self, Read, Seek, SeekFrom};
 
 /// 3DSX-specific process layout and initial memory materialization.
@@ -1031,17 +1031,17 @@ mod tests {
         image.extend_from_slice(&smdh);
 
         let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
-        let metadata = parsed
-            .read_smdh(&mut Cursor::new(&image))
-            .unwrap()
-            .unwrap();
+        let metadata = parsed.read_smdh(&mut Cursor::new(&image)).unwrap().unwrap();
 
         assert_eq!(metadata.version, 1);
         assert_eq!(
             metadata.first_available_title().unwrap().short_description,
             "Aceris homebrew"
         );
-        assert_eq!((metadata.large_icon.width, metadata.large_icon.height), (48, 48));
+        assert_eq!(
+            (metadata.large_icon.width, metadata.large_icon.height),
+            (48, 48)
+        );
         assert_eq!(metadata.large_icon.pixels_rgba8.len(), 48 * 48 * 4);
     }
 
@@ -1050,16 +1050,17 @@ mod tests {
         let image = minimal_image(HEADER_SIZE as u16, None);
         let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
 
-        assert!(parsed
-            .read_smdh(&mut Cursor::new(&image))
-            .unwrap()
-            .is_none());
+        assert!(
+            parsed
+                .read_smdh(&mut Cursor::new(&image))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
     fn rejects_short_or_malformed_embedded_smdh_data() {
-        let mut short_image =
-            minimal_image(EXTENDED_HEADER_SIZE as u16, Some((88, 4, 0)));
+        let mut short_image = minimal_image(EXTENDED_HEADER_SIZE as u16, Some((88, 4, 0)));
         short_image.extend_from_slice(&[0; 4]);
         let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&short_image)).unwrap();
         assert_eq!(

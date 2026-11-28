@@ -224,12 +224,7 @@ fn expand_channel(value: u32, maximum: u32) -> u8 {
 
 /// Maps an 8x8 tile pixel to its three-level Morton/Z-order storage position.
 fn morton_index(x: usize, y: usize) -> usize {
-    (x & 1)
-        | ((y & 1) << 1)
-        | ((x & 2) << 1)
-        | ((y & 2) << 2)
-        | ((x & 4) << 2)
-        | ((y & 4) << 3)
+    (x & 1) | ((y & 1) << 1) | ((x & 2) << 1) | ((y & 2) << 2) | ((x & 4) << 2) | ((y & 4) << 3)
 }
 
 #[cfg(test)]
@@ -318,8 +313,14 @@ mod tests {
         write_icon_pixel(&mut data, LARGE_ICON_OFFSET, LARGE_ICON_SIZE, 8, 0, 0x001F);
 
         let parsed = Smdh::parse(&data).unwrap();
-        assert_eq!((parsed.small_icon.width, parsed.small_icon.height), (24, 24));
-        assert_eq!((parsed.large_icon.width, parsed.large_icon.height), (48, 48));
+        assert_eq!(
+            (parsed.small_icon.width, parsed.small_icon.height),
+            (24, 24)
+        );
+        assert_eq!(
+            (parsed.large_icon.width, parsed.large_icon.height),
+            (48, 48)
+        );
         assert_eq!(&parsed.small_icon.pixels_rgba8[4..8], &[255, 255, 255, 255]);
         assert_eq!(&parsed.large_icon.pixels_rgba8[0..4], &[255, 255, 255, 255]);
         assert_eq!(&parsed.large_icon.pixels_rgba8[4..8], &[255, 0, 0, 255]);
@@ -327,7 +328,10 @@ mod tests {
             &parsed.large_icon.pixels_rgba8[48 * 4..48 * 4 + 4],
             &[0, 255, 0, 255]
         );
-        assert_eq!(&parsed.large_icon.pixels_rgba8[8 * 4..8 * 4 + 4], &[0, 0, 255, 255]);
+        assert_eq!(
+            &parsed.large_icon.pixels_rgba8[8 * 4..8 * 4 + 4],
+            &[0, 0, 255, 255]
+        );
     }
 
     #[test]
