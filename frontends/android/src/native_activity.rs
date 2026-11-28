@@ -204,7 +204,6 @@ fn jni_function<F: Copy>(handle: *mut c_void, index: usize) -> Option<F> {
     Some(unsafe { std::mem::transmute_copy::<*const c_void, F>(&address) })
 }
 
-type NewGlobalRefFn = unsafe extern "system" fn(JniEnv, JniObject) -> JniObject;
 type DeleteGlobalRefFn = unsafe extern "system" fn(JniEnv, JniObject);
 type AttachCurrentThreadFn =
     unsafe extern "system" fn(*mut c_void, *mut JniEnv, *mut c_void) -> i32;
@@ -500,15 +499,6 @@ impl Drop for AttachedMediaMonitor {
     }
 }
 
-fn create_activity_global_ref(env: *mut c_void, activity: *mut c_void) -> Raw {
-    let Some(new_global): Option<NewGlobalRefFn> = jni_function(env, 21) else {
-        return Raw::default();
-    };
-    // SAFETY: called on NativeActivity's UI thread with a live activity jobject.
-    let global = unsafe { new_global(env, activity) };
-    Raw::new(global)
-}
-
 struct Host {
     shared: Mutex<Shared>,
     thread: Mutex<Option<JoinHandle<()>>>,
@@ -569,7 +559,9 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
             shared: Mutex::new(Shared::default()),
             thread: Mutex::new(None),
             java_vm: Raw::new((*activity).vm),
-            activity_global: create_activity_global_ref((*activity).env, (*activity).clazz),
+            // Keep the Java Activity out of the launch-critical path. JNI is
+            // optional for media-session integration and must not block the UI.
+            activity_global: Raw::default(),
             sdk_version: (*activity).sdk_version,
         });
         *lock(&HOST) = Some(host.clone());
