@@ -50,6 +50,7 @@ const FOOTER_TOP: i32 = 452;
 pub const VISIBLE_ROWS: usize = ((FOOTER_TOP - 22 - LIST_TOP) / ROW_HEIGHT) as usize;
 const TEXT_SCALE: usize = 2;
 const MARGIN: i32 = 20;
+const VISIBLE_SCAN_DIRECTORIES: usize = 3;
 
 /// One game in the library.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -205,6 +206,7 @@ pub struct Library {
     first_visible: usize,
     directory_label: String,
     scan_config: LibraryScanConfig,
+    scan_directory_offset: usize,
     scan_settings_directory: PathBuf,
     status: Option<String>,
     page: LibraryPage,
@@ -959,6 +961,7 @@ impl Library {
             first_visible: 0,
             directory_label,
             scan_config,
+            scan_directory_offset: 0,
             scan_settings_directory: settings_directory,
             status: None,
             page: LibraryPage::Home,
@@ -1476,6 +1479,53 @@ impl Library {
         &self.scan_config
     }
 
+    fn normalize_scan_directory_offset(&mut self) {
+        let last_page_start = self.scan_config.directories.len().saturating_sub(1)
+            / VISIBLE_SCAN_DIRECTORIES
+            * VISIBLE_SCAN_DIRECTORIES;
+        self.scan_directory_offset = self.scan_directory_offset.min(last_page_start);
+    }
+
+    fn scan_directory_page_button_label(&self) -> Option<String> {
+        let total = self.scan_config.directories.len();
+        if total <= VISIBLE_SCAN_DIRECTORIES {
+            return None;
+        }
+
+        let next_start = if self.scan_directory_offset + VISIBLE_SCAN_DIRECTORIES >= total {
+            0
+        } else {
+            self.scan_directory_offset + VISIBLE_SCAN_DIRECTORIES
+        };
+        let next_end = (next_start + VISIBLE_SCAN_DIRECTORIES).min(total);
+        if next_start == 0 {
+            Some(format!(
+                "VOLTAR ÀS PRIMEIRAS PASTAS 1-{next_end} DE {total}  <"
+            ))
+        } else {
+            Some(format!(
+                "VER PRÓXIMAS PASTAS {}-{next_end} DE {total}  >",
+                next_start + 1
+            ))
+        }
+    }
+
+    fn advance_scan_directory_page(&mut self) {
+        let total = self.scan_config.directories.len();
+        if total <= VISIBLE_SCAN_DIRECTORIES {
+            return;
+        }
+        self.scan_directory_offset = if self.scan_directory_offset + VISIBLE_SCAN_DIRECTORIES >= total
+        {
+            0
+        } else {
+            self.scan_directory_offset + VISIBLE_SCAN_DIRECTORIES
+        };
+        let first = self.scan_directory_offset + 1;
+        let last = (self.scan_directory_offset + VISIBLE_SCAN_DIRECTORIES).min(total);
+        self.status = Some(format!("EXIBINDO PASTAS {first}-{last} DE {total}"));
+    }
+
     /// Adds a game folder and immediately persists and rescans the library.
     ///
     /// Returns `Ok(false)` when the folder is already configured.
@@ -1486,6 +1536,9 @@ impl Library {
         }
         save_library_scan_config(&self.scan_settings_directory, &updated)?;
         self.scan_config = updated;
+        self.scan_directory_offset = self.scan_config.directories.len().saturating_sub(1)
+            / VISIBLE_SCAN_DIRECTORIES
+            * VISIBLE_SCAN_DIRECTORIES;
         self.reload();
         self.status = Some("PASTA ADICIONADA À BIBLIOTECA".to_string());
         Ok(true)
@@ -1501,6 +1554,7 @@ impl Library {
         }
         save_library_scan_config(&self.scan_settings_directory, &updated)?;
         self.scan_config = updated;
+        self.normalize_scan_directory_offset();
         self.reload();
         self.status = Some("PASTA REMOVIDA DA BIBLIOTECA".to_string());
         Ok(true)
@@ -2393,13 +2447,26 @@ impl Library {
             if self.page == LibraryPage::Settings {
                 match self.settings_section {
                     SettingsSection::Library => {
-                        for index in 0..self.scan_config.directories.len().min(3) {
-                            let row_top = 332.0 + index as f32 * 32.0;
+                        let visible_count = self
+                            .scan_config
+                            .directories
+                            .len()
+                            .saturating_sub(self.scan_directory_offset)
+                            .min(VISIBLE_SCAN_DIRECTORIES);
+                        for visible_index in 0..visible_count {
+                            let index = self.scan_directory_offset + visible_index;
+                            let row_top = 332.0 + visible_index as f32 * 32.0;
                             if (row_top..row_top + 28.0).contains(&y) && (334.0..374.0).contains(&x)
                             {
                                 self.remove_scan_directory_from_settings(index);
                                 return ClickResult::Ignored;
                             }
+                        }
+                        if self.scan_config.directories.len() > VISIBLE_SCAN_DIRECTORIES
+                            && (426.0..456.0).contains(&y)
+                            && (34.0..374.0).contains(&x)
+                        {
+                            self.advance_scan_directory_page();
                         }
                         if (460.0..504.0).contains(&y) && (38.0..362.0).contains(&x) {
                             self.toggle_recursive_from_settings();
@@ -2619,13 +2686,26 @@ impl Library {
             LibraryPage::Settings => {
                 match self.settings_section {
                     SettingsSection::Library => {
-                        for index in 0..self.scan_config.directories.len().min(3) {
-                            let row_top = 226.0 + index as f32 * 28.0;
+                        let visible_count = self
+                            .scan_config
+                            .directories
+                            .len()
+                            .saturating_sub(self.scan_directory_offset)
+                            .min(VISIBLE_SCAN_DIRECTORIES);
+                        for visible_index in 0..visible_count {
+                            let index = self.scan_directory_offset + visible_index;
+                            let row_top = 226.0 + visible_index as f32 * 28.0;
                             if (row_top..row_top + 25.0).contains(&y) && (670.0..724.0).contains(&x)
                             {
                                 self.remove_scan_directory_from_settings(index);
                                 return ClickResult::Ignored;
                             }
+                        }
+                        if self.scan_config.directories.len() > VISIBLE_SCAN_DIRECTORIES
+                            && (310.0..336.0).contains(&y)
+                            && (44.0..664.0).contains(&x)
+                        {
+                            self.advance_scan_directory_page();
                         }
                         if (344.0..388.0).contains(&y) {
                             if (44.0..366.0).contains(&x) {
@@ -3370,7 +3450,12 @@ impl Library {
                         brand::ACCENT_GREEN_LIGHT,
                     );
                     for (index, directory) in
-                        self.scan_config.directories.iter().take(3).enumerate()
+                        self.scan_config
+                            .directories
+                            .iter()
+                            .skip(self.scan_directory_offset)
+                            .take(VISIBLE_SCAN_DIRECTORIES)
+                            .enumerate()
                     {
                         let row_y = 332.0 + index as f32 * 32.0;
                         responsive_panel(
@@ -3416,18 +3501,26 @@ impl Library {
                             brand::TEXT,
                         );
                     }
-                    if self.scan_config.directories.len() > 3 {
+                    if let Some(label) = self.scan_directory_page_button_label() {
+                        responsive_panel(
+                            frame,
+                            width,
+                            height,
+                            34.0,
+                            426.0,
+                            340.0,
+                            28.0,
+                            scale,
+                            brand::SURFACE_CARD,
+                        );
                         responsive_text(
                             frame,
                             width,
                             height,
                             42.0,
-                            430.0,
+                            434.0,
                             small_scale,
-                            &format!(
-                                "+ {} outra(s) pasta(s)",
-                                self.scan_config.directories.len() - 3
-                            ),
+                            &label,
                             brand::TEXT_MUTED,
                         );
                     }
@@ -4896,7 +4989,12 @@ impl Library {
                         brand::ACCENT_GREEN_LIGHT,
                     );
                     for (index, directory) in
-                        self.scan_config.directories.iter().take(3).enumerate()
+                        self.scan_config
+                            .directories
+                            .iter()
+                            .skip(self.scan_directory_offset)
+                            .take(VISIBLE_SCAN_DIRECTORIES)
+                            .enumerate()
                     {
                         let row_y = 226.0 + index as f32 * 28.0;
                         responsive_panel(
@@ -4942,18 +5040,26 @@ impl Library {
                             brand::TEXT,
                         );
                     }
-                    if self.scan_config.directories.len() > 3 {
+                    if let Some(label) = self.scan_directory_page_button_label() {
+                        responsive_panel(
+                            frame,
+                            width,
+                            height,
+                            44.0,
+                            310.0,
+                            620.0,
+                            26.0,
+                            scale,
+                            brand::SURFACE_CARD,
+                        );
                         responsive_text(
                             frame,
                             width,
                             height,
                             54.0,
-                            312.0,
+                            318.0,
                             small_scale,
-                            &format!(
-                                "+ {} outra(s) pasta(s)",
-                                self.scan_config.directories.len() - 3
-                            ),
+                            &label,
                             brand::TEXT_MUTED,
                         );
                     }
@@ -8753,6 +8859,58 @@ mod tests {
         assert_eq!(reopened.scan_config().directories.len(), 1);
         assert!(reopened.scan_config().options.recursive);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn settings_can_page_through_and_remove_every_monitored_folder() {
+        let root = std::env::temp_dir().join(format!(
+            "aceris-settings-folder-pages-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        let mut library = Library::new(Vec::new(), root.display().to_string());
+        let mut folders = vec![normalize_scan_directory(&root)];
+        for index in 1..7 {
+            let folder = root.join(format!("games-{index}"));
+            fs::create_dir_all(&folder).unwrap();
+            library.add_scan_directory(folder.clone()).unwrap();
+            folders.push(normalize_scan_directory(&folder));
+        }
+        assert_eq!(library.scan_config().directories.len(), 7);
+
+        // Landscape launcher: the page control exposes roots 4-6, then wraps
+        // back to the first page after the final root has been removed.
+        library.select_page(LibraryPage::Settings);
+        library.scan_directory_offset = 0;
+        assert_eq!(
+            library.scan_directory_page_button_label().as_deref(),
+            Some("VER PRÓXIMAS PASTAS 4-6 DE 7  >")
+        );
+        library.click_responsive(200, 322, 1000, 600);
+        assert_eq!(library.scan_directory_offset, 3);
+        library.click_responsive(694, 293, 1000, 600);
+        assert!(!library.scan_config().directories.contains(&folders[5]));
+        assert_eq!(library.scan_config().directories.len(), 6);
+        assert_eq!(library.scan_directory_offset, 3);
+        assert_eq!(
+            library.scan_directory_page_button_label().as_deref(),
+            Some("VOLTAR ÀS PRIMEIRAS PASTAS 1-3 DE 6  <")
+        );
+        library.click_responsive(200, 322, 1000, 600);
+        assert_eq!(library.scan_directory_offset, 0);
+
+        // Portrait fallback uses the same page model and keeps its own hit areas.
+        library.scan_directory_offset = 0;
+        library.click_responsive(200, 440, 400, 800);
+        assert_eq!(library.scan_directory_offset, 3);
+        let portrait_removed = folders[4].clone();
+        library.click_responsive(352, 378, 400, 800);
+        assert!(!library.scan_config().directories.contains(&portrait_removed));
+        assert_eq!(library.scan_config().directories.len(), 5);
+        assert_eq!(library.scan_directory_offset, 0);
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
