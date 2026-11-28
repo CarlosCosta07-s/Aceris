@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use aceris_core::input::{
     gamepad_axes_to_circle_pad, pad, pad_from_frontend_buttons, touch_from_surface_point,
 };
-use aceris_core::input_mapping::{GamepadControl, GamepadMapping};
+use aceris_core::input_mapping::{GamepadAxisSettings, GamepadControl, GamepadMapping};
 use aceris_core::video::frontend::{
     self, ORIENTATION_AUTO, ScreenLayout, ScreenLayoutMode, ScreenRect, compute_screen_layout,
     compute_screen_layout_for_mode,
@@ -85,6 +85,8 @@ pub struct App {
     gamepad_trigger_axis_mask: u16,
     /// Effective global/per-title physical gamepad mapping.
     gamepad_mapping: GamepadMapping,
+    /// Effective global/per-title analog-stick settings.
+    gamepad_axis_settings: GamepadAxisSettings,
     /// Library tap that was pressed and awaits release (taps act on release).
     library_tap: Option<(i32, i32)>,
     /// Interleaved stereo samples (32728 Hz) mixed since the last [`App::take_audio`].
@@ -101,6 +103,8 @@ impl App {
         let layout_preferences = ScreenLayoutPreferences::load(&settings_directory);
         let mut library = Library::from_scan_settings(&settings_directory, games_dir);
         library.set_touch_keyboard_enabled(true);
+        let gamepad_axis_settings =
+            GamepadAxisSettings::load_for_context(&settings_directory, None, None);
         Self {
             games_dir: games_dir_owned,
             screen: Screen::Intro { frame: 0 },
@@ -130,6 +134,7 @@ impl App {
             gamepad_button_mask: 0,
             gamepad_trigger_axis_mask: 0,
             gamepad_mapping: GamepadMapping::default(),
+            gamepad_axis_settings,
             library_tap: None,
             audio: Vec::new(),
             intro_buffer: Vec::new(),
@@ -213,7 +218,8 @@ impl App {
         let Some(system) = self.system.as_mut() else {
             return false;
         };
-        let (circle_x, circle_y) = gamepad_axes_to_circle_pad(x, -y, deadzone_percent);
+        let (circle_x, circle_y) =
+            self.gamepad_axis_settings.apply_to_circle_pad(x, -y, deadzone_percent);
         system
             .input_mut()
             .set_circle_pad(i32::from(circle_x), i32::from(circle_y));
@@ -1437,11 +1443,14 @@ impl App {
         match system.load_executable_file(&path) {
             Ok(_) => {
                 let game_identity = system.game_identity();
+                let settings_directory = self.games_dir.join(".aceris");
                 self.gamepad_mapping = GamepadMapping::load_for_context(
-                    &self.games_dir.join(".aceris"),
+                    &settings_directory,
                     None,
                     game_identity,
                 );
+                self.gamepad_axis_settings =
+                    GamepadAxisSettings::load_for_context(&settings_directory, None, game_identity);
                 self.library.set_active_game_identity(game_identity);
                 self.system = Some(system);
                 self.key_mask = 0;
@@ -1527,8 +1536,14 @@ impl App {
         self.active_image_identity = None;
         match load_executable_file_with_identity(&mut system, &path) {
             Ok(loaded) => {
+                let settings_directory = self.games_dir.join(".aceris");
                 self.gamepad_mapping = GamepadMapping::load_for_context(
-                    &self.games_dir.join(".aceris"),
+                    &settings_directory,
+                    None,
+                    loaded.game_identity,
+                );
+                self.gamepad_axis_settings = GamepadAxisSettings::load_for_context(
+                    &settings_directory,
                     None,
                     loaded.game_identity,
                 );

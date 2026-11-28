@@ -39,6 +39,17 @@ pub const CIRCLE_PAD_LIMIT: i16 = 156;
 /// applying the same threshold independently to X and Y. Inputs are sanitized
 /// and clamped to the unit circle before the deadzone is normalized.
 pub fn gamepad_axes_to_circle_pad(x: f32, y: f32, deadzone_percent: u8) -> (i16, i16) {
+    gamepad_axes_to_circle_pad_with_sensitivity(x, y, deadzone_percent, 100)
+}
+
+/// Converts a physical stick vector with a sensitivity multiplier after the
+/// radial deadzone. Values outside 50–200% are clamped defensively.
+pub fn gamepad_axes_to_circle_pad_with_sensitivity(
+    x: f32,
+    y: f32,
+    deadzone_percent: u8,
+    sensitivity_percent: u8,
+) -> (i16, i16) {
     let x = if x.is_finite() {
         x.clamp(-1.0, 1.0)
     } else {
@@ -56,7 +67,9 @@ pub fn gamepad_axes_to_circle_pad(x: f32, y: f32, deadzone_percent: u8) -> (i16,
         return (0, 0);
     }
 
-    let normalized_magnitude = (magnitude.min(1.0) - deadzone) / (1.0 - deadzone);
+    let sensitivity = f32::from(sensitivity_percent.clamp(50, 200)) / 100.0;
+    let normalized_magnitude =
+        (((magnitude.min(1.0) - deadzone) / (1.0 - deadzone)) * sensitivity).min(1.0);
     let scale = normalized_magnitude / magnitude;
     let limit = f32::from(CIRCLE_PAD_LIMIT);
     (
@@ -232,6 +245,23 @@ mod tests {
         assert_eq!(gamepad_axes_to_circle_pad(-1.0, 0.0, 16), (-156, 0));
         assert_eq!(gamepad_axes_to_circle_pad(0.0, 1.0, 16), (0, 156));
         assert_eq!(gamepad_axes_to_circle_pad(0.0, -1.0, 16), (0, -156));
+    }
+
+    #[test]
+    fn sensitivity_scales_deflection_without_changing_direction_or_maximum() {
+        let low = gamepad_axes_to_circle_pad_with_sensitivity(0.5, 0.0, 16, 50);
+        let normal = gamepad_axes_to_circle_pad_with_sensitivity(0.5, 0.0, 16, 100);
+        let high = gamepad_axes_to_circle_pad_with_sensitivity(0.5, 0.0, 16, 200);
+        assert!(low.0 > 0 && low.0 < normal.0);
+        assert!(high.0 > normal.0);
+        assert_eq!(
+            gamepad_axes_to_circle_pad_with_sensitivity(1.0, 0.0, 16, 200),
+            (CIRCLE_PAD_LIMIT, 0)
+        );
+        assert_eq!(
+            gamepad_axes_to_circle_pad_with_sensitivity(0.5, 0.5, 16, 100).0,
+            gamepad_axes_to_circle_pad_with_sensitivity(0.5, 0.5, 16, 100).1
+        );
     }
 
     #[test]

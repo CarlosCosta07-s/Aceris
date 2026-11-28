@@ -13,6 +13,10 @@ const CONFIG_MAGIC: &str = "ACERIS_GAMEPAD_MAPPING_V1";
 const GLOBAL_FILE: &str = "gamepad_mapping_v1.txt";
 const DEVICE_DIRECTORY: &str = "gamepad_devices";
 const GAME_DIRECTORY: &str = "gamepad_games";
+const AXIS_GLOBAL_FILE: &str = "gamepad_axis_settings_v1.txt";
+const AXIS_DEVICE_DIRECTORY: &str = "gamepad_axis_devices";
+const AXIS_GAME_DIRECTORY: &str = "gamepad_axis_games";
+const AXIS_CONFIG_MAGIC: &str = "ACERIS_GAMEPAD_AXIS_SETTINGS_V1";
 
 /// A standardized physical gamepad button before it is mapped to 3DS input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -398,6 +402,189 @@ impl GamepadMapping {
     }
 }
 
+/// Analog-stick configuration stored independently from button mappings.
+///
+/// Profiles use the same precedence as button mappings: game > controller
+/// model > global. This keeps existing button-map files fully compatible.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GamepadAxisSettings {
+    invert_x: bool,
+    invert_y: bool,
+    sensitivity_percent: u8,
+}
+
+impl Default for GamepadAxisSettings {
+    fn default() -> Self {
+        Self {
+            invert_x: false,
+            invert_y: false,
+            sensitivity_percent: 100,
+        }
+    }
+}
+
+impl GamepadAxisSettings {
+    pub fn invert_x(&self) -> bool {
+        self.invert_x
+    }
+
+    pub fn invert_y(&self) -> bool {
+        self.invert_y
+    }
+
+    pub fn sensitivity_percent(&self) -> u8 {
+        self.sensitivity_percent
+    }
+
+    pub fn set_invert_x(&mut self, enabled: bool) {
+        self.invert_x = enabled;
+    }
+
+    pub fn set_invert_y(&mut self, enabled: bool) {
+        self.invert_y = enabled;
+    }
+
+    /// Sensitivity is clamped to the supported 50–200% range.
+    pub fn set_sensitivity_percent(&mut self, percent: u8) {
+        self.sensitivity_percent = percent.clamp(50, 200);
+    }
+
+    /// Applies axis inversion and sensitivity before converting to guest input.
+    pub fn apply_to_circle_pad(
+        &self,
+        x: f32,
+        y: f32,
+        deadzone_percent: u8,
+    ) -> (i16, i16) {
+        let x = if self.invert_x { -x } else { x };
+        let y = if self.invert_y { -y } else { y };
+        crate::input::gamepad_axes_to_circle_pad_with_sensitivity(
+            x,
+            y,
+            deadzone_percent,
+            self.sensitivity_percent,
+        )
+    }
+
+    pub fn to_config_string(&self) -> String {
+        format!(
+            "{AXIS_CONFIG_MAGIC}\ninvert_x={}\ninvert_y={}\nsensitivity_percent={}\n",
+            u8::from(self.invert_x),
+            u8::from(self.invert_y),
+            self.sensitivity_percent
+        )
+    }
+
+    /// Parses only the exact V1 axis-settings format.
+    pub fn from_config_str(contents: &str) -> Option<Self> {
+        let mut lines = contents.lines();
+        if lines.next()? != AXIS_CONFIG_MAGIC {
+            return None;
+        }
+        let invert_x = match lines.next()? {
+            "invert_x=0" => false,
+            "invert_x=1" => true,
+            _ => return None,
+        };
+        let invert_y = match lines.next()? {
+            "invert_y=0" => false,
+            "invert_y=1" => true,
+            _ => return None,
+        };
+        let sensitivity_percent = lines
+            .next()?
+            .strip_prefix("sensitivity_percent=")?
+            .parse::<u8>()
+            .ok()
+            .filter(|value| (50..=200).contains(value))?;
+        if lines.next().is_some() {
+            return None;
+        }
+        Some(Self {
+            invert_x,
+            invert_y,
+            sensitivity_percent,
+        })
+    }
+
+    /// Loads the active profile with game > controller-model > global precedence.
+    pub fn load_for_context(
+        settings_directory: &Path,
+        device_uuid: Option<[u8; 16]>,
+        game_identity: Option<GameIdentity>,
+    ) -> Self {
+        let global = load_axis_profile(&settings_directory.join(AXIS_GLOBAL_FILE))
+            .unwrap_or_default();
+        let device = device_uuid
+            .filter(|uuid| !is_zero_uuid(uuid))
+            .and_then(|uuid| load_axis_profile(&axis_device_profile_path(settings_directory, uuid)));
+        let game = game_identity
+            .and_then(|identity| load_axis_profile(&axis_game_profile_path(settings_directory, identity)));
+        game.or(device).unwrap_or(global)
+    }
+
+    pub fn load_global(settings_directory: &Path) -> Self {
+        load_axis_profile(&settings_directory.join(AXIS_GLOBAL_FILE)).unwrap_or_default()
+    }
+
+    pub fn load_for_game_or_global(
+        settings_directory: &Path,
+        identity: GameIdentity,
+    ) -> Self {
+        load_axis_profile(&axis_game_profile_path(settings_directory, identity))
+            .unwrap_or_else(|| Self::load_global(settings_directory))
+    }
+
+    pub fn save_global(&self, settings_directory: &Path) -> io::Result<()> {
+        save_axis_profile(&settings_directory.join(AXIS_GLOBAL_FILE), self)
+    }
+
+    pub fn save_for_device(
+        &self,
+        settings_directory: &Path,
+        device_uuid: [u8; 16],
+    ) -> io::Result<()> {
+        if is_zero_uuid(&device_uuid) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a zero controller UUID cannot identify an axis profile",
+            ));
+        }
+        save_axis_profile(&axis_device_profile_path(settings_directory, device_uuid), self)
+    }
+
+    pub fn save_for_game(
+        &self,
+        settings_directory: &Path,
+        identity: GameIdentity,
+    ) -> io::Result<()> {
+        save_axis_profile(&axis_game_profile_path(settings_directory, identity), self)
+    }
+}
+
+fn axis_device_profile_path(settings_directory: &Path, uuid: [u8; 16]) -> PathBuf {
+    settings_directory
+        .join(AXIS_DEVICE_DIRECTORY)
+        .join(format!("{}.v1", uuid_hex(uuid)))
+}
+
+fn axis_game_profile_path(settings_directory: &Path, identity: GameIdentity) -> PathBuf {
+    settings_directory
+        .join(AXIS_GAME_DIRECTORY)
+        .join(format!("{:016x}.v1", identity.title_id()))
+}
+
+fn load_axis_profile(path: &Path) -> Option<GamepadAxisSettings> {
+    GamepadAxisSettings::from_config_str(&fs::read_to_string(path).ok()?)
+}
+
+fn save_axis_profile(path: &Path, settings: &GamepadAxisSettings) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, settings.to_config_string())
+}
+
 fn is_zero_uuid(uuid: &[u8; 16]) -> bool {
     uuid.iter().all(|byte| *byte == 0)
 }
@@ -550,6 +737,90 @@ mod tests {
                 .target(GamepadControl::South),
             Some(PadButton::Y)
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn axis_settings_round_trip_and_reject_malformed_values() {
+        let mut settings = GamepadAxisSettings::default();
+        settings.set_invert_x(true);
+        settings.set_invert_y(true);
+        settings.set_sensitivity_percent(175);
+        assert_eq!(
+            GamepadAxisSettings::from_config_str(&settings.to_config_string()),
+            Some(settings)
+        );
+        assert!(GamepadAxisSettings::from_config_str(
+            "ACERIS_GAMEPAD_AXIS_SETTINGS_V2\\ninvert_x=0\\ninvert_y=0\\nsensitivity_percent=100\\n"
+        )
+        .is_none());
+        assert!(GamepadAxisSettings::from_config_str(
+            "ACERIS_GAMEPAD_AXIS_SETTINGS_V1\\ninvert_x=1\\ninvert_y=0\\nsensitivity_percent=201\\n"
+        )
+        .is_none());
+        assert!(GamepadAxisSettings::from_config_str(
+            "ACERIS_GAMEPAD_AXIS_SETTINGS_V1\\ninvert_x=0\\ninvert_y=0\\nsensitivity_percent=100\\nextra=1\\n"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn axis_settings_apply_inversion_and_sensitivity() {
+        let mut normal = GamepadAxisSettings::default();
+        let baseline = normal.apply_to_circle_pad(0.5, 0.0, 16);
+        assert!(baseline.0 > 0);
+
+        normal.set_invert_x(true);
+        assert_eq!(
+            normal.apply_to_circle_pad(0.5, 0.0, 16).0,
+            -baseline.0
+        );
+
+        normal.set_invert_x(false);
+        normal.set_sensitivity_percent(50);
+        let lower = normal.apply_to_circle_pad(0.5, 0.0, 16);
+        normal.set_sensitivity_percent(200);
+        let higher = normal.apply_to_circle_pad(0.5, 0.0, 16);
+        assert!(lower.0 > 0 && lower.0 < baseline.0);
+        assert!(higher.0 > baseline.0);
+    }
+
+    #[test]
+    fn global_device_and_game_axis_profiles_follow_precedence() {
+        let root =
+            std::env::temp_dir().join(format!("aceris-axis-profiles-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let mut global = GamepadAxisSettings::default();
+        global.set_invert_x(true);
+        global.save_global(&root).unwrap();
+
+        let device_uuid = [0x5A; 16];
+        let mut device = GamepadAxisSettings::default();
+        device.set_invert_y(true);
+        device.save_for_device(&root, device_uuid).unwrap();
+
+        let identity = GameIdentity::from_title_id(0x0004_0000_1234_5600).unwrap();
+        let mut game = GamepadAxisSettings::default();
+        game.set_sensitivity_percent(150);
+        game.save_for_game(&root, identity).unwrap();
+
+        assert!(GamepadAxisSettings::load_for_context(&root, None, None).invert_x());
+        assert!(GamepadAxisSettings::load_for_context(&root, Some(device_uuid), None).invert_y());
+        let active = GamepadAxisSettings::load_for_context(&root, Some(device_uuid), Some(identity));
+        assert_eq!(active.sensitivity_percent(), 150);
+        assert!(!active.invert_x());
+        assert!(!active.invert_y());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn zero_uuid_cannot_write_an_axis_profile() {
+        let root =
+            std::env::temp_dir().join(format!("aceris-axis-zero-uuid-{}", std::process::id()));
+        let error = GamepadAxisSettings::default()
+            .save_for_device(&root, [0; 16])
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         let _ = fs::remove_dir_all(root);
     }
 

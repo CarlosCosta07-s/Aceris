@@ -5,8 +5,8 @@
 
 use aceris_core::{
     GameIdentity,
-    input::{InputState, gamepad_axes_to_circle_pad},
-    input_mapping::{GamepadControl, GamepadMapping},
+    input::InputState,
+    input_mapping::{GamepadAxisSettings, GamepadControl, GamepadMapping},
 };
 use gilrs::{Axis, Button, EventType, GamepadId, Gilrs};
 use std::path::{Path, PathBuf};
@@ -20,6 +20,7 @@ pub(crate) struct GamepadManager {
     settings_directory: PathBuf,
     game_identity: Option<GameIdentity>,
     mapping: GamepadMapping,
+    axis_settings: GamepadAxisSettings,
     mapping_capture_active: bool,
 }
 
@@ -39,6 +40,11 @@ impl GamepadManager {
             settings_directory: settings_directory.to_path_buf(),
             game_identity,
             mapping: GamepadMapping::load_for_context(settings_directory, None, game_identity),
+            axis_settings: GamepadAxisSettings::load_for_context(
+                settings_directory,
+                None,
+                game_identity,
+            ),
             mapping_capture_active: false,
         }
     }
@@ -174,6 +180,11 @@ impl GamepadManager {
                 None,
                 self.game_identity,
             );
+            self.axis_settings = GamepadAxisSettings::load_for_context(
+                &self.settings_directory,
+                None,
+                self.game_identity,
+            );
             return (0, (0, 0));
         };
         let gamepad = gilrs.gamepad(id);
@@ -186,9 +197,14 @@ impl GamepadManager {
                 device_uuid,
                 self.game_identity,
             );
+            self.axis_settings = GamepadAxisSettings::load_for_context(
+                &self.settings_directory,
+                device_uuid,
+                self.game_identity,
+            );
         }
         let buttons = button_mask(&gamepad, &self.mapping);
-        let axes = gamepad_axes_to_circle_pad(
+        let axes = self.axis_settings.apply_to_circle_pad(
             gamepad.value(Axis::LeftStickX),
             -gamepad.value(Axis::LeftStickY),
             deadzone_percent,
