@@ -102,6 +102,8 @@ O editor deve evoluir para permitir:
 - Ocultar controles virtuais ao conectar um controle físico, com opção para mantê-los visíveis.
 - Feedback tátil opcional, quando o host e o dispositivo oferecerem suporte.
 
+O remapeamento físico de botões já usa o schema compartilhado `ACERIS_GAMEPAD_MAPPING_V1` no desktop e Android. Perfis global e por jogo são aplicados nos dois hosts; perfil por modelo de controle está disponível no desktop via UUID de GilRs. Por enquanto a configuração é feita editando o arquivo de perfil manualmente. Ainda falta um editor visual com captura de entrada; eixos do analógico, inversão e sensibilidade continuam fixos/não configuráveis.
+
 Não cobrir a tela inferior com botões nem capturar toques que deveriam chegar ao jogo.
 
 ### Aparência
@@ -117,13 +119,13 @@ Temas alternativos completos ainda não estão implementados. A existência de s
 
 ### Perfis
 
-A arquitetura deve distinguir:
+A arquitetura distingue:
 - **Global:** padrão utilizado por todos os jogos.
-- **Por jogo:** somente os campos alterados para um título.
-- **Por dispositivo:** mapeamentos de teclado/controle físico.
+- **Por jogo:** overrides identificados por Title ID validado.
+- **Por dispositivo:** mapeamento por modelo de controle, atualmente aplicado no desktop via UUID de GilRs.
 - **Por orientação:** disposição e controles quando retrato/paisagem estiverem disponíveis.
 
-Um jogo herda o padrão global até que um override explícito seja criado. A interface mostrará “Usando padrão global” ou “Personalizado para este jogo”. Restaurar padrão do jogo remove apenas os overrides daquele título. Não usar somente nome do arquivo como identidade definitiva; depender de identidade estável do título e região quando o M2 estiver pronto.
+O remapeamento físico de botões já persiste perfis globais, por jogo e, no desktop, por modelo do controle. O schema é completo e editado manualmente; o editor visual ainda está pendente. Um jogo sem perfil próprio herda o perfil do dispositivo quando disponível, e depois o global. Restaurar o perfil do jogo deve remover apenas o override daquele título. Não usar somente nome de arquivo como identidade definitiva; depender do Title ID validado.
 
 ## 4. Organização das configurações
 
@@ -162,10 +164,11 @@ Configurações experimentais começam desativadas e nunca são descritas como g
 | Pastas da biblioteca e busca recursiva | Configuração básica disponível por caminho digitado |
 | Modo Desempenho | Disponível como opção global; efeito aplicado no próximo jogo e com ressalvas de compatibilidade |
 | Fundo personalizado | Suporte de renderer; não confundir com seletor completo de tema |
-| Overlay de controles virtuais | Parcial | Visibilidade global, opacidade em quatro níveis, escala global de 80%/100%/120%, presets Padrão/Compacto/Canhoto/Destro, posições individuais por arraste, tamanho individual por pinça (60%–150%), guias de alinhamento e restauração seletiva por orientação. Layout global herdado por padrão e overrides V2 por Title ID validados já são persistidos separadamente; homebrew sem identidade validada usa o global. Detecção de controle físico, ajuste fino em grade e mapeamento de botões ainda pendentes. |
+| Overlay de controles virtuais | Parcial | Visibilidade global, opacidade em quatro níveis, escala global de 80%/100%/120%, presets Padrão/Compacto/Canhoto/Destro, posições individuais por arraste, tamanho individual por pinça (60%–150%), guias de alinhamento e restauração seletiva por orientação. Layout global herdado por padrão e overrides V2 por Title ID validados já são persistidos separadamente; homebrew sem identidade validada usa o global. Ocultação automática ao conectar controle, ajuste fino em grade e perfil visual do controle físico ainda pendentes. |
+| Remapeamento de gamepad físico | Disponível no núcleo e nos dois hosts | Schema V1 para 14 controles com destinos A/B/X/Y, D-pad, L/R, ZL/ZR, Start/Select ou `none`; desktop aplica perfis global/modelo/Title ID, Android aplica global/Title ID. Arquivos são editados manualmente; editor visual/captura, perfis por modelo no Android e remapeamento dos eixos ainda pendentes. |
 | Menu rápido com pausa | Parcial | Continuar, Reiniciar, Voltar à biblioteca, Alterar layout, Trocar telas e Padrão global funcionam no PC e Android; pausa entre quadros, limpeza explícita das filas host de áudio, confirmação preventiva das ações destrutivas e botão Android MENU. Atalho editável e validação física pendentes. |
 | Layouts básicos/troca de telas | Parcial | Seis modos, troca física de LCD, perfis globais por orientação, overrides por Title ID com herança/reset e indicador de escopo no menu rápido disponíveis nos dois hosts. Ajuste fino, layouts personalizados e validação física pendentes. |
-| Perfis de controles virtuais | Parcial | Herança global, overrides separados por Title ID validado e restauração do perfil completo do jogo já disponíveis no Android. Perfis de controles físicos e mapeamentos continuam planejados. |
+| Perfis de controles virtuais | Parcial | Herança global, overrides separados por Title ID validado e restauração do perfil completo do jogo já disponíveis no Android. |
 | Temas alternativos e alto contraste | Planejados |
 | Configurações por jogo | Parciais; layout de telas e layout do overlay de controles virtuais por Title ID estão disponíveis. Demais categorias dependem de schema e metadados adicionais. |
 
@@ -175,7 +178,7 @@ Configurações experimentais começam desativadas e nunca são descritas como g
 2. **Pausa e menu mínimo:** primeira versão implementada no desktop e Android — estado pausado no limite de quadro, janela responsiva, scanout mantido, ações Continuar/Reiniciar/Voltar à biblioteca, limpeza explícita das filas host de áudio e confirmação preventiva das ações destrutivas. Próximo: atalho PC configurável e validação física dos backends; a detecção automática de progresso não salvo ainda não existe.
 3. **Atalhos e navegação:** unificar ações de teclado, controle e toque, com detecção de conflitos e acessibilidade.
 4. **Layouts de telas:** geometria compartilhada, seis modos básicos, troca física, mapeamento do stylus, perfis globais e overrides por Title ID com restauração do padrão global implementados; indicador visual de herança/override adicionado ao menu rápido; próximo: ajuste fino de posição/espaçamento e validação física.
-5. **Editor de controles:** visibilidade global, opacidade, escala global, quatro presets, posição individual por arraste, tamanho individual por pinça (60%–150%), guias de alinhamento e restauração seletiva da orientação atual estão disponíveis no Android. Posições e escalas têm persistência separada para retrato/paisagem; arquivos V1 migram por leitura para o layout V2. Herança global e overrides por Title ID validado também estão disponíveis, com seletor de escopo no menu rápido e restauração completa do override do jogo. Próximos: detecção de controle físico e mapeamento de botões.
+5. **Editor de controles:** visibilidade global, opacidade, escala global, quatro presets, posição individual por arraste, tamanho individual por pinça (60%–150%), guias de alinhamento e restauração seletiva da orientação atual estão disponíveis no Android. Posições e escalas têm persistência separada para retrato/paisagem; arquivos V1 migram por leitura para o layout V2. Herança global e overrides por Title ID validado também estão disponíveis, com seletor de escopo no menu rápido e restauração completa do override do jogo. Próximos: editor visual/captura para remapeamento físico, detecção para ocultação automática do overlay e calibração/remapeamento de eixos.
 6. **Configurações versionadas:** categorias globais, overrides por jogo, migrações e restauração seletiva.
 7. **Aparência e acessibilidade:** temas, contraste, tamanho de UI e fundos selecionáveis, sempre com fallback seguro.
 
