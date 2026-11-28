@@ -2160,6 +2160,14 @@ impl Library {
             | LibraryPage::Favorites
             | LibraryPage::Recent
             | LibraryPage::Homebrew => {
+                if self.visible_entry_count() == 0
+                    && (500.0..692.0).contains(&x)
+                    && (315.0..357.0).contains(&y)
+                {
+                    self.begin_add_folder_path();
+                    return ClickResult::Ignored;
+                }
+
                 if (126.0..158.0).contains(&y) {
                     if (36.0..365.0).contains(&x) {
                         self.focus_search();
@@ -3544,12 +3552,12 @@ impl Library {
                 }
             }
         } else {
-            let (page_title, subtitle) = match self.page {
-                LibraryPage::Games => ("JOGOS", "Sua coleção de jogos"),
-                LibraryPage::Favorites => ("FAVORITOS", "Seus jogos marcados"),
-                LibraryPage::Recent => ("RECENTES", "Continue de onde parou"),
-                LibraryPage::Homebrew => ("HOMEBREW & DEMOS", "Aplicativos e projetos caseiros"),
-                LibraryPage::Home | LibraryPage::Settings => ("BIBLIOTECA", "Seus jogos"),
+            let page_title = match self.page {
+                LibraryPage::Games => "JOGOS",
+                LibraryPage::Favorites => "FAVORITOS",
+                LibraryPage::Recent => "RECENTES",
+                LibraryPage::Homebrew => "HOMEBREW & DEMOS",
+                LibraryPage::Home | LibraryPage::Settings => "BIBLIOTECA",
             };
             responsive_text(
                 frame, width, height, 28.0, 84.0, title_scale, page_title, brand::TEXT,
