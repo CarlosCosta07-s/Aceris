@@ -47,9 +47,10 @@ Use a consistent spacing scale, predictable alignment, restrained borders, subtl
 ### Android
 
 - Same information architecture and visual language, adapted to touch.
+- The Android app is landscape-only; `AndroidManifest.xml` must keep `android:screenOrientation="landscape"`.
 - Compact top bar and a bottom navigation bar for primary destinations.
-- Large touch targets, safe-area awareness, scrollable content and responsive game cards.
-- Landscape and portrait layouts must remain deliberate rather than merely scaling the desktop canvas.
+- Large touch targets, safe-area awareness, scrollable content and responsive game cards, designed for landscape phones and tablets.
+- The portrait renderer may remain available to desktop window resizing or other future frontends, but it is not an Android mode.
 - Import and folder management must remain discoverable and usable on touch devices.
 
 ## Core screens
