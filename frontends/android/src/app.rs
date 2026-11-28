@@ -9,7 +9,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use aceris_core::input::{pad, pad_from_frontend_buttons, touch_from_surface_point};
+use aceris_core::input::{
+    CIRCLE_PAD_LIMIT, pad, pad_from_frontend_buttons, touch_from_surface_point,
+};
 use aceris_core::video::frontend::{
     self, ORIENTATION_AUTO, ScreenLayout, ScreenLayoutMode, ScreenRect, compute_screen_layout,
     compute_screen_layout_for_mode,
@@ -176,6 +178,21 @@ impl App {
     pub fn resize(&mut self, width: u32, height: u32) {
         self.width = width;
         self.height = height;
+    }
+
+    /// Applies the primary physical gamepad stick to the emulated Circle Pad.
+    ///
+    /// Android reports positive Y when the physical stick moves down; the 3DS
+    /// host input convention uses positive Y for up.
+    pub fn set_gamepad_axes(&mut self, x: f32, y: f32) -> bool {
+        let Some(system) = self.system.as_mut() else {
+            return false;
+        };
+        system.input_mut().set_circle_pad(
+            gamepad_axis_to_circle_pad(x),
+            -gamepad_axis_to_circle_pad(y),
+        );
+        true
     }
 
     /// Replaces the set of touching pointers (multi-touch aware).
@@ -1251,6 +1268,40 @@ pub fn pad_from_android_keycode(code: i32) -> Option<u32> {
         109 => bit::SELECT,
         _ => return None,
     })
+}
+
+const GAMEPAD_STICK_DEADZONE: f32 = 0.16;
+
+fn gamepad_axis_to_circle_pad(value: f32) -> i32 {
+    if !value.is_finite() {
+        return 0;
+    }
+    let clamped = value.clamp(-1.0, 1.0);
+    let magnitude = clamped.abs();
+    if magnitude <= GAMEPAD_STICK_DEADZONE {
+        return 0;
+    }
+    let scaled = (magnitude - GAMEPAD_STICK_DEADZONE) / (1.0 - GAMEPAD_STICK_DEADZONE);
+    let sign = if clamped.is_sign_negative() { -1.0 } else { 1.0 };
+    (scaled * sign * f32::from(CIRCLE_PAD_LIMIT)).round() as i32
+}
+
+#[cfg(test)]
+mod gamepad_axis_tests {
+    use super::*;
+
+    #[test]
+    fn gamepad_axis_applies_deadzone_and_normalizes_to_circle_pad_range() {
+        assert_eq!(gamepad_axis_to_circle_pad(0.0), 0);
+        assert_eq!(gamepad_axis_to_circle_pad(0.15), 0);
+        assert_eq!(gamepad_axis_to_circle_pad(-0.16), 0);
+        assert_eq!(gamepad_axis_to_circle_pad(1.0), i32::from(CIRCLE_PAD_LIMIT));
+        assert_eq!(gamepad_axis_to_circle_pad(-1.0), -i32::from(CIRCLE_PAD_LIMIT));
+        assert_eq!(gamepad_axis_to_circle_pad(f32::NAN), 0);
+        assert_eq!(gamepad_axis_to_circle_pad(f32::INFINITY), 0);
+        assert!(gamepad_axis_to_circle_pad(0.5) > 0);
+        assert!(gamepad_axis_to_circle_pad(-0.5) < 0);
+    }
 }
 
 fn resize_rgba_frame(frame: &mut Vec<u8>, width: u32, height: u32) -> bool {
