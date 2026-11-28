@@ -4931,7 +4931,10 @@ impl Library {
                 "A",
                 if home_entries.is_empty() {
                     "IMPORTAR"
-                } else if self.selected_entry().is_some_and(|entry| self.is_recent(entry)) {
+                } else if self
+                    .selected_entry()
+                    .is_some_and(|entry| self.is_recent(entry))
+                {
                     "CONTINUAR"
                 } else {
                     "JOGAR"
