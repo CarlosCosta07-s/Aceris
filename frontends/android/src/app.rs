@@ -1274,8 +1274,6 @@ pub fn pad_from_android_keycode(code: i32) -> Option<u32> {
         100 => bit::Y,  // BUTTON_Y
         102 => bit::L,  // BUTTON_L1
         103 => bit::R,  // BUTTON_R1
-        104 => bit::ZL, // BUTTON_L2
-        105 => bit::ZR, // BUTTON_R2
         108 => bit::START,
         109 => bit::SELECT,
         _ => return None,
@@ -2429,8 +2427,8 @@ mod tests {
         );
         assert_eq!(pad_from_android_keycode(102), Some(frontend::buttons::L));
         assert_eq!(pad_from_android_keycode(103), Some(frontend::buttons::R));
-        assert_eq!(pad_from_android_keycode(104), Some(frontend::buttons::ZL));
-        assert_eq!(pad_from_android_keycode(105), Some(frontend::buttons::ZR));
+        assert_eq!(pad_from_android_keycode(104), None);
+        assert_eq!(pad_from_android_keycode(105), None);
         assert_eq!(pad_from_android_keycode(29), None);
     }
 }
