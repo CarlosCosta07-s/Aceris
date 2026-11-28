@@ -4436,6 +4436,150 @@ impl Library {
             self.render_touch_keyboard(frame, width, height, scale, logical_height, text_scale);
         }
     }
+
+    pub fn render_animated(&self, frame_index: u64, background_frame: Option<&[u8]>) -> Vec<u8> {
+        let (w, h) = (WIDTH, HEIGHT);
+        let mut out = vec![255u8; w * h * 4];
+        let top = rgb(brand::PURPLE_LIGHT);
+        let bottom = rgb(brand::PURPLE_DARK);
+        for y in 0..h {
+            let t = y as f32 / h as f32;
+            let color = [0, 1, 2].map(|i| (top[i] as f32 * (1.0 - t) + bottom[i] as f32 * t) as u8);
+            for x in 0..w {
+                let at = (y * w + x) * 4;
+                out[at..at + 3].copy_from_slice(&color);
+            }
+        }
+        if let Some(background) = background_frame.filter(|frame| frame.len() == w * h * 4) {
+            for (destination, source) in out.chunks_exact_mut(4).zip(background.chunks_exact(4)) {
+                let alpha = (source[3] as f32 / 255.0 * 0.38).clamp(0.0, 0.38);
+                for channel in 0..3 {
+                    destination[channel] = (source[channel] as f32 * alpha
+                        + destination[channel] as f32 * (1.0 - alpha))
+                        as u8;
+                }
+            }
+        }
+
+        // Slow, low-contrast glints give the home screen movement without
+        // changing the Aceris palette or competing with selected game rows.
+        let animation = (frame_index % 1_000_000) as usize;
+        let sweep = animation as i32 % 520 - 80;
+        for y in (HEADER_HEIGHT + 4)..FOOTER_TOP {
+            let x = (sweep + y / 5).rem_euclid(w as i32);
+            blend_pixel(&mut out, x, y, rgb(brand::ACCENT_RED_LIGHT), 0.055);
+        }
+        let ambient_height = (FOOTER_TOP - HEADER_HEIGHT - 16) as usize;
+        for particle in 0..7usize {
+            let x = ((animation * (particle + 1) * 3 + particle * 47) % w) as i32;
+            let y = HEADER_HEIGHT
+                + 8
+                + ((particle * 53 + animation * (particle + 1) / 9) % ambient_height) as i32;
+            blend_pixel(&mut out, x, y, rgb(brand::ACCENT_GREEN_LIGHT), 0.11);
+            blend_pixel(&mut out, x + 1, y, rgb(brand::ACCENT_RED_LIGHT), 0.07);
+        }
+
+        let text = rgb(brand::TEXT);
+        let red = rgb(brand::ACCENT_RED);
+
+        fill(
+            &mut out,
+            0,
+            0,
+            w as i32,
+            HEADER_HEIGHT,
+            rgb(brand::PURPLE_DARK),
+        );
+        fill(&mut out, 0, HEADER_HEIGHT - 3, w as i32, 3, red);
+        draw_text(&mut out, w, h, MARGIN, 14, 4, "ACERIS", text);
+        let count = format!("{} JOGOS", self.entries.len());
+        let count_x = w as i32 - MARGIN - font::text_width(count.chars().count(), 1) as i32;
+        draw_text(
+            &mut out,
+            w,
+            h,
+            count_x,
+            22,
+            1,
+            &count,
+            rgb(brand::ACCENT_RED_LIGHT),
+        );
+
+        if self.entries.is_empty() {
+            self.draw_empty(&mut out);
+        }
+        let max_chars = (w as i32 - 2 * MARGIN - 16) as usize / (font::ADVANCE * TEXT_SCALE);
+        for (row, entry) in self
+            .entries
+            .iter()
+            .enumerate()
+            .skip(self.first_visible)
+            .take(VISIBLE_ROWS)
+        {
+            let y = LIST_TOP + (row - self.first_visible) as i32 * ROW_HEIGHT;
+            let selected = row == self.selected;
+            if selected {
+                fill(
+                    &mut out,
+                    MARGIN - 8,
+                    y,
+                    w as i32 - 2 * (MARGIN - 8),
+                    ROW_HEIGHT - 4,
+                    red,
+                );
+            }
+            let title = truncate(&entry.title, max_chars);
+            let color = if selected { [255, 255, 255] } else { text };
+            draw_text(&mut out, w, h, MARGIN, y + 5, TEXT_SCALE, &title, color);
+        }
+        if self.entries.len() > VISIBLE_ROWS {
+            let track = (FOOTER_TOP - 22 - LIST_TOP) as f32;
+            let thumb = (track * VISIBLE_ROWS as f32 / self.entries.len() as f32).max(12.0);
+            let offset = (track - thumb) * self.first_visible as f32
+                / (self.entries.len() - VISIBLE_ROWS) as f32;
+            fill(
+                &mut out,
+                w as i32 - 6,
+                LIST_TOP + offset as i32,
+                3,
+                thumb as i32,
+                rgb(brand::ACCENT_GREEN),
+            );
+        }
+
+        if let Some(status) = &self.status {
+            let message = truncate(status, (w - 2 * MARGIN as usize) / font::ADVANCE);
+            draw_text(
+                &mut out,
+                w,
+                h,
+                MARGIN,
+                FOOTER_TOP - 16,
+                1,
+                &message,
+                rgb(brand::ACCENT_RED_LIGHT),
+            );
+        }
+        fill(
+            &mut out,
+            0,
+            FOOTER_TOP,
+            w as i32,
+            h as i32 - FOOTER_TOP,
+            rgb(brand::PURPLE_DARK),
+        );
+        draw_text(
+            &mut out,
+            w,
+            h,
+            MARGIN,
+            FOOTER_TOP + 14,
+            1,
+            "SETAS: ESCOLHER   ENTER: JOGAR   ESC: SAIR",
+            text,
+        );
+        out
+    }
 }
 
 fn landscape_grid_visible_rows(logical_height: f32) -> usize {
