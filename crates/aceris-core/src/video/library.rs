@@ -2751,7 +2751,7 @@ impl Library {
 
         // The selected-game actions remain available regardless of the current tab.
         if self.page == LibraryPage::Settings && (760.0..980.0).contains(&x) {
-            if (384.0..426.0).contains(&y) {
+            if self.settings_section == SettingsSection::Library && (384.0..426.0).contains(&y) {
                 self.reload();
             }
             return ClickResult::Ignored;
@@ -6043,10 +6043,75 @@ impl Library {
             }
         }
 
-        // Keep the right rail contextual: collection actions on game pages,
-        // a compact health/refresh summary on Settings.
+        // The right rail summarizes the active Settings category without
+        // duplicating its interactive controls.
         if self.page != LibraryPage::Home {
             if self.page == LibraryPage::Settings {
+                let (first_label, first_value, second_label, second_value, third_label, third_value, footer) =
+                    match self.settings_section {
+                        SettingsSection::Library => (
+                            "PASTAS MONITORADAS",
+                            self.scan_config.directories.len().to_string(),
+                            "JOGOS / HOMEBREW",
+                            format!("{} / {}", game_count, homebrew_count),
+                            "VISUALIZAÇÃO / ORDEM",
+                            format!(
+                                "{} · {}",
+                                if self.view_mode == LibraryViewMode::Grid {
+                                    "GRADE"
+                                } else {
+                                    "LISTA"
+                                },
+                                if self.sort_descending { "Z–A" } else { "A–Z" }
+                            ),
+                            "PASTAS E JOGOS LOCAIS",
+                        ),
+                        SettingsSection::Performance => (
+                            "MODO DE DESEMPENHO",
+                            if self.performance_mode { "ATIVO" } else { "DESATIVADO" }
+                                .to_string(),
+                            "ZONA MORTA DO ANALÓGICO",
+                            format!("{}%", self.gamepad_deadzone_percent),
+                            "APLICAÇÃO",
+                            "NO PRÓXIMO JOGO".to_string(),
+                            "PERFIL DE EXECUÇÃO PERSISTENTE",
+                        ),
+                        SettingsSection::Controls if self.touch_keyboard_enabled => (
+                            "CONTROLES DE TOQUE",
+                            if self.virtual_controls_visible { "ATIVOS" } else { "OCULTOS" }
+                                .to_string(),
+                            "OPACIDADE / TAMANHO",
+                            format!(
+                                "{}% / {}%",
+                                self.virtual_controls_opacity_percent(),
+                                self.virtual_controls_size_percent()
+                            ),
+                            "LAYOUT ATUAL",
+                            self.virtual_controls_preset.label().to_string(),
+                            "PERSONALIZAÇÃO DE TOQUE",
+                        ),
+                        SettingsSection::Controls => (
+                            "SUPORTE A TOQUE",
+                            "NÃO DISPONÍVEL".to_string(),
+                            "PLATAFORMA",
+                            "ANDROID".to_string(),
+                            "CATEGORIA",
+                            "CONTROLES".to_string(),
+                            "OPÇÕES DE TOQUE NO ANDROID",
+                        ),
+                    };
+                let rail_height = (bottom - 160.0).max(250.0);
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    752.0,
+                    160.0,
+                    224.0,
+                    rail_height,
+                    scale,
+                    brand::SURFACE_PANEL,
+                );
                 responsive_text(
                     frame,
                     width,
@@ -6054,7 +6119,7 @@ impl Library {
                     780.0,
                     174.0,
                     small_scale,
-                    "RESUMO",
+                    "RESUMO DA SEÇÃO",
                     brand::ACCENT_GREEN_LIGHT,
                 );
                 responsive_text(
@@ -6064,7 +6129,7 @@ impl Library {
                     780.0,
                     205.0,
                     small_scale,
-                    "PASTAS ATIVAS",
+                    first_label,
                     brand::TEXT_MUTED,
                 );
                 responsive_text(
@@ -6074,7 +6139,7 @@ impl Library {
                     780.0,
                     226.0,
                     text_scale,
-                    &self.scan_config.directories.len().to_string(),
+                    &first_value,
                     brand::TEXT,
                 );
                 responsive_text(
@@ -6084,7 +6149,7 @@ impl Library {
                     780.0,
                     266.0,
                     small_scale,
-                    "JOGOS E HOMEBREW",
+                    second_label,
                     brand::TEXT_MUTED,
                 );
                 responsive_text(
@@ -6094,7 +6159,7 @@ impl Library {
                     780.0,
                     288.0,
                     text_scale,
-                    &format!("{} / {}", game_count, homebrew_count),
+                    &second_value,
                     brand::TEXT,
                 );
                 responsive_text(
@@ -6104,7 +6169,7 @@ impl Library {
                     780.0,
                     330.0,
                     small_scale,
-                    "CATEGORIA ATUAL",
+                    third_label,
                     brand::TEXT_MUTED,
                 );
                 responsive_text(
@@ -6114,40 +6179,55 @@ impl Library {
                     780.0,
                     351.0,
                     small_scale,
-                    self.settings_section.label(),
+                    &third_value,
                     brand::TEXT,
                 );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    776.0,
-                    384.0,
-                    188.0,
-                    42.0,
-                    scale,
-                    brand::SURFACE_SELECTED,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    870.0,
-                    398.0,
-                    small_scale,
-                    "ATUALIZAR BIBLIOTECA",
-                    brand::TEXT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    780.0,
-                    (bottom - 34.0).max(0.0),
-                    small_scale,
-                    "PASTAS E JOGOS LOCAIS",
-                    brand::TEXT_MUTED,
-                );
+                if self.settings_section == SettingsSection::Library {
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        776.0,
+                        384.0,
+                        188.0,
+                        42.0,
+                        scale,
+                        brand::SURFACE_SELECTED,
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        870.0,
+                        398.0,
+                        small_scale,
+                        "ATUALIZAR BIBLIOTECA",
+                        brand::TEXT,
+                    );
+                }
+                if self.settings_section != SettingsSection::Library {
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        780.0,
+                        (bottom - 34.0).max(0.0),
+                        small_scale,
+                        footer,
+                        brand::TEXT_MUTED,
+                    );
+                } else {
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        780.0,
+                        438.0f32.min((bottom - 8.0).max(0.0)),
+                        small_scale,
+                        footer,
+                        brand::TEXT_MUTED,
+                    );
+                }
             } else {
                 responsive_panel(
                     frame,
@@ -8271,6 +8351,41 @@ mod tests {
             ClickResult::Selected
         );
         assert_eq!(library.selected_entry().unwrap().title, "Game 1");
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn settings_right_rail_summary_changes_with_active_category() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-settings-summary-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mut library = Library::new(Vec::new(), dir.display().to_string());
+        library.select_page(LibraryPage::Settings);
+        library.set_touch_keyboard_enabled(true);
+
+        let region = |frame: &[u8]| {
+            let mut pixels = Vec::new();
+            for y in 160..432usize {
+                let start = (y * 1000 + 752) * 4;
+                let end = (y * 1000 + 976) * 4;
+                pixels.extend_from_slice(&frame[start..end]);
+            }
+            pixels
+        };
+
+        let library_summary = region(&library.render_responsive(1000, 450));
+        library.select_settings_section(SettingsSection::Performance);
+        let performance_summary = region(&library.render_responsive(1000, 450));
+        library.select_settings_section(SettingsSection::Controls);
+        let controls_summary = region(&library.render_responsive(1000, 450));
+
+        assert_ne!(library_summary, performance_summary);
+        assert_ne!(performance_summary, controls_summary);
+        assert_ne!(library_summary, controls_summary);
 
         fs::remove_dir_all(dir).unwrap();
     }
