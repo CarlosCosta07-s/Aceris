@@ -772,6 +772,7 @@ fn emulate(
     let mut menu_open = false;
     let mut menu_selected = 0usize;
     let mut diagnostics_visible = false;
+    let mut quick_menu_notice: Option<&'static str> = None;
     let mut layout_profile = layout_preferences.profile_for_game(
         system.game_identity(),
         window::GAME_CANVAS_WIDTH as u32,
@@ -801,6 +802,7 @@ fn emulate(
                     } else {
                         menu_open = true;
                         menu_selected = 0;
+                        quick_menu_notice = None;
                         keyboard.reset(system.input_mut());
                         if let Some(audio) = audio.as_mut() {
                             if let Err(message) = audio.flush() {
@@ -1097,8 +1099,14 @@ fn emulate(
                 frame_height,
                 &settings_directory.join("screenshots"),
             ) {
-                Ok(path) => println!("Screenshot salvo em {}", path.display()),
-                Err(error) => eprintln!("Não foi possível salvar o screenshot: {error}"),
+                Ok(path) => {
+                    quick_menu_notice = Some("CAPTURA SALVA");
+                    println!("Screenshot salvo em {}", path.display());
+                }
+                Err(error) => {
+                    quick_menu_notice = Some("ERRO AO CAPTURAR");
+                    eprintln!("Não foi possível salvar o screenshot: {error}");
+                }
             }
         }
         if diagnostics_visible && !menu_open {
@@ -1120,7 +1128,7 @@ fn emulate(
             }
         }
         if menu_open {
-            let profile_label = if layout_preferences.game_has_override_for_surface(
+            let inherited_profile_label = if layout_preferences.game_has_override_for_surface(
                 system.game_identity(),
                 frame_width as u32,
                 frame_height as u32,
@@ -1129,6 +1137,7 @@ fn emulate(
             } else {
                 "PADRÃO GLOBAL"
             };
+            let profile_label = quick_menu_notice.unwrap_or(inherited_profile_label);
             let rendered = match pending_confirmation {
                 Some(action) => quick_menu::render_confirmation_overlay(
                     &mut frame,
