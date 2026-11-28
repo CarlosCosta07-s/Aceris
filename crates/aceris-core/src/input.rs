@@ -39,8 +39,16 @@ pub const CIRCLE_PAD_LIMIT: i16 = 156;
 /// applying the same threshold independently to X and Y. Inputs are sanitized
 /// and clamped to the unit circle before the deadzone is normalized.
 pub fn gamepad_axes_to_circle_pad(x: f32, y: f32, deadzone_percent: u8) -> (i16, i16) {
-    let x = if x.is_finite() { x.clamp(-1.0, 1.0) } else { 0.0 };
-    let y = if y.is_finite() { y.clamp(-1.0, 1.0) } else { 0.0 };
+    let x = if x.is_finite() {
+        x.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+    let y = if y.is_finite() {
+        y.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
     let magnitude = x.hypot(y);
     let deadzone = f32::from(deadzone_percent.min(99)) / 100.0;
 
