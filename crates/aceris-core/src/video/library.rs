@@ -5743,7 +5743,10 @@ fn responsive_rounded_fill(
     radius: f32,
     color: u32,
 ) {
-    if width == 0 || height == 0 || !scale.is_finite() || scale <= 0.0
+    if width == 0
+        || height == 0
+        || !scale.is_finite()
+        || scale <= 0.0
         || frame.len() != width.saturating_mul(height).saturating_mul(4)
     {
         return;
@@ -5757,7 +5760,10 @@ fn responsive_rounded_fill(
     }
     let rect_w = (right - left) as f32;
     let rect_h = (bottom - top) as f32;
-    let corner = (radius * scale).max(0.0).min(rect_w * 0.5).min(rect_h * 0.5);
+    let corner = (radius * scale)
+        .max(0.0)
+        .min(rect_w * 0.5)
+        .min(rect_h * 0.5);
     let red = (color >> 16) as u8;
     let green = (color >> 8) as u8;
     let blue = color as u8;
@@ -5801,17 +5807,40 @@ fn responsive_panel(
     // Rounded shadows, borders and surfaces share one shape language across
     // Home, library pages, settings and the touch-first portrait layout.
     responsive_rounded_fill(
-        frame, width as usize, height as usize,
-        x + 3.0, y + 4.0, rect_width, rect_height, scale, 6.0, 0x090F15,
+        frame,
+        width as usize,
+        height as usize,
+        x + 3.0,
+        y + 4.0,
+        rect_width,
+        rect_height,
+        scale,
+        6.0,
+        0x090F15,
     );
     responsive_rounded_fill(
-        frame, width as usize, height as usize,
-        x, y, rect_width, rect_height, scale, 6.0, 0x39576B,
+        frame,
+        width as usize,
+        height as usize,
+        x,
+        y,
+        rect_width,
+        rect_height,
+        scale,
+        6.0,
+        0x39576B,
     );
     responsive_rounded_fill(
-        frame, width as usize, height as usize,
-        x + 1.0, y + 1.0, rect_width - 2.0, rect_height - 2.0,
-        scale, 5.0, color,
+        frame,
+        width as usize,
+        height as usize,
+        x + 1.0,
+        y + 1.0,
+        rect_width - 2.0,
+        rect_height - 2.0,
+        scale,
+        5.0,
+        color,
     );
     responsive_fill(
         frame, width as usize, height as usize,

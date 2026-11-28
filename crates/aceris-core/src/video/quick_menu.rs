@@ -170,7 +170,15 @@ pub fn render_menu_button(frame: &mut [u8], width: u32, height: u32, format: Pix
     if expected != Some(frame.len()) {
         return false;
     }
-    blend_rounded_rect(frame, width as usize, button, [32, 55, 73], 232, 7 * scale, format);
+    blend_rounded_rect(
+        frame,
+        width as usize,
+        button,
+        [32, 55, 73],
+        232,
+        7 * scale,
+        format,
+    );
     draw_border(frame, width as usize, button, scale.max(1), format);
     draw_text_for_format(
         frame,
@@ -237,7 +245,15 @@ pub fn render_control_editor_hint(
         width: (width as usize - 116 * scale).min(230 * scale),
         height: 46 * scale,
     };
-    blend_rounded_rect(frame, width as usize, panel, [17, 29, 44], 238, 9 * scale, format);
+    blend_rounded_rect(
+        frame,
+        width as usize,
+        panel,
+        [17, 29, 44],
+        238,
+        9 * scale,
+        format,
+    );
     draw_border(frame, width as usize, panel, scale, format);
     draw_text_for_format(
         frame,
@@ -401,7 +417,15 @@ pub fn render_diagnostics_overlay(
         width: panel_width,
         height: panel_height.min(height as usize - margin),
     };
-    blend_rounded_rect(frame, width as usize, panel, [15, 26, 40], 236, 8 * scale, format);
+    blend_rounded_rect(
+        frame,
+        width as usize,
+        panel,
+        [15, 26, 40],
+        236,
+        8 * scale,
+        format,
+    );
     draw_colored_border(frame, width as usize, panel, scale, [55, 94, 118], format);
     let accent = Rect {
         height: (3 * scale).min(panel.height),
@@ -528,7 +552,11 @@ pub fn render_confirmation_overlay(
             frame,
             width as usize,
             *row,
-            if is_selected { [22, 91, 122] } else { [31, 46, 62] },
+            if is_selected {
+                [22, 91, 122]
+            } else {
+                [31, 46, 62]
+            },
             if is_selected { 250 } else { 230 },
             7 * scale,
             format,
@@ -771,7 +799,13 @@ pub fn render_gamepad_mapping_editor(
         format,
     );
     blend_rounded_rect(
-        frame, width as usize, geometry.scope, [34, 58, 76], 248, 6 * scale, format,
+        frame,
+        width as usize,
+        geometry.scope,
+        [34, 58, 76],
+        248,
+        6 * scale,
+        format,
     );
     draw_text_for_format(
         frame,
@@ -791,7 +825,11 @@ pub fn render_gamepad_mapping_editor(
             frame,
             width as usize,
             *row,
-            if is_selected { [22, 91, 122] } else { [31, 46, 62] },
+            if is_selected {
+                [22, 91, 122]
+            } else {
+                [31, 46, 62]
+            },
             if is_selected { 250 } else { 232 },
             6 * scale,
             format,
@@ -863,7 +901,15 @@ pub fn render_gamepad_mapping_editor(
         (geometry.axes, "EIXOS"),
         (geometry.close, "VOLTAR"),
     ] {
-        blend_rounded_rect(frame, width as usize, rect, [34, 58, 76], 248, 6 * scale, format);
+        blend_rounded_rect(
+            frame,
+            width as usize,
+            rect,
+            [34, 58, 76],
+            248,
+            6 * scale,
+            format,
+        );
         let label_width = font::measure_text(label, scale);
         draw_text_for_format(
             frame,
@@ -1064,7 +1110,13 @@ pub fn render_gamepad_axis_editor(
         format,
     );
     blend_rounded_rect(
-        frame, width as usize, geometry.scope, [34, 58, 76], 248, 6 * scale, format,
+        frame,
+        width as usize,
+        geometry.scope,
+        [34, 58, 76],
+        248,
+        6 * scale,
+        format,
     );
     draw_text_for_format(
         frame,
@@ -1079,7 +1131,15 @@ pub fn render_gamepad_axis_editor(
     );
 
     for (index, row) in geometry.rows.iter().enumerate() {
-        blend_rounded_rect(frame, width as usize, *row, [31, 46, 62], 232, 6 * scale, format);
+        blend_rounded_rect(
+            frame,
+            width as usize,
+            *row,
+            [31, 46, 62],
+            232,
+            6 * scale,
+            format,
+        );
         let label = match index {
             0 => "INVERTER EIXO X",
             1 => "INVERTER EIXO Y",
@@ -1150,8 +1210,8 @@ pub fn render_gamepad_axis_editor(
                     .map(|value| format!("{value}%"))
                     .unwrap_or_else(|| format!("AUTO {inherited_deadzone_percent}%"))
             };
-            let center_x = row.x + row.width * 77 / 100
-                - font::measure_text(&center_value, text_scale) / 2;
+            let center_x =
+                row.x + row.width * 77 / 100 - font::measure_text(&center_value, text_scale) / 2;
             draw_text_for_format(
                 frame,
                 width as usize,
@@ -1178,7 +1238,15 @@ pub fn render_gamepad_axis_editor(
     }
 
     for (rect, label) in [(geometry.reset, "PADRAO"), (geometry.back, "VOLTAR")] {
-        blend_rounded_rect(frame, width as usize, rect, [34, 58, 76], 248, 6 * scale, format);
+        blend_rounded_rect(
+            frame,
+            width as usize,
+            rect,
+            [34, 58, 76],
+            248,
+            6 * scale,
+            format,
+        );
         let label_width = font::measure_text(label, scale);
         draw_text_for_format(
             frame,
@@ -1361,7 +1429,11 @@ fn render_overlay_with_action_count(
             frame,
             width as usize,
             *row,
-            if is_selected { [22, 91, 122] } else { [31, 46, 62] },
+            if is_selected {
+                [22, 91, 122]
+            } else {
+                [31, 46, 62]
+            },
             if is_selected { 250 } else { 230 },
             7 * scale,
             format,
@@ -1451,7 +1523,15 @@ fn draw_panel_chrome(
         y: panel.y.saturating_add(2 * scale),
         ..panel
     };
-    blend_rounded_rect(frame, width, near_shadow, [6, 13, 22], 150, 9 * scale, format);
+    blend_rounded_rect(
+        frame,
+        width,
+        near_shadow,
+        [6, 13, 22],
+        150,
+        9 * scale,
+        format,
+    );
     blend_rounded_rect(frame, width, panel, [55, 94, 118], 255, 9 * scale, format);
     let inner = Rect {
         x: panel.x.saturating_add(scale),
@@ -1504,8 +1584,10 @@ fn blend_rounded_rect(
         };
         let inset = if distance > 0.0 && corner > 0 {
             (corner as f32
-                - (corner as f32 * corner as f32 - distance * distance).max(0.0).sqrt())
-                .ceil() as usize
+                - (corner as f32 * corner as f32 - distance * distance)
+                    .max(0.0)
+                    .sqrt())
+            .ceil() as usize
         } else {
             0
         };

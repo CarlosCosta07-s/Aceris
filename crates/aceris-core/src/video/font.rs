@@ -356,22 +356,30 @@ fn draw_rounded_cell(
                 let local_y = dy as f32 + (sample_y as f32 + 0.5) / SAMPLES as f32;
                 for sample_x in 0..SAMPLES {
                     let local_x = dx as f32 + (sample_x as f32 + 0.5) / SAMPLES as f32;
-                    let outside_top_left = round_top_left && local_x < radius && local_y < radius
+                    let outside_top_left = round_top_left
+                        && local_x < radius
+                        && local_y < radius
                         && (local_x - radius).powi(2) + (local_y - radius).powi(2) > radius_squared;
                     let outside_top_right = round_top_right
-                        && local_x > scale as f32 - radius && local_y < radius
-                        && (local_x - (scale as f32 - radius)).powi(2)
-                            + (local_y - radius).powi(2) > radius_squared;
+                        && local_x > scale as f32 - radius
+                        && local_y < radius
+                        && (local_x - (scale as f32 - radius)).powi(2) + (local_y - radius).powi(2)
+                            > radius_squared;
                     let outside_bottom_left = round_bottom_left
-                        && local_x < radius && local_y > scale as f32 - radius
-                        && (local_x - radius).powi(2)
-                            + (local_y - (scale as f32 - radius)).powi(2) > radius_squared;
+                        && local_x < radius
+                        && local_y > scale as f32 - radius
+                        && (local_x - radius).powi(2) + (local_y - (scale as f32 - radius)).powi(2)
+                            > radius_squared;
                     let outside_bottom_right = round_bottom_right
-                        && local_x > scale as f32 - radius && local_y > scale as f32 - radius
+                        && local_x > scale as f32 - radius
+                        && local_y > scale as f32 - radius
                         && (local_x - (scale as f32 - radius)).powi(2)
-                            + (local_y - (scale as f32 - radius)).powi(2) > radius_squared;
-                    if !outside_top_left && !outside_top_right
-                        && !outside_bottom_left && !outside_bottom_right
+                            + (local_y - (scale as f32 - radius)).powi(2)
+                            > radius_squared;
+                    if !outside_top_left
+                        && !outside_top_right
+                        && !outside_bottom_left
+                        && !outside_bottom_right
                     {
                         coverage += 1;
                     }
@@ -388,7 +396,9 @@ fn draw_rounded_cell(
                 let inverse = 255 - alpha;
                 for channel in 0..3 {
                     canvas[at + channel] = ((u32::from(color[channel]) * alpha
-                        + u32::from(canvas[at + channel]) * inverse + 127) / 255) as u8;
+                        + u32::from(canvas[at + channel]) * inverse
+                        + 127)
+                        / 255) as u8;
                 }
             }
             canvas[at + 3] = 255;
@@ -409,7 +419,9 @@ pub fn draw_text(
     text: &str,
     color: [u8; 3],
 ) {
-    if scale == 0 || width == 0 || height == 0
+    if scale == 0
+        || width == 0
+        || height == 0
         || canvas.len() != width.saturating_mul(height).saturating_mul(4)
     {
         return;
@@ -434,10 +446,13 @@ pub fn draw_text(
                 let col = column as i32;
                 let row_index = row as i32;
                 draw_rounded_cell(
-                    canvas, width, height,
+                    canvas,
+                    width,
+                    height,
                     cursor.saturating_add((column * scale) as i32),
                     y.saturating_add((row * scale) as i32),
-                    scale, color,
+                    scale,
+                    color,
                     !pixel_is_set(&rows, col - 1, row_index)
                         && !pixel_is_set(&rows, col, row_index - 1),
                     !pixel_is_set(&rows, col + 1, row_index)
