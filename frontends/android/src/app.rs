@@ -1354,8 +1354,7 @@ fn gamepad_axis_to_circle_pad(value: f32, deadzone_percent: u8) -> i32 {
 
 fn gamepad_trigger_mask(left: f32, right: f32) -> u32 {
     let is_pressed = |value: f32| value.is_finite() && value.clamp(0.0, 1.0) >= 0.5;
-    (if is_pressed(left) { pad::ZL } else { 0 })
-        | (if is_pressed(right) { pad::ZR } else { 0 })
+    (if is_pressed(left) { pad::ZL } else { 0 }) | (if is_pressed(right) { pad::ZR } else { 0 })
 }
 
 #[cfg(test)]
@@ -1364,8 +1363,14 @@ mod gamepad_axis_tests {
 
     #[test]
     fn android_l2_and_r2_keycodes_map_to_zl_and_zr() {
-        assert_eq!(extra_pad_from_android_keycode(AKEYCODE_BUTTON_L2), Some(pad::ZL));
-        assert_eq!(extra_pad_from_android_keycode(AKEYCODE_BUTTON_R2), Some(pad::ZR));
+        assert_eq!(
+            extra_pad_from_android_keycode(AKEYCODE_BUTTON_L2),
+            Some(pad::ZL)
+        );
+        assert_eq!(
+            extra_pad_from_android_keycode(AKEYCODE_BUTTON_R2),
+            Some(pad::ZR)
+        );
         assert_eq!(extra_pad_from_android_keycode(AKEYCODE_BUTTON_R2 + 1), None);
     }
 
