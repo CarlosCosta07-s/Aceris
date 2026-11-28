@@ -6319,6 +6319,114 @@ fn render_home_game_tile(
     title_scale: usize,
     small_scale: usize,
 ) {
+    // Landscape dashboard cards use a compact horizontal composition: a
+    // square game identity on the left, then readable title and metadata.
+    // Portrait cards keep their taller artwork-first composition below.
+    if card_width >= 180.0 && card_height <= 130.0 {
+        if selected {
+            responsive_panel(
+                frame,
+                width,
+                height,
+                x - 3.0,
+                y - 3.0,
+                card_width + 6.0,
+                card_height + 6.0,
+                scale,
+                brand::ACCENT_RED_LIGHT,
+            );
+        }
+        responsive_panel(
+            frame,
+            width,
+            height,
+            x,
+            y,
+            card_width,
+            card_height,
+            scale,
+            if selected {
+                brand::SURFACE_SELECTED
+            } else {
+                brand::SURFACE_CARD
+            },
+        );
+        render_cover_art(
+            frame,
+            width,
+            height,
+            scale,
+            x + 11.0,
+            y + 14.0,
+            76.0,
+            76.0,
+            entry,
+            smdh_icon,
+            small_scale,
+        );
+
+        let info_x = x + 99.0;
+        let info_scale = (title_scale / 2).max(small_scale).min(2);
+        responsive_text(
+            frame,
+            width,
+            height,
+            info_x,
+            y + 28.0,
+            info_scale,
+            &truncate(&entry.title, 18),
+            brand::TEXT,
+        );
+        let extension = entry
+            .path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("3ds");
+        responsive_text(
+            frame,
+            width,
+            height,
+            info_x,
+            y + 49.0,
+            small_scale,
+            &format!("NINTENDO 3DS  ·  .{}", extension.to_ascii_uppercase()),
+            brand::TEXT_MUTED,
+        );
+        if recent || favorite {
+            responsive_text(
+                frame,
+                width,
+                height,
+                info_x,
+                y + 70.0,
+                small_scale,
+                if recent {
+                    "JOGADO RECENTEMENTE"
+                } else {
+                    "NOS FAVORITOS"
+                },
+                if recent {
+                    brand::ACCENT_GREEN_LIGHT
+                } else {
+                    brand::ACCENT_RED_LIGHT
+                },
+            );
+        } else if selected {
+            responsive_fill(
+                frame,
+                width as usize,
+                height as usize,
+                x + card_width - 12.0,
+                y + 14.0,
+                3.0,
+                card_height - 28.0,
+                scale,
+                brand::ACCENT_RED_LIGHT,
+            );
+        }
+        return;
+    }
+
     if selected {
         responsive_panel(
             frame,
