@@ -1215,7 +1215,10 @@ mod tests {
             ));
             assert_ne!(frame, original);
             let outside = ((height as usize - 4) * width as usize + width as usize - 4) * 4;
-            assert_eq!(&frame[outside..outside + 3], &original[outside..outside + 3]);
+            assert_eq!(
+                &frame[outside..outside + 3],
+                &original[outside..outside + 3]
+            );
         }
 
         let mut invalid = vec![7u8; 8];
