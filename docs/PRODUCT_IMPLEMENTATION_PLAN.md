@@ -126,12 +126,14 @@ Projeto da fronteira de leitura e seleção de pastas: [FILE_SOURCE_ARCHITECTURE
 - [ ] Detectar conflitos de atalhos e permitir redefinir o padrão.
 
 **M3.2 — Desktop**
+- [~] Navegação da Home por teclado: setas percorrem cartões, ações principais e dock com foco visual; Enter executa a ação contextual. A navegação geral da biblioteca continua separada dos atalhos globais ainda pendentes.
 - [~] Backend GilRs integrado para Windows/Linux/macOS: lê o primeiro controle conectado, atualiza estado após eventos de conexão/desconexão e combina gamepad com teclado; mapeia A/B/X/Y, D-pad, L/R, Start/Select e stick esquerdo. Usa a deadzone global configurável. [ ] Enumerar dispositivos e apresentar seletor/nome do controle ativo.
 - [ ] Mapeamento automático somente para layouts conhecidos e confirmados; manter remapeamento manual. A implementação atual usa o layout padronizado do backend e não oferece reconfiguração de botões.
 - [~] Entrada física básica está ligada ao loop guest e mantém teclado + controle combinados. [ ] Permitir remapear teclado, mouse quando aplicável, botões, gatilhos e eixos; persistir mapeamentos por dispositivo e testar desconexão/reconexão.
 - [ ] Atalhos globais configuráveis para pausar, retomar, menu, screenshot, troca de telas e ações de progresso quando existirem.
 
 **M3.3 — Android**
+- [~] Home Android com navegação D-pad por foco entre cartões, ações e atalhos inferiores; A/Start confirma a ação focada. Teste automatizado cobre favoritar e abrir o fallback de caminho para importação.
 - [~] Android recebe botões digitais por eventos de tecla e o eixo primário X/Y de joystick USB/Bluetooth pelo NativeActivity; normaliza para Circle Pad ±156 e inverte Y. Deadzone global ajustável em 8/12/16/20/24% (padrão 16%) é persistida e aplicada também no desktop. D-pad, A/B/X/Y, L1/R1 e Start/Select têm mapeamentos-base. L2/R2 aguardam o caminho adicional `ir:rst` do New 3DS. Ainda faltam remapeamento, seleção/perfis de dispositivo, gatilhos/eixos adicionais e validação em aparelho físico.
 - [x] Editor Android de controles virtuais: mover, redimensionar, ocultar, ajustar opacidade, escala, presets e posições individuais; layouts separados por orientação e overrides por Title ID com herança/restauração já existem. Falta validação física abrangente.
 - [x] Presets padrão, compacto, canhoto e destro; o modo personalizado é composto pelas posições e tamanhos editados pelo usuário.
