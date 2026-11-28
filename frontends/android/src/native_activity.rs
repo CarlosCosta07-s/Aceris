@@ -1270,8 +1270,11 @@ fn render(
         // required to display the UI, so a device-driver failure must not keep
         // the application from opening. Initialize the optional WGPU presenter
         // only after a guest game is running.
-        let game_is_running = matches!(app.screen(), Screen::Game);
-        if !game_is_running {
+        let game_session_active = matches!(
+            app.screen(),
+            Screen::Game | Screen::GameMenu | Screen::GameMenuConfirm { .. }
+        );
+        if !game_session_active {
             gpu_presenter.take();
             *attempted_gpu_window = Raw::default();
         } else if gpu_presenter.is_none() && *attempted_gpu_window != window {
@@ -1286,12 +1289,12 @@ fn render(
             );
         }
 
-        let gpu_result = if game_is_running {
+        let gpu_result = if game_session_active {
             gpu_presenter.as_mut().map(|gpu| {
-            gpu.presenter
-                .as_mut()
-                .expect("Android GPU presenter is present while its owner is alive")
-                .present_rgba(frame, width, height)
+                gpu.presenter
+                    .as_mut()
+                    .expect("Android GPU presenter is present while its owner is alive")
+                    .present_rgba(frame, width, height)
             })
         } else {
             None
