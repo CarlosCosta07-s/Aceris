@@ -2898,7 +2898,6 @@ impl Library {
                             && (246.0..324.0).contains(&y)
                             && (48.0..696.0).contains(&x)
                         {
-                            self.focus_settings_control(0);
                             self.toggle_virtual_controls_from_settings();
                         } else if self.touch_keyboard_enabled && (338.0..430.0).contains(&y) {
                             if (48.0..258.0).contains(&x) {
