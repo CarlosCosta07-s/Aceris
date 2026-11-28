@@ -2347,6 +2347,7 @@ impl Library {
                     ClickResult::Ignored
                 }
                 3 => {
+                    self.select_page(LibraryPage::Games);
                     self.toggle_view_mode();
                     ClickResult::Ignored
                 }
@@ -4951,7 +4952,17 @@ impl Library {
             ),
             (640.0, "X", "FAVORITO", 1usize, 132.0),
             (788.0, "+", "OPÇÕES", 2usize, 112.0),
-            (914.0, "−", "GRADE", 3usize, 120.0),
+            (
+                914.0,
+                "−",
+                if self.view_mode == LibraryViewMode::Grid {
+                    "LISTA"
+                } else {
+                    "GRADE"
+                },
+                3usize,
+                120.0,
+            ),
         ];
         for (x, key, label, slot, group_width) in command_items {
             render_console_hint(
@@ -9965,7 +9976,7 @@ mod tests {
             library.click_responsive(950, 570, 1000, 600),
             ClickResult::Ignored
         );
-        assert_eq!(library.page(), LibraryPage::Home);
+        assert_eq!(library.page(), LibraryPage::Games);
         assert_eq!(library.status_message(), Some("Visualização: lista"));
 
         fs::remove_dir_all(dir).unwrap();
