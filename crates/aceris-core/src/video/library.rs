@@ -5243,6 +5243,29 @@ impl Library {
                 brand::SURFACE_RAISED
             },
         );
+        responsive_circle_outline(
+            frame,
+            width,
+            height,
+            439.0,
+            94.0,
+            5.5,
+            1.6,
+            scale,
+            brand::TEXT_MUTED,
+        );
+        responsive_line(
+            frame,
+            width,
+            height,
+            443.0,
+            98.0,
+            447.0,
+            102.0,
+            1.6,
+            scale,
+            brand::TEXT_MUTED,
+        );
         let search_label = if self.search_query.is_empty() {
             "BUSCAR JOGO".to_string()
         } else {
@@ -5252,7 +5275,7 @@ impl Library {
             frame,
             width,
             height,
-            432.0,
+            456.0,
             90.0,
             label_scale,
             &search_label,
