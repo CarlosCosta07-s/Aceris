@@ -118,7 +118,7 @@ pub mod home {
     pub const SIDEBAR_BRAND_CENTER_Y: f32 = 38.0;
     pub const SIDEBAR_FIRST_ITEM_Y: f32 = 94.0;
     pub const SIDEBAR_ITEM_COUNT: usize = 5;
-    pub const SIDEBAR_POWER_BOTTOM: f32 = 0.23;
+    pub const SIDEBAR_POWER_BOTTOM: f32 = 0.30;
 
     pub fn sidebar_item_center_y(index: usize, logical_height: f32) -> f32 {
         let span = (logical_height * 0.43).clamp(180.0, 242.0);
