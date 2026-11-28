@@ -2236,9 +2236,9 @@ impl Library {
                 }
                 HomeFocus::Navigation => {
                     let count = if portrait { 4 } else { 5 };
-                    self.home_navigation_selected = (self.home_navigation_selected as i64
-                        + i64::from(delta.signum()))
-                    .clamp(0, count - 1) as usize;
+                    self.home_navigation_selected =
+                        (self.home_navigation_selected as i64 + i64::from(delta.signum()))
+                            .clamp(0, count - 1) as usize;
                 }
             }
             return;
@@ -3150,11 +3150,18 @@ impl Library {
             ];
             for (slot, (symbol, label)) in dock_actions.into_iter().enumerate() {
                 let x = 12.0 + slot as f32 * 96.0;
-                if self.home_focus == HomeFocus::Navigation
-                    && self.home_navigation_selected == slot
+                if self.home_focus == HomeFocus::Navigation && self.home_navigation_selected == slot
                 {
                     responsive_panel(
-                        frame, width, height, x - 3.0, 673.0, 94.0, 50.0, scale, 0x55C8E8,
+                        frame,
+                        width,
+                        height,
+                        x - 3.0,
+                        673.0,
+                        94.0,
+                        50.0,
+                        scale,
+                        0x55C8E8,
                     );
                 }
                 responsive_panel(frame, width, height, x, 676.0, 88.0, 44.0, scale, 0x243543);
@@ -4454,7 +4461,15 @@ impl Library {
             for (slot, (x, label, color)) in home_actions.into_iter().enumerate() {
                 if self.home_focus == HomeFocus::Actions && self.home_action_selected == slot {
                     responsive_panel(
-                        frame, width, height, x - 4.0, 376.0, 228.0, 52.0, scale, 0x55C8E8,
+                        frame,
+                        width,
+                        height,
+                        x - 4.0,
+                        376.0,
+                        228.0,
+                        52.0,
+                        scale,
+                        0x55C8E8,
                     );
                 }
                 responsive_panel(frame, width, height, x, 380.0, 220.0, 44.0, scale, color);
@@ -4494,7 +4509,15 @@ impl Library {
                     && self.home_navigation_selected == slot;
                 if focused {
                     responsive_panel(
-                        frame, width, height, x - 3.0, 439.0, 182.0, 58.0, scale, 0x55C8E8,
+                        frame,
+                        width,
+                        height,
+                        x - 3.0,
+                        439.0,
+                        182.0,
+                        58.0,
+                        scale,
+                        0x55C8E8,
                     );
                 }
                 responsive_panel(
@@ -7299,10 +7322,8 @@ mod tests {
 
     #[test]
     fn home_controller_focus_maps_portrait_featured_action_and_dock() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-home-focus-portrait-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aceris-home-focus-portrait-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("focus-game.3ds");
