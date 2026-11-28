@@ -840,8 +840,8 @@ fn emulate(
                 {
                     let mut settings = *gamepad.axis_settings();
                     settings.set_invert_x(!settings.invert_x());
-                    if let Err(error) = gamepad
-                        .save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                    if let Err(error) =
+                        gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
                     {
                         eprintln!("could not save gamepad axis settings: {error}");
                     }
@@ -865,8 +865,9 @@ fn emulate(
                         && !gamepad.mapping_capture_active() =>
                 {
                     let mut settings = *gamepad.axis_settings();
-                    settings
-                        .set_sensitivity_percent(settings.sensitivity_percent().saturating_sub(10));
+                    settings.set_sensitivity_percent(
+                        settings.sensitivity_percent().saturating_sub(10),
+                    );
                     if let Err(error) =
                         gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
                     {
@@ -879,8 +880,9 @@ fn emulate(
                         && !gamepad.mapping_capture_active() =>
                 {
                     let mut settings = *gamepad.axis_settings();
-                    settings
-                        .set_sensitivity_percent(settings.sensitivity_percent().saturating_add(10));
+                    settings.set_sensitivity_percent(
+                        settings.sensitivity_percent().saturating_add(10),
+                    );
                     if let Err(error) =
                         gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
                     {
@@ -1170,8 +1172,8 @@ fn emulate(
                         Some(quick_menu::GamepadAxisEditorHit::InvertX) => {
                             let mut settings = *gamepad.axis_settings();
                             settings.set_invert_x(!settings.invert_x());
-                            if let Err(error) = gamepad
-                                .save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                            if let Err(error) =
+                                gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
                             {
                                 eprintln!("could not save gamepad axis settings: {error}");
                             }

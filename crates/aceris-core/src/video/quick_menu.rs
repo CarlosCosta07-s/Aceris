@@ -1018,9 +1018,7 @@ pub fn hit_test_gamepad_axis_editor(
             0 => Some(GamepadAxisEditorHit::InvertX),
             1 => Some(GamepadAxisEditorHit::InvertY),
             2 if x < row.x + row.width * 45 / 100 => None,
-            2 if x < row.x + row.width * 70 / 100 => {
-                Some(GamepadAxisEditorHit::SensitivityDown)
-            }
+            2 if x < row.x + row.width * 70 / 100 => Some(GamepadAxisEditorHit::SensitivityDown),
             2 => Some(GamepadAxisEditorHit::SensitivityUp),
             _ => None,
         }
