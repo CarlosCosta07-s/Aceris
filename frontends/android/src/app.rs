@@ -61,6 +61,7 @@ pub struct App {
     confirmation_selected: usize,
     controls_editor: bool,
     gamepad_mapping_editor: bool,
+    gamepad_axis_editor: bool,
     gamepad_mapping_capture: bool,
     gamepad_mapping_selected: usize,
     gamepad_mapping_game_scope: bool,
@@ -114,6 +115,7 @@ impl App {
             confirmation_selected: 0,
             controls_editor: false,
             gamepad_mapping_editor: false,
+            gamepad_axis_editor: false,
             gamepad_mapping_capture: false,
             gamepad_mapping_selected: 0,
             gamepad_mapping_game_scope: false,
@@ -319,6 +321,9 @@ impl App {
                     Screen::Game if self.gamepad_mapping_editor && self.gamepad_mapping_capture => {
                         self.cancel_gamepad_mapping_capture();
                     }
+                    Screen::Game if self.gamepad_mapping_editor && self.gamepad_axis_editor => {
+                        self.gamepad_axis_editor = false;
+                    }
                     Screen::Game if self.gamepad_mapping_editor => {
                         self.finish_gamepad_mapping_editor()
                     }
@@ -355,6 +360,23 @@ impl App {
         // bits, so convert before comparing against input::pad constants.
         let pad_bit = pad_from_frontend_buttons(bit);
         match self.screen {
+            Screen::Game
+                if self.gamepad_mapping_editor && self.gamepad_axis_editor && pressed =>
+            {
+                match pad_bit {
+                    pad::UP => self.toggle_gamepad_axis_invert_x(),
+                    pad::DOWN => self.toggle_gamepad_axis_invert_y(),
+                    pad::LEFT => self.adjust_gamepad_axis_sensitivity(-10),
+                    pad::RIGHT | pad::A | pad::START => self.adjust_gamepad_axis_sensitivity(10),
+                    pad::X => {
+                        self.toggle_gamepad_mapping_scope();
+                        self.library.set_status("ESCOPO DO PERFIL ALTERADO");
+                    }
+                    pad::Y => self.reset_gamepad_axis_settings_editor(),
+                    pad::B => self.gamepad_axis_editor = false,
+                    _ => {}
+                }
+            }
             Screen::Game if self.gamepad_mapping_editor && pressed => match pad_bit {
                 pad::UP => {
                     self.gamepad_mapping_selected = self.gamepad_mapping_selected.saturating_sub(1);
@@ -605,16 +627,27 @@ impl App {
                 } else {
                     "ESCOPO: GLOBAL"
                 };
-                let _ = quick_menu::render_gamepad_mapping_editor(
-                    output,
-                    self.width,
-                    self.height,
-                    MenuPixelFormat::Rgba8,
-                    &self.gamepad_mapping,
-                    self.gamepad_mapping_selected,
-                    scope_label,
-                    self.gamepad_mapping_capture,
-                );
+                if self.gamepad_axis_editor {
+                    let _ = quick_menu::render_gamepad_axis_editor(
+                        output,
+                        self.width,
+                        self.height,
+                        MenuPixelFormat::Rgba8,
+                        &self.gamepad_axis_settings,
+                        scope_label,
+                    );
+                } else {
+                    let _ = quick_menu::render_gamepad_mapping_editor(
+                        output,
+                        self.width,
+                        self.height,
+                        MenuPixelFormat::Rgba8,
+                        &self.gamepad_mapping,
+                        self.gamepad_mapping_selected,
+                        scope_label,
+                        self.gamepad_mapping_capture,
+                    );
+                }
             }
             return;
         }
@@ -1052,6 +1085,7 @@ impl App {
         self.control_drag = None;
         self.control_resize = None;
         self.gamepad_mapping_capture = false;
+        self.gamepad_axis_editor = false;
         self.gamepad_mapping_selected = 0;
         self.gamepad_mapping_game_scope = self
             .system
@@ -1116,6 +1150,73 @@ impl App {
         } else {
             GamepadMapping::load_global(&settings_directory)
         };
+        self.load_gamepad_axis_settings_editor_scope();
+    }
+
+    fn load_gamepad_axis_settings_editor_scope(&mut self) {
+        let settings_directory = self.games_dir.join(".aceris");
+        self.gamepad_axis_settings = if self.gamepad_mapping_game_scope {
+            self.system
+                .as_ref()
+                .and_then(System::game_identity)
+                .map(|identity| {
+                    GamepadAxisSettings::load_for_game_or_global(&settings_directory, identity)
+                })
+                .unwrap_or_else(|| GamepadAxisSettings::load_global(&settings_directory))
+        } else {
+            GamepadAxisSettings::load_global(&settings_directory)
+        };
+    }
+
+    fn save_gamepad_axis_settings_editor(&mut self, settings: GamepadAxisSettings) {
+        let settings_directory = self.games_dir.join(".aceris");
+        let result = if self.gamepad_mapping_game_scope {
+            self.system
+                .as_ref()
+                .and_then(System::game_identity)
+                .map(|identity| settings.save_for_game(&settings_directory, identity))
+                .unwrap_or_else(|| settings.save_global(&settings_directory))
+        } else {
+            settings.save_global(&settings_directory)
+        };
+        if let Err(error) = result {
+            self.library
+                .set_status(format!("NÃO FOI POSSÍVEL SALVAR AJUSTES: {error}"));
+        } else {
+            self.gamepad_axis_settings = settings;
+            self.library.set_status(if self.gamepad_mapping_game_scope {
+                "AJUSTES DO ANALÓGICO SALVOS PARA O JOGO"
+            } else {
+                "AJUSTES GLOBAIS DO ANALÓGICO SALVOS"
+            });
+        }
+    }
+
+    fn toggle_gamepad_axis_invert_x(&mut self) {
+        let mut settings = self.gamepad_axis_settings;
+        settings.set_invert_x(!settings.invert_x());
+        self.save_gamepad_axis_settings_editor(settings);
+    }
+
+    fn toggle_gamepad_axis_invert_y(&mut self) {
+        let mut settings = self.gamepad_axis_settings;
+        settings.set_invert_y(!settings.invert_y());
+        self.save_gamepad_axis_settings_editor(settings);
+    }
+
+    fn adjust_gamepad_axis_sensitivity(&mut self, delta: i8) {
+        let mut settings = self.gamepad_axis_settings;
+        let next = if delta < 0 {
+            settings.sensitivity_percent().saturating_sub(delta.unsigned_abs())
+        } else {
+            settings.sensitivity_percent().saturating_add(delta as u8)
+        };
+        settings.set_sensitivity_percent(next);
+        self.save_gamepad_axis_settings_editor(settings);
+    }
+
+    fn reset_gamepad_axis_settings_editor(&mut self) {
+        self.save_gamepad_axis_settings_editor(GamepadAxisSettings::default());
     }
 
     fn save_gamepad_mapping_editor(&mut self) {
@@ -1177,8 +1278,14 @@ impl App {
 
     fn finish_gamepad_mapping_editor(&mut self) {
         self.gamepad_mapping_editor = false;
+        self.gamepad_axis_editor = false;
         self.gamepad_mapping_capture = false;
         self.gamepad_mapping = GamepadMapping::load_for_context(
+            &self.games_dir.join(".aceris"),
+            None,
+            self.system.as_ref().and_then(System::game_identity),
+        );
+        self.gamepad_axis_settings = GamepadAxisSettings::load_for_context(
             &self.games_dir.join(".aceris"),
             None,
             self.system.as_ref().and_then(System::game_identity),
@@ -1210,6 +1317,38 @@ impl App {
         if self.menu_tap.take().is_none() {
             return;
         }
+        if self.gamepad_axis_editor {
+            match quick_menu::hit_test_gamepad_axis_editor(
+                self.width,
+                self.height,
+                x.round() as i32,
+                y.round() as i32,
+            ) {
+                Some(quick_menu::GamepadAxisEditorHit::Scope) => {
+                    self.toggle_gamepad_mapping_scope();
+                }
+                Some(quick_menu::GamepadAxisEditorHit::InvertX) => {
+                    self.toggle_gamepad_axis_invert_x();
+                }
+                Some(quick_menu::GamepadAxisEditorHit::InvertY) => {
+                    self.toggle_gamepad_axis_invert_y();
+                }
+                Some(quick_menu::GamepadAxisEditorHit::SensitivityDown) => {
+                    self.adjust_gamepad_axis_sensitivity(-10);
+                }
+                Some(quick_menu::GamepadAxisEditorHit::SensitivityUp) => {
+                    self.adjust_gamepad_axis_sensitivity(10);
+                }
+                Some(quick_menu::GamepadAxisEditorHit::Reset) => {
+                    self.reset_gamepad_axis_settings_editor();
+                }
+                Some(quick_menu::GamepadAxisEditorHit::Back) => {
+                    self.gamepad_axis_editor = false;
+                }
+                None => {}
+            }
+            return;
+        }
         match quick_menu::hit_test_gamepad_mapping_editor(
             self.width,
             self.height,
@@ -1230,6 +1369,10 @@ impl App {
             Some(quick_menu::GamepadMappingEditorHit::Reset) => {
                 self.cancel_gamepad_mapping_capture();
                 self.reset_gamepad_mapping_editor();
+            }
+            Some(quick_menu::GamepadMappingEditorHit::Axes) => {
+                self.gamepad_axis_editor = true;
+                self.load_gamepad_axis_settings_editor_scope();
             }
             Some(quick_menu::GamepadMappingEditorHit::Capture) => {
                 if self.gamepad_mapping_capture {

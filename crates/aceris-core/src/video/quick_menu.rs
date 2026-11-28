@@ -1658,6 +1658,87 @@ mod tests {
     }
 
     #[test]
+    fn axis_editor_hit_testing_matches_rendered_controls_on_phone_and_desktop() {
+        for (width, height) in [(736u32, 240u32), (400, 800), (320, 240)] {
+            let geometry = gamepad_axis_editor_geometry(width, height).unwrap();
+            let mut frame = vec![0u8; width as usize * height as usize * 4];
+            for format in [PixelFormat::Rgba8, PixelFormat::Bgrx8] {
+                assert!(render_gamepad_axis_editor(
+                    &mut frame,
+                    width,
+                    height,
+                    format,
+                    &GamepadAxisSettings::default(),
+                    "ESCOPO: GLOBAL",
+                ));
+            }
+            for (index, row) in geometry.rows.iter().enumerate() {
+                let x = (row.x + row.width / 4) as i32;
+                let y = (row.y + row.height / 2) as i32;
+                let expected = match index {
+                    0 => GamepadAxisEditorHit::InvertX,
+                    1 => GamepadAxisEditorHit::InvertY,
+                    _ => GamepadAxisEditorHit::SensitivityDown,
+                };
+                assert_eq!(hit_test_gamepad_axis_editor(width, height, x, y), Some(expected));
+            }
+            let sensitivity = geometry.rows[2];
+            assert_eq!(
+                hit_test_gamepad_axis_editor(
+                    width,
+                    height,
+                    (sensitivity.x + sensitivity.width * 3 / 4) as i32,
+                    (sensitivity.y + sensitivity.height / 2) as i32,
+                ),
+                Some(GamepadAxisEditorHit::SensitivityUp)
+            );
+            assert_eq!(
+                hit_test_gamepad_axis_editor(
+                    width,
+                    height,
+                    (geometry.scope.x + 1) as i32,
+                    (geometry.scope.y + 1) as i32,
+                ),
+                Some(GamepadAxisEditorHit::Scope)
+            );
+            assert_eq!(
+                hit_test_gamepad_axis_editor(
+                    width,
+                    height,
+                    (geometry.reset.x + 1) as i32,
+                    (geometry.reset.y + 1) as i32,
+                ),
+                Some(GamepadAxisEditorHit::Reset)
+            );
+            assert_eq!(
+                hit_test_gamepad_axis_editor(
+                    width,
+                    height,
+                    (geometry.back.x + 1) as i32,
+                    (geometry.back.y + 1) as i32,
+                ),
+                Some(GamepadAxisEditorHit::Back)
+            );
+        }
+    }
+
+    #[test]
+    fn axis_editor_rejects_invalid_frame_buffers() {
+        let mut frame = vec![9u8; 16];
+        let before = frame.clone();
+        assert!(!render_gamepad_axis_editor(
+            &mut frame,
+            736,
+            240,
+            PixelFormat::Rgba8,
+            &GamepadAxisSettings::default(),
+            "ESCOPO: GLOBAL",
+        ));
+        assert_eq!(frame, before);
+        assert_eq!(hit_test_gamepad_axis_editor(0, 0, 0, 0), None);
+    }
+
+    #[test]
     fn profile_label_renders_on_compact_phone_and_desktop_canvases() {
         for (width, height) in [(320u32, 240u32), (400, 800), (736, 240), (2400, 1080)] {
             for (label, format) in [
