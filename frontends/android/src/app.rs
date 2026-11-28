@@ -26,6 +26,43 @@ use aceris_core::{
     loaded_image::{LoadedImageIdentity, load_executable_file_with_identity},
 };
 
+const GAMEPAD_HOME_NAV_UP: u8 = 1 << 0;
+const GAMEPAD_HOME_NAV_DOWN: u8 = 1 << 1;
+const GAMEPAD_HOME_NAV_LEFT: u8 = 1 << 2;
+const GAMEPAD_HOME_NAV_RIGHT: u8 = 1 << 3;
+
+/// Converts a physical stick position to one console-style navigation direction.
+fn gamepad_home_navigation_mask(horizontal: f32, vertical: f32) -> u8 {
+    const THRESHOLD: f32 = 0.60;
+
+    let horizontal = if horizontal.is_finite() {
+        horizontal.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+    let vertical = if vertical.is_finite() {
+        vertical.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+    let horizontal_magnitude = horizontal.abs();
+    let vertical_magnitude = vertical.abs();
+
+    if horizontal_magnitude < THRESHOLD && vertical_magnitude < THRESHOLD {
+        return 0;
+    }
+
+    if horizontal_magnitude > vertical_magnitude {
+        if horizontal < 0.0 { GAMEPAD_HOME_NAV_LEFT } else { GAMEPAD_HOME_NAV_RIGHT }
+    } else if vertical_magnitude >= THRESHOLD {
+        if vertical > 0.0 { GAMEPAD_HOME_NAV_UP } else { GAMEPAD_HOME_NAV_DOWN }
+    } else if horizontal < 0.0 {
+        GAMEPAD_HOME_NAV_LEFT
+    } else {
+        GAMEPAD_HOME_NAV_RIGHT
+    }
+}
+
 /// Which part of the application is on screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
@@ -82,6 +119,8 @@ pub struct App {
     gamepad_button_mask: u16,
     /// L2/R2 state derived from Android's analog trigger axes.
     gamepad_trigger_axis_mask: u16,
+    /// Last analog direction used for edge-triggered Home navigation.
+    gamepad_home_navigation: u8,
     /// Effective global/per-title physical gamepad mapping.
     gamepad_mapping: GamepadMapping,
     /// Effective global/per-title analog-stick settings.
@@ -135,6 +174,7 @@ impl App {
             key_mask: 0,
             gamepad_button_mask: 0,
             gamepad_trigger_axis_mask: 0,
+            gamepad_home_navigation: 0,
             gamepad_mapping: GamepadMapping::default(),
             gamepad_axis_settings,
             library_tap: None,
@@ -215,8 +255,32 @@ impl App {
     /// host input convention uses positive Y for up.
     pub fn set_gamepad_axes(&mut self, x: f32, y: f32) -> bool {
         if self.gamepad_mapping_editor || self.controls_editor {
+            self.gamepad_home_navigation = 0;
             return false;
         }
+
+        if matches!(self.screen, Screen::Library)
+            && self.library.page() == library::LibraryPage::Home
+        {
+            let navigation = gamepad_home_navigation_mask(x, -y);
+            let newly_pressed = navigation & !self.gamepad_home_navigation;
+            self.gamepad_home_navigation = navigation;
+            if newly_pressed & GAMEPAD_HOME_NAV_UP != 0 {
+                self.library.move_selection_responsive(-1, self.width, self.height);
+            }
+            if newly_pressed & GAMEPAD_HOME_NAV_DOWN != 0 {
+                self.library.move_selection_responsive(1, self.width, self.height);
+            }
+            if newly_pressed & GAMEPAD_HOME_NAV_LEFT != 0 {
+                self.library.move_selection_horizontal_responsive(-1, self.width, self.height);
+            }
+            if newly_pressed & GAMEPAD_HOME_NAV_RIGHT != 0 {
+                self.library.move_selection_horizontal_responsive(1, self.width, self.height);
+            }
+            return true;
+        }
+
+        self.gamepad_home_navigation = 0;
         let deadzone_percent = self.library.gamepad_deadzone_percent();
         let Some(system) = self.system.as_mut() else {
             return false;
@@ -1814,6 +1878,44 @@ fn write_screenshot_rgba8(
 #[cfg(test)]
 mod screenshot_tests {
     use super::*;
+
+    #[test]
+    fn physical_gamepad_left_stick_navigates_home_with_edge_triggering() {
+        let directory = std::env::temp_dir().join(format!("aceris-home-stick-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        let mut app = App::new(&directory);
+        app.resize(1000, 600);
+        app.screen = Screen::Library;
+        app.library.home_focus = HomeFocus::Actions;
+        app.library.home_action_selected = 0;
+
+        assert!(app.set_gamepad_axes(0.8, 0.0));
+        assert_eq!(app.library.home_action_selected, 1);
+        assert!(app.set_gamepad_axes(0.8, 0.0));
+        assert_eq!(app.library.home_action_selected, 1, "a held stick must not repeat a focus change every frame");
+
+        assert!(app.set_gamepad_axes(0.0, 0.0));
+        assert!(app.set_gamepad_axes(0.8, 0.0));
+        assert_eq!(app.library.home_action_selected, 2);
+
+        assert!(app.set_gamepad_axes(0.0, 0.0));
+        app.library.home_focus = HomeFocus::Games;
+        app.library.home_action_selected = 0;
+        assert!(app.set_gamepad_axes(0.0, -0.8));
+        assert_eq!(app.library.home_focus, HomeFocus::Actions);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn home_gamepad_stick_mapping_uses_deadzone_and_dominant_axis() {
+        assert_eq!(gamepad_home_navigation_mask(0.59, 0.0), 0);
+        assert_eq!(gamepad_home_navigation_mask(-0.60, 0.0), GAMEPAD_HOME_NAV_LEFT);
+        assert_eq!(gamepad_home_navigation_mask(0.0, 0.61), GAMEPAD_HOME_NAV_UP);
+        assert_eq!(gamepad_home_navigation_mask(0.0, -0.61), GAMEPAD_HOME_NAV_DOWN);
+        assert_eq!(gamepad_home_navigation_mask(0.8, 0.7), GAMEPAD_HOME_NAV_RIGHT);
+        assert_eq!(gamepad_home_navigation_mask(0.7, 0.8), GAMEPAD_HOME_NAV_UP);
+        assert_eq!(gamepad_home_navigation_mask(f32::NAN, 0.0), 0);
+    }
 
     #[test]
     fn physical_gamepad_capture_moves_selected_destination_to_pressed_button() {
