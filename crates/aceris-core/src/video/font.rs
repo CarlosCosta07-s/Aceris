@@ -639,8 +639,16 @@ mod tests {
             ('œ', 'Œ'),
             ('ß', 'ẞ'),
         ] {
-            assert_ne!(glyph(lower), UNKNOWN, "missing lowercase glyph {lower:?}");
-            assert_eq!(glyph(upper), glyph(lower), "uppercase mismatch for {upper:?}");
+            assert_ne!(
+                glyph(lower),
+                UNKNOWN,
+                "missing lowercase glyph {lower:?}"
+            );
+            assert_eq!(
+                glyph(upper),
+                glyph(lower),
+                "uppercase mismatch for {upper:?}"
+            );
         }
     }
 
