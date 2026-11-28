@@ -9,9 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use aceris_core::input::{
-    gamepad_axes_to_circle_pad, pad, pad_from_frontend_buttons, touch_from_surface_point,
-};
+use aceris_core::input::{pad, pad_from_frontend_buttons, touch_from_surface_point};
 use aceris_core::input_mapping::{GamepadAxisSettings, GamepadControl, GamepadMapping};
 use aceris_core::video::frontend::{
     self, ORIENTATION_AUTO, ScreenLayout, ScreenLayoutMode, ScreenRect, compute_screen_layout,
