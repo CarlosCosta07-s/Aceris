@@ -162,10 +162,8 @@ mod screenshot_tests {
 
     #[test]
     fn desktop_screenshot_writer_creates_png() {
-        let directory = env::temp_dir().join(format!(
-            "aceris-desktop-screenshot-{}",
-            std::process::id()
-        ));
+        let directory =
+            env::temp_dir().join(format!("aceris-desktop-screenshot-{}", std::process::id()));
         let path = save_screenshot_bgrx(&[30, 20, 10, 0], 1, 1, &directory).unwrap();
         let encoded = fs::read(&path).unwrap();
         assert_eq!(
