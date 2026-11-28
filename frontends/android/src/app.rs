@@ -2185,7 +2185,7 @@ mod screenshot_tests {
     use super::*;
 
     #[test]
-    fn physical_gamepad_left_stick_navigates_home_with_edge_triggering() {
+    fn physical_gamepad_left_stick_navigates_home_rail_with_edge_triggering() {
         let directory =
             std::env::temp_dir().join(format!("aceris-home-stick-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
@@ -2196,25 +2196,33 @@ mod screenshot_tests {
 
         let initial = app.library.render_responsive(1000, 600);
         assert!(app.set_gamepad_axes(0.0, -0.8));
-        let focused_actions = app.library.render_responsive(1000, 600);
+        let focused_rail = app.library.render_responsive(1000, 600);
         assert_ne!(
-            focused_actions, initial,
-            "stick up should focus the featured game actions"
+            focused_rail, initial,
+            "stick up should move focus from the game shelf to the navigation rail"
         );
 
         assert!(app.set_gamepad_axes(0.0, -0.8));
         let held = app.library.render_responsive(1000, 600);
         assert_eq!(
-            held, focused_actions,
+            held, focused_rail,
             "a held stick must not repeat a focus change every frame"
         );
 
         assert!(app.set_gamepad_axes(0.0, 0.0));
         assert!(app.set_gamepad_axes(0.0, 0.8));
+        let next_rail_item = app.library.render_responsive(1000, 600);
+        assert_ne!(
+            next_rail_item, held,
+            "a new stick press should move down to the next rail destination"
+        );
+
+        assert!(app.set_gamepad_axes(0.0, 0.0));
+        assert!(app.set_gamepad_axes(0.8, 0.0));
         let focused_games = app.library.render_responsive(1000, 600);
         assert_ne!(
-            focused_games, held,
-            "a new stick press should return focus to the game collection"
+            focused_games, next_rail_item,
+            "stick right should return focus to the game collection"
         );
 
         let _ = fs::remove_dir_all(directory);
@@ -3205,17 +3213,23 @@ mod tests {
     }
 
     #[test]
-    fn home_dpad_focus_activates_favorite_and_import_actions() {
+    fn home_dpad_navigates_rail_and_activates_favorite_and_import() {
         let (mut app, dir) = app_with_games(1);
         app.resize(1000, 600);
         app.screen = Screen::Library;
 
-        assert!(app.key(19, true), "D-pad Up focuses the home action row");
+        assert!(app.key(19, true), "D-pad Up moves focus to the navigation rail");
+        assert!(app.key(20, true), "D-pad Down selects the Games destination");
+        assert!(app.key(22, true), "D-pad Right enters the game shelf");
+        assert!(app.key(20, true), "D-pad Down moves to the command strip");
         assert!(app.key(22, true), "D-pad Right focuses Add Favorite");
         assert!(app.key(96, true), "A activates the focused favorite action");
         assert_eq!(app.library.favorite_count(), 1);
 
-        assert!(app.key(22, true), "D-pad Right focuses Import Folder");
+        assert!(app.key(19, true), "D-pad Up returns from the command strip to games");
+        assert!(app.key(19, true), "D-pad Up returns to the navigation rail");
+        assert!(app.key(20, true), "D-pad Down moves to the Games destination");
+        assert!(app.key(20, true), "D-pad Down moves to Import");
         assert!(app.key(96, true), "A opens the folder path fallback");
         assert_eq!(app.library.page(), library::LibraryPage::Settings);
         assert!(app.library.search_is_focused());
