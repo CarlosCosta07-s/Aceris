@@ -5073,7 +5073,20 @@ impl Library {
                 0usize,
                 118.0,
             ),
-            (640.0, "X", "FAVORITO", 1usize, 132.0),
+            (
+                640.0,
+                "X",
+                if self
+                    .selected_entry()
+                    .is_some_and(|entry| self.is_favorite(entry))
+                {
+                    "DESFAVORITAR"
+                } else {
+                    "FAVORITO"
+                },
+                1usize,
+                132.0,
+            ),
             (788.0, "+", "OPÇÕES", 2usize, 112.0),
             (
                 914.0,
@@ -5622,29 +5635,39 @@ impl Library {
                 scale,
                 brand::BORDER,
             );
-            responsive_text_centered(
+            render_console_hint(
                 frame,
                 width,
                 height,
-                ui::library::DETAILS_CENTER_X,
-                ui::library::DETAILS_PANEL_TOP + 255.0,
-                label_scale,
+                scale,
+                ui::library::DETAILS_PANEL_X + 66.0,
+                ui::library::DETAILS_PANEL_TOP + 248.0,
+                "A",
                 if self.is_recent(entry) {
-                    "A  CONTINUAR"
+                    "CONTINUAR"
                 } else {
-                    "A  INICIAR JOGO"
+                    "INICIAR JOGO"
                 },
-                brand::TEXT,
+                184.0,
+                false,
+                label_scale,
             );
-            responsive_text_centered(
+            render_console_hint(
                 frame,
                 width,
                 height,
-                ui::library::DETAILS_CENTER_X,
-                ui::library::DETAILS_PANEL_TOP + 280.0,
+                scale,
+                ui::library::DETAILS_PANEL_X + 66.0,
+                ui::library::DETAILS_PANEL_TOP + 278.0,
+                "X",
+                if self.is_favorite(entry) {
+                    "DESFAVORITAR"
+                } else {
+                    "FAVORITO"
+                },
+                184.0,
+                false,
                 label_scale,
-                "X  ADICIONAR FAVORITO",
-                brand::TEXT_MUTED,
             );
         } else {
             responsive_folder_icon(
@@ -5683,7 +5706,16 @@ impl Library {
                 },
                 120.0,
             ),
-            (640.0, "X", "FAVORITO", 126.0),
+            (
+                640.0,
+                "X",
+                if selected_entry.is_some_and(|entry| self.is_favorite(entry)) {
+                    "DESFAVORITAR"
+                } else {
+                    "FAVORITO"
+                },
+                126.0,
+            ),
             (782.0, "+", "AJUSTES", 110.0),
             (
                 900.0,
