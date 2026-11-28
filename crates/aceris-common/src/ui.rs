@@ -117,14 +117,17 @@ pub mod home {
     pub const SIDEBAR_BRAND_CENTER_X: f32 = SIDEBAR_WIDTH * 0.5;
     pub const SIDEBAR_BRAND_CENTER_Y: f32 = 38.0;
     pub const SIDEBAR_FIRST_ITEM_Y: f32 = 94.0;
-    pub const SIDEBAR_ITEM_COUNT: usize = 7;
-    pub const SIDEBAR_BOTTOM_MARGIN: f32 = 190.0;
-    pub const SIDEBAR_POWER_BOTTOM: f32 = 34.0;
+    pub const SIDEBAR_ITEM_COUNT: usize = 5;
+    pub const SIDEBAR_POWER_BOTTOM: f32 = 0.23;
 
     pub fn sidebar_item_center_y(index: usize, logical_height: f32) -> f32 {
-        let span = (logical_height - SIDEBAR_BOTTOM_MARGIN).max(240.0);
+        let span = (logical_height * 0.43).clamp(180.0, 242.0);
         SIDEBAR_FIRST_ITEM_Y
             + span * index.min(SIDEBAR_ITEM_COUNT - 1) as f32 / (SIDEBAR_ITEM_COUNT - 1) as f32
+    }
+
+    pub fn sidebar_power_center_y(logical_height: f32) -> f32 {
+        logical_height * (1.0 - SIDEBAR_POWER_BOTTOM)
     }
 
     pub const VISIBLE_GAME_CARDS: usize = 5;
@@ -339,7 +342,7 @@ mod tests {
     fn landscape_home_uses_a_fixed_icon_rail_and_portrait_game_shelf() {
         assert_eq!(home::VISIBLE_GAME_CARDS, 5);
         assert_eq!(home::SIDEBAR_WIDTH, 76.0);
-        assert_eq!(home::SIDEBAR_ITEM_COUNT, 7);
+        assert_eq!(home::SIDEBAR_ITEM_COUNT, 5);
         assert!(home::GAME_CARD_HEIGHT > home::GAME_CARD_WIDTH);
 
         let fifth_card_left = home::CAROUSEL_X + 4.0 * home::GAME_CARD_STEP;
@@ -351,7 +354,10 @@ mod tests {
         let card_bottom =
             home::carousel_top(compact_height) + home::game_card_height(compact_height);
         assert!(card_bottom <= home::command_bar_top(compact_height));
-        assert!(home::sidebar_item_center_y(6, compact_height) < compact_height - 70.0);
+        assert!(
+            home::sidebar_item_center_y(4, compact_height)
+                < home::sidebar_power_center_y(compact_height) - 40.0
+        );
     }
 
     #[test]
