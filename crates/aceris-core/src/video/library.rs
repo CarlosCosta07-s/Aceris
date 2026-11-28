@@ -5181,7 +5181,7 @@ impl Library {
             .max(1.0) as usize;
         let visible_items = visible_rows * ui::library::GRID_COLUMNS;
 
-        responsive_fill(
+        responsive_vertical_gradient(
             frame,
             width as usize,
             height as usize,
@@ -5190,6 +5190,7 @@ impl Library {
             1000.0,
             logical_height,
             scale,
+            brand::PURPLE_LIGHT,
             brand::SURFACE_BASE,
         );
         render_console_sidebar(frame, width, height, scale, logical_height, self.page);
@@ -7729,7 +7730,45 @@ impl Library {
         // its rendered content is fitted into the same console shell. This
         // avoids maintaining a second set of settings widgets during migration.
         if self.page == LibraryPage::Settings {
-            let legacy_frame = frame.to_vec();
+            let source_left = (28.0 * scale).floor().max(0.0) as usize;
+            let destination_left = (96.0 * scale).floor().max(0.0) as usize;
+            let source_left = source_left.min(width as usize);
+            let destination_left = destination_left.min(width as usize);
+            let source_span = width as usize - source_left;
+            let destination_span = width as usize - destination_left;
+            let header_bottom = (ui::chrome::HEADER_HEIGHT * scale)
+                .ceil()
+                .min(height as f32) as usize;
+            let background = brand::rgb(brand::SURFACE_BASE);
+
+            // The new content starts to the right of the fixed rail. Shift and
+            // compress each row in place from right to left so no framebuffer
+            // clone or per-frame allocation is required.
+            if source_span > 0 && destination_span > 0 {
+                for y in header_bottom..height as usize {
+                    for offset in (0..destination_span).rev() {
+                        let source_x = source_left + offset * source_span / destination_span;
+                        let destination_x = destination_left + offset;
+                        let source = (y * width as usize + source_x) * 4;
+                        let destination = (y * width as usize + destination_x) * 4;
+                        frame.copy_within(source..source + 4, destination);
+                    }
+
+                    let row_start = y * width as usize * 4;
+                    for pixel in frame
+                        [row_start..row_start + destination_left * 4]
+                        .chunks_exact_mut(4)
+                    {
+                        pixel[0] = background[0];
+                        pixel[1] = background[1];
+                        pixel[2] = background[2];
+                        pixel[3] = 255;
+                    }
+                }
+            }
+
+            // The old header is removed; a short in-brand gradient provides
+            // the same visual entry point as Home and the collection pages.
             responsive_vertical_gradient(
                 frame,
                 width as usize,
@@ -7737,33 +7776,11 @@ impl Library {
                 0.0,
                 0.0,
                 1000.0,
-                logical_height,
+                ui::chrome::HEADER_HEIGHT,
                 scale,
                 brand::PURPLE_LIGHT,
                 brand::SURFACE_BASE,
             );
-
-            let source_left = (28.0 * scale).floor().max(0.0) as usize;
-            let destination_left = (96.0 * scale).floor().max(0.0) as usize;
-            let source_span = width as usize - source_left.min(width as usize);
-            let destination_span = width as usize - destination_left.min(width as usize);
-            let header_bottom = (ui::chrome::HEADER_HEIGHT * scale)
-                .ceil()
-                .min(height as f32) as usize;
-            if source_span > 0 && destination_span > 0 {
-                for y in header_bottom..height as usize {
-                    for offset in 0..destination_span {
-                        let source_x = source_left + offset * source_span / destination_span;
-                        if source_x >= width as usize {
-                            continue;
-                        }
-                        let source = (y * width as usize + source_x) * 4;
-                        let destination = (y * width as usize + destination_left + offset) * 4;
-                        frame[destination..destination + 4]
-                            .copy_from_slice(&legacy_frame[source..source + 4]);
-                    }
-                }
-            }
 
             render_console_sidebar(
                 frame,
