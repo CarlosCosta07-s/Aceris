@@ -35,7 +35,10 @@ if aceris_log | grep -q "Shared storage access: missing"; then
     adb shell pm grant $PACKAGE android.permission.READ_EXTERNAL_STORAGE
     adb shell pm grant $PACKAGE android.permission.WRITE_EXTERNAL_STORAGE
   fi
-  adb shell am start -n $PACKAGE/android.app.NativeActivity
+  # Android may restart the app when this permission changes; let that
+  # settle before relaunching so the start intent is not lost.
+  sleep 3
+  adb shell am start -W -n $PACKAGE/android.app.NativeActivity
   sleep 5
   if aceris_log | grep -q "Shared storage access: granted"; then
     echo "Access granted and detected after resuming"
