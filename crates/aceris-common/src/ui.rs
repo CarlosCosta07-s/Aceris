@@ -59,10 +59,42 @@ pub mod library {
     pub const DETAILS_BUTTON_X: f32 = 772.0;
     pub const DETAILS_BUTTON_WIDTH: f32 = 188.0;
     pub const DETAILS_BUTTON_HEIGHT: f32 = 32.0;
-    pub const DETAILS_PLAY_Y: f32 = 330.0;
-    pub const DETAILS_FAVORITE_Y: f32 = 366.0;
-    pub const DETAILS_IMPORT_Y: f32 = 402.0;
-    pub const DETAILS_REFRESH_Y: f32 = 438.0;
+
+    pub fn details_panel_height(logical_height: f32) -> f32 {
+        if logical_height < 520.0 {
+            (logical_height - 178.0).clamp(240.0, DETAILS_PANEL_HEIGHT)
+        } else {
+            DETAILS_PANEL_HEIGHT
+        }
+    }
+
+    pub fn details_art_size(logical_height: f32) -> f32 {
+        if logical_height < 520.0 { 64.0 } else { DETAILS_ART_SIZE }
+    }
+
+    pub fn details_art_top(logical_height: f32) -> f32 {
+        if logical_height < 520.0 { 188.0 } else { DETAILS_ART_TOP }
+    }
+
+    pub fn details_title_y(logical_height: f32) -> f32 {
+        if logical_height < 520.0 { 256.0 } else { 292.0 }
+    }
+
+    pub fn details_metadata_y(logical_height: f32) -> f32 {
+        if logical_height < 520.0 { 274.0 } else { 310.0 }
+    }
+
+    pub fn details_button_height(logical_height: f32) -> f32 {
+        if logical_height < 520.0 { 24.0 } else { DETAILS_BUTTON_HEIGHT }
+    }
+
+    pub fn details_button_top(index: usize, logical_height: f32) -> f32 {
+        if logical_height < 520.0 {
+            292.0 + index as f32 * 30.0
+        } else {
+            330.0 + index as f32 * 36.0
+        }
+    }
 }
 
 /// Shared geometry for the console-style landscape Home dashboard.
@@ -78,6 +110,19 @@ pub mod home {
     pub const CAROUSEL_BOTTOM: f32 = CAROUSEL_TOP + GAME_CARD_HEIGHT;
     pub const SUMMARY_TOP: f32 = 492.0;
     pub const SUMMARY_HEIGHT: f32 = 64.0;
+    pub const COMPACT_HEIGHT: f32 = 520.0;
+
+    pub fn carousel_top(logical_height: f32) -> f32 {
+        if logical_height < COMPACT_HEIGHT { 292.0 } else { CAROUSEL_TOP }
+    }
+
+    pub fn game_card_height(logical_height: f32) -> f32 {
+        if logical_height < COMPACT_HEIGHT { 144.0 } else { GAME_CARD_HEIGHT }
+    }
+
+    pub fn summary_visible(logical_height: f32) -> bool {
+        logical_height >= SUMMARY_TOP + SUMMARY_HEIGHT
+    }
 }
 
 /// Consistent spacing steps in logical UI units (4-unit base grid).
@@ -221,6 +266,24 @@ mod tests {
         assert!(shelf_width <= 944.0);
         assert!(home::CAROUSEL_BOTTOM < home::SUMMARY_TOP);
         assert!(home::SUMMARY_TOP + home::SUMMARY_HEIGHT <= 562.5);
+    }
+
+    #[test]
+    fn compact_landscape_metrics_keep_home_and_details_actions_visible() {
+        let compact_height = 450.0;
+        assert_eq!(home::carousel_top(compact_height), 292.0);
+        assert_eq!(home::game_card_height(compact_height), 144.0);
+        assert!(!home::summary_visible(compact_height));
+        assert!(
+            home::carousel_top(compact_height) + home::game_card_height(compact_height)
+                <= compact_height
+        );
+
+        assert_eq!(library::details_art_size(compact_height), 64.0);
+        assert_eq!(library::details_button_height(compact_height), 24.0);
+        let last_button_bottom = library::details_button_top(3, compact_height)
+            + library::details_button_height(compact_height);
+        assert!(last_button_bottom < compact_height);
     }
 
     #[test]

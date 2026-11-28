@@ -2624,29 +2624,30 @@ impl Library {
             && self.page != LibraryPage::Settings
             && (ui::library::DETAILS_PANEL_X..980.0).contains(&x)
         {
-            let play_bottom = ui::library::DETAILS_PLAY_Y
-                + ui::library::DETAILS_BUTTON_HEIGHT;
-            let favorite_bottom = ui::library::DETAILS_FAVORITE_Y
-                + ui::library::DETAILS_BUTTON_HEIGHT;
-            let import_bottom = ui::library::DETAILS_IMPORT_Y
-                + ui::library::DETAILS_BUTTON_HEIGHT;
-            let refresh_bottom = ui::library::DETAILS_REFRESH_Y
-                + ui::library::DETAILS_BUTTON_HEIGHT;
-            if (ui::library::DETAILS_PLAY_Y..play_bottom).contains(&y) {
-                if self.selected_entry().is_some() {
-                    return ClickResult::Activated;
+            let button_height = ui::library::details_button_height(logical_height);
+            for action in 0..4 {
+                let top = ui::library::details_button_top(action, logical_height);
+                if (top..top + button_height).contains(&y) {
+                    match action {
+                        0 if self.selected_entry().is_some() => return ClickResult::Activated,
+                        0 => return ClickResult::Ignored,
+                        1 => {
+                            if self.selected_entry().is_some() {
+                                self.toggle_selected_favorite();
+                            }
+                            return ClickResult::Ignored;
+                        }
+                        2 => {
+                            self.request_folder_picker();
+                            return ClickResult::Ignored;
+                        }
+                        3 => {
+                            self.reload();
+                            return ClickResult::Ignored;
+                        }
+                        _ => return ClickResult::Ignored,
+                    }
                 }
-            } else if (ui::library::DETAILS_FAVORITE_Y..favorite_bottom).contains(&y) {
-                if self.selected_entry().is_some() {
-                    self.toggle_selected_favorite();
-                }
-                return ClickResult::Ignored;
-            } else if (ui::library::DETAILS_IMPORT_Y..import_bottom).contains(&y) {
-                self.request_folder_picker();
-                return ClickResult::Ignored;
-            } else if (ui::library::DETAILS_REFRESH_Y..refresh_bottom).contains(&y) {
-                self.reload();
-                return ClickResult::Ignored;
             }
         }
 
@@ -2674,7 +2675,11 @@ impl Library {
                         self.home_action_selected = action;
                         return self.activate_home_selection(width, height);
                     }
-                } else if (ui::home::CAROUSEL_TOP..ui::home::CAROUSEL_BOTTOM).contains(&y) {
+                } else if (ui::home::carousel_top(logical_height)
+                    ..ui::home::carousel_top(logical_height)
+                        + ui::home::game_card_height(logical_height))
+                    .contains(&y)
+                {
                     let home_entries = self.home_entries();
                     if home_entries.is_empty() && (28.0..972.0).contains(&x) {
                         self.home_focus = HomeFocus::Actions;
@@ -4766,14 +4771,16 @@ impl Library {
             );
 
             if home_entries.is_empty() {
+                let carousel_top = ui::home::carousel_top(logical_height);
+                let card_height = ui::home::game_card_height(logical_height);
                 responsive_panel(
                     frame,
                     width,
                     height,
                     ui::home::CAROUSEL_X,
-                    ui::home::CAROUSEL_TOP,
+                    carousel_top,
                     944.0,
-                    ui::home::GAME_CARD_HEIGHT,
+                    card_height,
                     scale,
                     brand::SURFACE_PANEL,
                 );
@@ -4782,13 +4789,15 @@ impl Library {
                     width,
                     height,
                     500.0,
-                    382.0,
+                    carousel_top + card_height * 0.5,
                     text_scale,
                     "Nenhum jogo adicionado. Importe uma pasta para começar.",
                     brand::TEXT_MUTED,
                 );
             } else {
                 let first_visible = self.home_first_visible(ui::home::VISIBLE_GAME_CARDS);
+                let carousel_top = ui::home::carousel_top(logical_height);
+                let card_height = ui::home::game_card_height(logical_height);
                 for (slot, entry) in home_entries
                     .iter()
                     .skip(first_visible)
@@ -4803,9 +4812,9 @@ impl Library {
                         height,
                         scale,
                         card_x,
-                        ui::home::CAROUSEL_TOP,
+                        carousel_top,
                         ui::home::GAME_CARD_WIDTH,
-                        ui::home::GAME_CARD_HEIGHT,
+                        card_height,
                         entry,
                         self.smdh_icons.get(&entry.path),
                         index == self.selected && self.home_focus == HomeFocus::Games,
@@ -4817,58 +4826,60 @@ impl Library {
                 }
             }
 
-            // A compact collection summary replaces the duplicated navigation dock.
-            // Navigation now lives in the persistent top bar and is keyboard/gamepad focusable.
-            responsive_panel(
-                frame,
-                width,
-                height,
-                28.0,
-                ui::home::SUMMARY_TOP,
-                944.0,
-                ui::home::SUMMARY_HEIGHT,
-                scale,
-                brand::SURFACE_HEADER,
-            );
-            let collection_summary = [
-                ("JOGOS", game_count),
-                ("HOMEBREW", homebrew_count),
-                ("FAVORITOS", self.favorite_count()),
-                ("RECENTES", self.recent_count()),
-            ];
-            for (slot, (label, count)) in collection_summary.into_iter().enumerate() {
-                let x = 36.0 + slot as f32 * 234.0;
+            if ui::home::summary_visible(logical_height) {
+                // Taller landscape displays keep the collection summary; ultrawide
+                // phones prioritize the complete five-cover shelf instead.
                 responsive_panel(
                     frame,
                     width,
                     height,
-                    x,
-                    ui::home::SUMMARY_TOP + 8.0,
-                    220.0,
-                    48.0,
+                    28.0,
+                    ui::home::SUMMARY_TOP,
+                    944.0,
+                    ui::home::SUMMARY_HEIGHT,
                     scale,
-                    brand::SURFACE_CARD,
+                    brand::SURFACE_HEADER,
                 );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    x + 14.0,
-                    ui::home::SUMMARY_TOP + 15.0,
-                    small_scale,
-                    label,
-                    brand::TEXT_MUTED,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    x + 14.0,
-                    ui::home::SUMMARY_TOP + 33.0,
-                    text_scale,
-                    &count.to_string(),
-                    brand::TEXT,
-                );
+                let collection_summary = [
+                    ("JOGOS", game_count),
+                    ("HOMEBREW", homebrew_count),
+                    ("FAVORITOS", self.favorite_count()),
+                    ("RECENTES", self.recent_count()),
+                ];
+                for (slot, (label, count)) in collection_summary.into_iter().enumerate() {
+                    let x = 36.0 + slot as f32 * 234.0;
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        x,
+                        ui::home::SUMMARY_TOP + 8.0,
+                        220.0,
+                        48.0,
+                        scale,
+                        brand::SURFACE_CARD,
+                    );
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        x + 14.0,
+                        ui::home::SUMMARY_TOP + 15.0,
+                        small_scale,
+                        label,
+                        brand::TEXT_MUTED,
+                    );
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        x + 14.0,
+                        ui::home::SUMMARY_TOP + 33.0,
+                        text_scale,
+                        &count.to_string(),
+                        brand::TEXT,
+                    );
+                }
             }
         } else if self.page == LibraryPage::Settings {
             responsive_text(
@@ -5865,7 +5876,7 @@ impl Library {
                     ui::library::DETAILS_PANEL_X,
                     ui::library::DETAILS_PANEL_TOP,
                     ui::library::DETAILS_PANEL_WIDTH,
-                    ui::library::DETAILS_PANEL_HEIGHT,
+                    ui::library::details_panel_height(logical_height),
                     scale,
                     brand::SURFACE_PANEL,
                 );
@@ -5885,10 +5896,11 @@ impl Library {
                         width,
                         height,
                         scale,
-                        ui::library::DETAILS_ART_X,
-                        ui::library::DETAILS_ART_TOP,
-                        ui::library::DETAILS_ART_SIZE,
-                        ui::library::DETAILS_ART_SIZE,
+                        ui::library::DETAILS_CENTER_X
+                            - ui::library::details_art_size(logical_height) * 0.5,
+                        ui::library::details_art_top(logical_height),
+                        ui::library::details_art_size(logical_height),
+                        ui::library::details_art_size(logical_height),
                         entry,
                         self.smdh_icons.get(&entry.path),
                         small_scale,
@@ -5898,7 +5910,7 @@ impl Library {
                         width,
                         height,
                         ui::library::DETAILS_CENTER_X,
-                        292.0,
+                        ui::library::details_title_y(logical_height),
                         text_scale,
                         &truncate(&entry.title, 24),
                         brand::TEXT,
@@ -5920,7 +5932,7 @@ impl Library {
                         width,
                         height,
                         ui::library::DETAILS_CENTER_X,
-                        310.0,
+                        ui::library::details_metadata_y(logical_height),
                         small_scale,
                         &format!(".{}  ·  {state}", extension.to_ascii_uppercase()),
                         if self.is_favorite(entry) {
@@ -5932,13 +5944,22 @@ impl Library {
                         },
                     );
                 } else {
-                    responsive_folder_icon(frame, width, height, 832.0, 204.0, scale);
+                    responsive_folder_icon(
+                        frame,
+                        width,
+                        height,
+                        ui::library::DETAILS_CENTER_X
+                            - ui::library::details_art_size(logical_height) * 0.5
+                            + 12.0,
+                        ui::library::details_art_top(logical_height) + 10.0,
+                        scale,
+                    );
                     responsive_text_centered(
                         frame,
                         width,
                         height,
                         ui::library::DETAILS_CENTER_X,
-                        292.0,
+                        ui::library::details_title_y(logical_height),
                         text_scale,
                         "Selecione um jogo",
                         brand::TEXT,
@@ -5948,7 +5969,7 @@ impl Library {
                         width,
                         height,
                         ui::library::DETAILS_CENTER_X,
-                        310.0,
+                        ui::library::details_metadata_y(logical_height),
                         small_scale,
                         &format!("{} jogo(s) · {} homebrew(s)", game_count, homebrew_count),
                         brand::TEXT_MUTED,
@@ -5989,7 +6010,9 @@ impl Library {
                         brand::SURFACE_CARD,
                     ),
                 ];
-                for (y, label, color) in detail_actions {
+                let button_height = ui::library::details_button_height(logical_height);
+                for (index, (label, color)) in detail_actions.into_iter().enumerate() {
+                    let y = ui::library::details_button_top(index, logical_height);
                     responsive_panel(
                         frame,
                         width,
@@ -5997,7 +6020,7 @@ impl Library {
                         ui::library::DETAILS_BUTTON_X,
                         y,
                         ui::library::DETAILS_BUTTON_WIDTH,
-                        ui::library::DETAILS_BUTTON_HEIGHT,
+                        button_height,
                         scale,
                         color,
                     );
@@ -6006,7 +6029,7 @@ impl Library {
                         width,
                         height,
                         ui::library::DETAILS_CENTER_X,
-                        y + 10.0,
+                        y + (button_height - 12.0) * 0.5,
                         small_scale,
                         label,
                         brand::TEXT,
@@ -6401,7 +6424,7 @@ fn render_home_game_tile(
 ) {
     // Landscape Home uses Switch-inspired square-cover cards: artwork gets
     // priority, with title and container metadata on a stable footer.
-    if (160.0..180.0).contains(&card_width) && card_height >= 150.0 {
+    if (160.0..180.0).contains(&card_width) && card_height >= 140.0 {
         if selected {
             responsive_panel(
                 frame,
@@ -6445,9 +6468,10 @@ fn render_home_game_tile(
                 brand::BORDER
             },
         );
-        const COVER_SIZE: f32 = 108.0;
-        let cover_x = x + (card_width - COVER_SIZE) * 0.5;
-        let cover_y = y + 12.0;
+        let compact = card_height < 150.0;
+        let cover_size = if compact { 92.0 } else { 108.0 };
+        let cover_x = x + (card_width - cover_size) * 0.5;
+        let cover_y = y + if compact { 6.0 } else { 12.0 };
         render_cover_art(
             frame,
             width,
@@ -6455,8 +6479,8 @@ fn render_home_game_tile(
             scale,
             cover_x,
             cover_y,
-            COVER_SIZE,
-            COVER_SIZE,
+            cover_size,
+            cover_size,
             entry,
             smdh_icon,
             small_scale,
@@ -6512,7 +6536,7 @@ fn render_home_game_tile(
             width as usize,
             height as usize,
             x + 10.0,
-            y + 124.0,
+            y + if compact { 106.0 } else { 124.0 },
             card_width - 20.0,
             1.0,
             scale,
@@ -6523,7 +6547,7 @@ fn render_home_game_tile(
             width,
             height,
             x + card_width * 0.5,
-            y + 132.0,
+            y + if compact { 112.0 } else { 132.0 },
             title_scale,
             &truncate(&entry.title, 18),
             brand::TEXT,
@@ -6538,7 +6562,7 @@ fn render_home_game_tile(
             width,
             height,
             x + card_width * 0.5,
-            y + 150.0,
+            y + if compact { 128.0 } else { 150.0 },
             small_scale,
             &format!(".{}", extension.to_ascii_uppercase()),
             if selected {
@@ -7963,7 +7987,7 @@ mod tests {
         let fifth_x = (ui::home::CAROUSEL_X
             + 4.0 * ui::home::GAME_CARD_STEP
             + ui::home::GAME_CARD_WIDTH * 0.5) as i32;
-        let y = (ui::home::CAROUSEL_TOP + 40.0) as i32;
+        let y = (ui::home::carousel_top(600.0) + 40.0) as i32;
 
         assert_eq!(
             library.click_responsive(fifth_x, y, 1000, 600),
@@ -7973,6 +7997,35 @@ mod tests {
         assert_eq!(
             library.click_responsive(fifth_x, y, 1000, 600),
             ClickResult::Activated
+        );
+    }
+
+    #[test]
+    fn ultrawide_landscape_home_keeps_five_cards_and_details_actions_visible() {
+        let mut library = library(6);
+        library.select_page(LibraryPage::Home);
+        let fifth_x = (ui::home::CAROUSEL_X
+            + 4.0 * ui::home::GAME_CARD_STEP
+            + ui::home::GAME_CARD_WIDTH * 0.5) as i32;
+        let home_y = (ui::home::carousel_top(450.0) + 40.0) as i32;
+        assert_eq!(
+            library.click_responsive(fifth_x, home_y, 1000, 450),
+            ClickResult::Selected
+        );
+        assert_eq!(library.selected_entry().unwrap().title, "Game 5");
+
+        library.select_page(LibraryPage::Games);
+        let favorite_y = (ui::library::details_button_top(1, 450.0)
+            + ui::library::details_button_height(450.0) * 0.5) as i32;
+        assert_eq!(
+            library.click_responsive(ui::library::DETAILS_CENTER_X as i32, favorite_y, 1000, 450),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.favorite_count(), 1);
+        assert!(
+            ui::library::details_button_top(3, 450.0)
+                + ui::library::details_button_height(450.0)
+                < 450.0
         );
     }
 
@@ -8493,8 +8546,8 @@ mod tests {
         assert_eq!(
             library.click_responsive(
                 ui::library::DETAILS_CENTER_X as i32,
-                (ui::library::DETAILS_FAVORITE_Y
-                    + ui::library::DETAILS_BUTTON_HEIGHT * 0.5) as i32,
+                (ui::library::details_button_top(1, 600.0)
+                    + ui::library::details_button_height(600.0) * 0.5) as i32,
                 1000,
                 600
             ),
@@ -8509,18 +8562,19 @@ mod tests {
     fn library_details_rail_keeps_play_favorite_import_and_refresh_actions() {
         let mut library = library(2);
         let center_x = ui::library::DETAILS_CENTER_X as i32;
-        let center_y = |top: f32| {
-            (top + ui::library::DETAILS_BUTTON_HEIGHT * 0.5) as i32
+        let center_y = |index: usize| {
+            (ui::library::details_button_top(index, 600.0)
+                + ui::library::details_button_height(600.0) * 0.5) as i32
         };
 
         assert_eq!(
-            library.click_responsive(center_x, center_y(ui::library::DETAILS_PLAY_Y), 1000, 600),
+            library.click_responsive(center_x, center_y(0), 1000, 600),
             ClickResult::Activated
         );
         assert_eq!(
             library.click_responsive(
                 center_x,
-                center_y(ui::library::DETAILS_FAVORITE_Y),
+                center_y(1),
                 1000,
                 600
             ),
@@ -8531,7 +8585,7 @@ mod tests {
         assert_eq!(
             library.click_responsive(
                 center_x,
-                center_y(ui::library::DETAILS_IMPORT_Y),
+                center_y(2),
                 1000,
                 600
             ),
@@ -8542,7 +8596,7 @@ mod tests {
         assert_eq!(
             library.click_responsive(
                 center_x,
-                center_y(ui::library::DETAILS_REFRESH_Y),
+                center_y(3),
                 1000,
                 600
             ),
