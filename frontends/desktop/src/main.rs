@@ -921,7 +921,9 @@ fn choose_library_folder() -> Result<Option<PathBuf>, String> {
                             let get_display_name = std::mem::transmute::<
                                 *const c_void,
                                 unsafe extern "system" fn(*mut c_void, u32, *mut *mut u16) -> i32,
-                            >(*item_vtable.add(5));
+                            >(
+                                *item_vtable.add(5)
+                            );
                             let mut display_name = ptr::null_mut();
                             let named =
                                 get_display_name(item, SIGDN_FILESYSPATH, &mut display_name);
