@@ -159,10 +159,14 @@ pub struct Library {
     external_media_playing: bool,
     external_media_detection_available: bool,
     performance_mode: bool,
+    gamepad_deadzone_percent: u8,
 }
 
 /// File in the settings folder that persists the opt-in performance mode.
 const PERFORMANCE_MODE_FILE: &str = "performance_mode.txt";
+const GAMEPAD_SETTINGS_FILE: &str = "gamepad_settings_v1.txt";
+const GAMEPAD_SETTINGS_MAGIC: &str = "ACERIS_GAMEPAD_SETTINGS_V1";
+const GAMEPAD_DEADZONE_STEPS: [u8; 5] = [8, 12, 16, 20, 24];
 const VIRTUAL_CONTROLS_FILE: &str = "virtual_controls_v1.txt";
 const VIRTUAL_CONTROLS_MAGIC: &str = "ACERIS_VIRTUAL_CONTROLS_V1";
 const VIRTUAL_CONTROLS_OPACITY_FILE: &str = "virtual_controls_opacity_v1.txt";
@@ -291,6 +295,26 @@ fn load_game_virtual_control_positions(
 fn load_performance_mode(settings_directory: &Path) -> bool {
     fs::read_to_string(settings_directory.join(PERFORMANCE_MODE_FILE))
         .is_ok_and(|contents| contents.trim() == "1")
+}
+
+fn load_gamepad_deadzone_percent(settings_directory: &Path) -> u8 {
+    let Ok(contents) = fs::read_to_string(settings_directory.join(GAMEPAD_SETTINGS_FILE)) else {
+        return 16;
+    };
+    let mut lines = contents.lines();
+    if lines.next() != Some(GAMEPAD_SETTINGS_MAGIC) {
+        return 16;
+    }
+    let Some(value) = lines.next().and_then(|line| line.strip_prefix("deadzone_percent=")) else {
+        return 16;
+    };
+    if lines.next().is_some() {
+        return 16;
+    }
+    match value.parse::<u8>() {
+        Ok(percent) if GAMEPAD_DEADZONE_STEPS.contains(&percent) => percent,
+        _ => 16,
+    }
 }
 
 /// Versioned prefix for full-path identifiers stored in Favorites and Recent.
@@ -770,6 +794,7 @@ impl Library {
 
         let favorites = favorite_ids.into_iter().collect();
         let performance_mode = load_performance_mode(&settings_directory);
+        let gamepad_deadzone_percent = load_gamepad_deadzone_percent(&settings_directory);
         let virtual_controls_visible = load_virtual_controls_visible(&settings_directory);
         let virtual_controls_opacity = load_virtual_controls_opacity(&settings_directory);
         let virtual_controls_size_percent = load_virtual_controls_size_percent(&settings_directory);
@@ -808,6 +833,7 @@ impl Library {
             external_media_playing: false,
             external_media_detection_available: false,
             performance_mode,
+            gamepad_deadzone_percent,
         }
     }
 
@@ -822,6 +848,7 @@ impl Library {
         library.scan_config = scan_config;
         library.scan_settings_directory = settings_directory.to_path_buf();
         library.performance_mode = load_performance_mode(settings_directory);
+        library.gamepad_deadzone_percent = load_gamepad_deadzone_percent(settings_directory);
         library.virtual_controls_visible = load_virtual_controls_visible(settings_directory);
         library.virtual_controls_opacity = load_virtual_controls_opacity(settings_directory);
         library.virtual_controls_size_percent =
@@ -861,6 +888,40 @@ impl Library {
 
     fn toggle_performance_mode_from_settings(&mut self) {
         if let Err(error) = self.set_performance_mode(!self.performance_mode) {
+            self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}"));
+        }
+    }
+
+    /// Current deadzone for physical controller sticks, as an integer percentage.
+    pub fn gamepad_deadzone_percent(&self) -> u8 {
+        self.gamepad_deadzone_percent
+    }
+
+    /// Persists a supported deadzone percentage for physical controller sticks.
+    pub fn set_gamepad_deadzone_percent(&mut self, percent: u8) -> std::io::Result<()> {
+        if !GAMEPAD_DEADZONE_STEPS.contains(&percent) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "unsupported gamepad deadzone percentage",
+            ));
+        }
+        fs::create_dir_all(&self.scan_settings_directory)?;
+        fs::write(
+            self.scan_settings_directory.join(GAMEPAD_SETTINGS_FILE),
+            format!("{GAMEPAD_SETTINGS_MAGIC}\ndeadzone_percent={percent}\n"),
+        )?;
+        self.gamepad_deadzone_percent = percent;
+        self.status = Some(format!("ZONA MORTA DO ANALÓGICO: {percent}%"));
+        Ok(())
+    }
+
+    fn cycle_gamepad_deadzone_from_settings(&mut self) {
+        let index = GAMEPAD_DEADZONE_STEPS
+            .iter()
+            .position(|value| *value == self.gamepad_deadzone_percent)
+            .unwrap_or(2);
+        let next = GAMEPAD_DEADZONE_STEPS[(index + 1) % GAMEPAD_DEADZONE_STEPS.len()];
+        if let Err(error) = self.set_gamepad_deadzone_percent(next) {
             self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}"));
         }
     }
@@ -5465,6 +5526,41 @@ mod tests {
         empty.set_status("COULD NOT LOAD");
         assert_eq!(empty.render().len(), WIDTH * HEIGHT * 4);
         assert_eq!(library(500).render().len(), WIDTH * HEIGHT * 4);
+    }
+
+    #[test]
+    fn gamepad_deadzone_is_versioned_persisted_and_cycles_from_settings() {
+        let root = test_directory("gamepad-deadzone");
+        let settings = root.join(".aceris");
+        let mut library = Library::new(Vec::new(), root.display().to_string());
+        assert_eq!(library.gamepad_deadzone_percent(), 16);
+        library.scan_settings_directory = settings.clone();
+
+        library.set_gamepad_deadzone_percent(20).unwrap();
+        assert_eq!(library.gamepad_deadzone_percent(), 20);
+        assert_eq!(
+            fs::read_to_string(settings.join(GAMEPAD_SETTINGS_FILE)).unwrap(),
+            "ACERIS_GAMEPAD_SETTINGS_V1\ndeadzone_percent=20\n"
+        );
+        assert_eq!(
+            Library::from_scan_settings(&settings, &root).gamepad_deadzone_percent(),
+            20
+        );
+
+        library.cycle_gamepad_deadzone_from_settings();
+        assert_eq!(library.gamepad_deadzone_percent(), 24);
+        assert!(library.set_gamepad_deadzone_percent(99).is_err());
+
+        fs::write(
+            settings.join(GAMEPAD_SETTINGS_FILE),
+            "ACERIS_GAMEPAD_SETTINGS_V1\ndeadzone_percent=99\n",
+        )
+        .unwrap();
+        assert_eq!(
+            Library::from_scan_settings(&settings, &root).gamepad_deadzone_percent(),
+            16
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
