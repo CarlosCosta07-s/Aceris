@@ -397,20 +397,44 @@ mod tests {
         use GamepadAxisProfileScope::{Device, Game, Global};
 
         assert_eq!(default_axis_profile_scope_for_context(false, false), Global);
-        assert_eq!(next_axis_profile_scope_for_context(Global, false, false), Global);
+        assert_eq!(
+            next_axis_profile_scope_for_context(Global, false, false),
+            Global
+        );
 
         assert_eq!(default_axis_profile_scope_for_context(true, false), Device);
-        assert_eq!(next_axis_profile_scope_for_context(Device, true, false), Global);
-        assert_eq!(next_axis_profile_scope_for_context(Global, true, false), Device);
+        assert_eq!(
+            next_axis_profile_scope_for_context(Device, true, false),
+            Global
+        );
+        assert_eq!(
+            next_axis_profile_scope_for_context(Global, true, false),
+            Device
+        );
 
         assert_eq!(default_axis_profile_scope_for_context(false, true), Game);
-        assert_eq!(next_axis_profile_scope_for_context(Game, false, true), Global);
-        assert_eq!(next_axis_profile_scope_for_context(Global, false, true), Game);
+        assert_eq!(
+            next_axis_profile_scope_for_context(Game, false, true),
+            Global
+        );
+        assert_eq!(
+            next_axis_profile_scope_for_context(Global, false, true),
+            Game
+        );
 
         assert_eq!(default_axis_profile_scope_for_context(true, true), Game);
-        assert_eq!(next_axis_profile_scope_for_context(Game, true, true), Global);
-        assert_eq!(next_axis_profile_scope_for_context(Global, true, true), Device);
-        assert_eq!(next_axis_profile_scope_for_context(Device, true, true), Game);
+        assert_eq!(
+            next_axis_profile_scope_for_context(Game, true, true),
+            Global
+        );
+        assert_eq!(
+            next_axis_profile_scope_for_context(Global, true, true),
+            Device
+        );
+        assert_eq!(
+            next_axis_profile_scope_for_context(Device, true, true),
+            Game
+        );
     }
 
     #[test]
