@@ -20,6 +20,34 @@ pub(crate) enum GamepadAxisProfileScope {
     Game,
 }
 
+fn default_axis_profile_scope_for_context(
+    has_device: bool,
+    has_game: bool,
+) -> GamepadAxisProfileScope {
+    if has_game {
+        GamepadAxisProfileScope::Game
+    } else if has_device {
+        GamepadAxisProfileScope::Device
+    } else {
+        GamepadAxisProfileScope::Global
+    }
+}
+
+fn next_axis_profile_scope_for_context(
+    scope: GamepadAxisProfileScope,
+    has_device: bool,
+    has_game: bool,
+) -> GamepadAxisProfileScope {
+    match scope {
+        GamepadAxisProfileScope::Global if has_device => GamepadAxisProfileScope::Device,
+        GamepadAxisProfileScope::Global if has_game => GamepadAxisProfileScope::Game,
+        GamepadAxisProfileScope::Global => GamepadAxisProfileScope::Global,
+        GamepadAxisProfileScope::Device if has_game => GamepadAxisProfileScope::Game,
+        GamepadAxisProfileScope::Device => GamepadAxisProfileScope::Global,
+        GamepadAxisProfileScope::Game => GamepadAxisProfileScope::Global,
+    }
+}
+
 pub(crate) struct GamepadManager {
     gilrs: Option<Gilrs>,
     active_gamepad: Option<GamepadId>,
@@ -164,33 +192,21 @@ impl GamepadManager {
     }
 
     pub(crate) fn default_axis_profile_scope(&self) -> GamepadAxisProfileScope {
-        if self.game_identity.is_some() {
-            GamepadAxisProfileScope::Game
-        } else if self.active_device_uuid.is_some() {
-            GamepadAxisProfileScope::Device
-        } else {
-            GamepadAxisProfileScope::Global
-        }
+        default_axis_profile_scope_for_context(
+            self.active_device_uuid.is_some(),
+            self.game_identity.is_some(),
+        )
     }
 
     pub(crate) fn next_axis_profile_scope(
         &self,
         scope: GamepadAxisProfileScope,
     ) -> GamepadAxisProfileScope {
-        match scope {
-            GamepadAxisProfileScope::Global if self.active_device_uuid.is_some() => {
-                GamepadAxisProfileScope::Device
-            }
-            GamepadAxisProfileScope::Global if self.game_identity.is_some() => {
-                GamepadAxisProfileScope::Game
-            }
-            GamepadAxisProfileScope::Global => GamepadAxisProfileScope::Global,
-            GamepadAxisProfileScope::Device if self.game_identity.is_some() => {
-                GamepadAxisProfileScope::Game
-            }
-            GamepadAxisProfileScope::Device => GamepadAxisProfileScope::Global,
-            GamepadAxisProfileScope::Game => GamepadAxisProfileScope::Global,
-        }
+        next_axis_profile_scope_for_context(
+            scope,
+            self.active_device_uuid.is_some(),
+            self.game_identity.is_some(),
+        )
     }
 
     pub(crate) fn load_axis_settings_for_editor_scope(
@@ -375,6 +391,27 @@ mod tests {
     use super::*;
     use aceris_core::input::{gamepad_axes_to_circle_pad, pad};
     use aceris_core::input_mapping::PadButton;
+
+    #[test]
+    fn analog_profile_scope_cycles_only_through_available_contexts() {
+        use GamepadAxisProfileScope::{Device, Game, Global};
+
+        assert_eq!(default_axis_profile_scope_for_context(false, false), Global);
+        assert_eq!(next_axis_profile_scope_for_context(Global, false, false), Global);
+
+        assert_eq!(default_axis_profile_scope_for_context(true, false), Device);
+        assert_eq!(next_axis_profile_scope_for_context(Device, true, false), Global);
+        assert_eq!(next_axis_profile_scope_for_context(Global, true, false), Device);
+
+        assert_eq!(default_axis_profile_scope_for_context(false, true), Game);
+        assert_eq!(next_axis_profile_scope_for_context(Game, false, true), Global);
+        assert_eq!(next_axis_profile_scope_for_context(Global, false, true), Game);
+
+        assert_eq!(default_axis_profile_scope_for_context(true, true), Game);
+        assert_eq!(next_axis_profile_scope_for_context(Game, true, true), Global);
+        assert_eq!(next_axis_profile_scope_for_context(Global, true, true), Device);
+        assert_eq!(next_axis_profile_scope_for_context(Device, true, true), Game);
+    }
 
     #[test]
     fn gilrs_controls_cover_the_standard_3ds_button_sources() {
