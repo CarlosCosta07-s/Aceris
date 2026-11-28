@@ -126,7 +126,7 @@ Projeto da fronteira de leitura e seleção de pastas: [FILE_SOURCE_ARCHITECTURE
 - [ ] Detectar conflitos de atalhos e permitir redefinir o padrão.
 
 **M3.2 — Desktop**
-- [~] Navegação da Home por teclado: setas percorrem cartões, ações principais e dock com foco visual; Enter executa a ação contextual. A navegação geral da biblioteca continua separada dos atalhos globais ainda pendentes.
+- [~] Navegação da Home por teclado e gamepad: setas/D-pad percorrem cartões, ações principais e dock com foco visual; Enter/A/Start confirma a ação contextual. O gamepad desktop usa detecção de borda para não repetir ações com o botão mantido. A navegação geral da biblioteca continua separada dos atalhos globais ainda pendentes.
 - [~] Backend GilRs integrado para Windows/Linux/macOS: lê o primeiro controle conectado, atualiza estado após eventos de conexão/desconexão e combina gamepad com teclado; mapeia A/B/X/Y, D-pad, L/R, Start/Select e stick esquerdo. Usa a deadzone global configurável. [ ] Enumerar dispositivos e apresentar seletor/nome do controle ativo.
 - [ ] Mapeamento automático somente para layouts conhecidos e confirmados; manter remapeamento manual. A implementação atual usa o layout padronizado do backend e não oferece reconfiguração de botões.
 - [~] Entrada física básica está ligada ao loop guest e mantém teclado + controle combinados. [ ] Permitir remapear teclado, mouse quando aplicável, botões, gatilhos e eixos; persistir mapeamentos por dispositivo e testar desconexão/reconexão.
