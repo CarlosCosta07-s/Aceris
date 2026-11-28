@@ -4,6 +4,35 @@
 //! defined exclusively in `brand`, so a UI redesign cannot accidentally
 //! introduce a second palette.
 
+/// Geometry for the shared landscape launcher shell. Coordinates use the
+/// 1000-unit logical width from the responsive viewport; desktop and Android
+/// may adapt the surrounding shell without changing brand colours.
+pub mod chrome {
+    /// Height reserved for the shared landscape top bar.
+    pub const HEADER_HEIGHT: f32 = 72.0;
+    /// Vertical inset and height of top-bar controls.
+    pub const HEADER_BUTTON_Y: f32 = 12.0;
+    pub const HEADER_BUTTON_HEIGHT: f32 = 48.0;
+
+    /// Brand lockup and primary destinations.
+    pub const BRAND_X: f32 = 20.0;
+    pub const BRAND_WIDTH: f32 = 112.0;
+    pub const HOME_X: f32 = 144.0;
+    pub const HOME_WIDTH: f32 = 88.0;
+    pub const RECENT_X: f32 = 238.0;
+    pub const RECENT_WIDTH: f32 = 100.0;
+    pub const GAMES_X: f32 = 344.0;
+    pub const GAMES_WIDTH: f32 = 96.0;
+    pub const FAVORITES_X: f32 = 446.0;
+    pub const FAVORITES_WIDTH: f32 = 122.0;
+    pub const HOMEBREW_X: f32 = 574.0;
+    pub const HOMEBREW_WIDTH: f32 = 132.0;
+    pub const IMPORT_X: f32 = 730.0;
+    pub const IMPORT_WIDTH: f32 = 126.0;
+    pub const SETTINGS_X: f32 = 868.0;
+    pub const SETTINGS_WIDTH: f32 = 112.0;
+}
+
 /// Consistent spacing steps in logical UI units (4-unit base grid).
 pub mod spacing {
     pub const XXS: f32 = 2.0;

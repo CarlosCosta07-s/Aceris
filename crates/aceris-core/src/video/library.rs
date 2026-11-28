@@ -2545,25 +2545,47 @@ impl Library {
             return self.select_or_activate(index);
         }
 
-        // Console-style horizontal navigation shared by desktop and landscape Android.
-        if y < 68.0 {
-            let page = if (18.0..112.0).contains(&x) || (120.0..204.0).contains(&x) {
+        // Top-bar hitboxes mirror the geometry in aceris-common::ui::chrome.
+        if y < ui::chrome::HEADER_HEIGHT {
+            let page = if (ui::chrome::BRAND_X..ui::chrome::BRAND_X + ui::chrome::BRAND_WIDTH)
+                .contains(&x)
+                || (ui::chrome::HOME_X..ui::chrome::HOME_X + ui::chrome::HOME_WIDTH)
+                    .contains(&x)
+            {
                 Some(LibraryPage::Home)
-            } else if (210.0..310.0).contains(&x) {
+            } else if (ui::chrome::RECENT_X..ui::chrome::RECENT_X + ui::chrome::RECENT_WIDTH)
+                .contains(&x)
+            {
                 Some(LibraryPage::Recent)
-            } else if (316.0..410.0).contains(&x) {
+            } else if (ui::chrome::GAMES_X..ui::chrome::GAMES_X + ui::chrome::GAMES_WIDTH)
+                .contains(&x)
+            {
                 Some(LibraryPage::Games)
-            } else if (416.0..566.0).contains(&x) {
-                Some(LibraryPage::Homebrew)
-            } else if (572.0..692.0).contains(&x) {
+            } else if (ui::chrome::FAVORITES_X
+                ..ui::chrome::FAVORITES_X + ui::chrome::FAVORITES_WIDTH)
+                .contains(&x)
+            {
                 Some(LibraryPage::Favorites)
-            } else if (875.0..982.0).contains(&x) {
+            } else if (ui::chrome::HOMEBREW_X
+                ..ui::chrome::HOMEBREW_X + ui::chrome::HOMEBREW_WIDTH)
+                .contains(&x)
+            {
+                Some(LibraryPage::Homebrew)
+            } else if (ui::chrome::SETTINGS_X
+                ..ui::chrome::SETTINGS_X + ui::chrome::SETTINGS_WIDTH)
+                .contains(&x)
+            {
                 Some(LibraryPage::Settings)
             } else {
                 None
             };
             if let Some(page) = page {
                 self.select_page(page);
+            } else if (ui::chrome::IMPORT_X
+                ..ui::chrome::IMPORT_X + ui::chrome::IMPORT_WIDTH)
+                .contains(&x)
+            {
+                self.request_folder_picker();
             }
             return ClickResult::Ignored;
         }
@@ -2666,26 +2688,6 @@ impl Library {
                             return ClickResult::Selected;
                         }
                     }
-                } else if (438.0..502.0).contains(&y) {
-                    let slot = if (28.0..204.0).contains(&x) {
-                        Some(0)
-                    } else if (212.0..388.0).contains(&x) {
-                        Some(1)
-                    } else if (396.0..572.0).contains(&x) {
-                        Some(2)
-                    } else if (580.0..756.0).contains(&x) {
-                        Some(3)
-                    } else if (764.0..940.0).contains(&x) {
-                        Some(4)
-                    } else {
-                        None
-                    };
-                    if let Some(slot) = slot {
-                        self.home_focus = HomeFocus::Navigation;
-                        self.home_navigation_selected = slot;
-                        let _ = self.activate_home_selection(width, height);
-                    }
-                }
                 ClickResult::Ignored
             }
             LibraryPage::Settings => {
@@ -4355,7 +4357,8 @@ impl Library {
         let selected_entry = self.selected_entry();
         let home_entries = self.home_entries();
 
-        // Full-width top navigation inspired by modern console dashboards.
+        // Unified console-style top bar. Brand colours are consumed only from
+        // aceris-common::brand; active and controller-focused states stay explicit.
         responsive_fill(
             frame,
             width as usize,
@@ -4363,7 +4366,7 @@ impl Library {
             0.0,
             0.0,
             1000.0,
-            70.0,
+            ui::chrome::HEADER_HEIGHT,
             scale,
             brand::SURFACE_HEADER,
         );
@@ -4372,20 +4375,21 @@ impl Library {
             width as usize,
             height as usize,
             0.0,
-            68.0,
+            ui::chrome::HEADER_HEIGHT - 2.0,
             1000.0,
             2.0,
             scale,
             brand::ACCENT_RED,
         );
+
         responsive_panel(
             frame,
             width,
             height,
-            18.0,
-            10.0,
-            94.0,
-            46.0,
+            ui::chrome::BRAND_X,
+            ui::chrome::HEADER_BUTTON_Y,
+            ui::chrome::BRAND_WIDTH,
+            ui::chrome::HEADER_BUTTON_HEIGHT,
             scale,
             brand::ACCENT_RED,
         );
@@ -4393,10 +4397,130 @@ impl Library {
             frame,
             width,
             height,
-            65.0,
-            25.0,
+            ui::chrome::BRAND_X + ui::chrome::BRAND_WIDTH * 0.5,
+            26.0,
             title_scale,
             "ACERIS",
+            brand::TEXT,
+        );
+
+        responsive_panel(
+            frame,
+            width,
+            height,
+            ui::chrome::HOME_X,
+            ui::chrome::HEADER_BUTTON_Y,
+            ui::chrome::HOME_WIDTH,
+            ui::chrome::HEADER_BUTTON_HEIGHT,
+            scale,
+            if self.page == LibraryPage::Home {
+                brand::SURFACE_SELECTED
+            } else {
+                brand::SURFACE_CARD
+            },
+        );
+        responsive_text_centered(
+            frame,
+            width,
+            height,
+            ui::chrome::HOME_X + ui::chrome::HOME_WIDTH * 0.5,
+            29.0,
+            text_scale,
+            "INÍCIO",
+            brand::TEXT,
+        );
+
+        let navigation_items = [
+            (
+                LibraryPage::Recent,
+                "RECENTES",
+                ui::chrome::RECENT_X,
+                ui::chrome::RECENT_WIDTH,
+                0usize,
+            ),
+            (
+                LibraryPage::Games,
+                "JOGOS",
+                ui::chrome::GAMES_X,
+                ui::chrome::GAMES_WIDTH,
+                1usize,
+            ),
+            (
+                LibraryPage::Favorites,
+                "FAVORITOS",
+                ui::chrome::FAVORITES_X,
+                ui::chrome::FAVORITES_WIDTH,
+                2usize,
+            ),
+            (
+                LibraryPage::Homebrew,
+                "HOMEBREW",
+                ui::chrome::HOMEBREW_X,
+                ui::chrome::HOMEBREW_WIDTH,
+                3usize,
+            ),
+            (
+                LibraryPage::Settings,
+                "AJUSTES",
+                ui::chrome::SETTINGS_X,
+                ui::chrome::SETTINGS_WIDTH,
+                4usize,
+            ),
+        ];
+        for (page, label, x, button_width, focus_slot) in navigation_items {
+            let selected = self.page == page;
+            let focused = self.page == LibraryPage::Home
+                && self.home_focus == HomeFocus::Navigation
+                && self.home_navigation_selected == focus_slot;
+            let surface = if focused {
+                brand::ACCENT_RED
+            } else if selected {
+                brand::SURFACE_SELECTED
+            } else {
+                brand::SURFACE_CARD
+            };
+            responsive_panel(
+                frame,
+                width,
+                height,
+                x,
+                ui::chrome::HEADER_BUTTON_Y,
+                button_width,
+                ui::chrome::HEADER_BUTTON_HEIGHT,
+                scale,
+                surface,
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                x + button_width * 0.5,
+                29.0,
+                text_scale,
+                label,
+                brand::TEXT,
+            );
+        }
+
+        responsive_panel(
+            frame,
+            width,
+            height,
+            ui::chrome::IMPORT_X,
+            ui::chrome::HEADER_BUTTON_Y,
+            ui::chrome::IMPORT_WIDTH,
+            ui::chrome::HEADER_BUTTON_HEIGHT,
+            scale,
+            brand::ACCENT_RED,
+        );
+        responsive_text_centered(
+            frame,
+            width,
+            height,
+            ui::chrome::IMPORT_X + ui::chrome::IMPORT_WIDTH * 0.5,
+            29.0,
+            text_scale,
+            "IMPORTAR",
             brand::TEXT,
         );
 
@@ -4668,60 +4792,58 @@ impl Library {
                 }
             }
 
+            // A compact collection summary replaces the duplicated navigation dock.
+            // Navigation now lives in the persistent top bar and is keyboard/gamepad focusable.
             responsive_panel(
                 frame,
                 width,
                 height,
-                20.0,
+                28.0,
                 436.0,
-                924.0,
+                944.0,
                 64.0,
                 scale,
                 brand::SURFACE_HEADER,
             );
-            let dock_items = [
-                (LibraryPage::Recent, "RECENTES"),
-                (LibraryPage::Games, "JOGOS"),
-                (LibraryPage::Favorites, "FAVORITOS"),
-                (LibraryPage::Homebrew, "HOMEBREW"),
-                (LibraryPage::Settings, "AJUSTES"),
+            let collection_summary = [
+                ("JOGOS", game_count),
+                ("HOMEBREW", homebrew_count),
+                ("FAVORITOS", self.favorite_count()),
+                ("RECENTES", self.recent_count()),
             ];
-            for (slot, (page, label)) in dock_items.into_iter().enumerate() {
-                let x = 28.0 + slot as f32 * 184.0;
-                let selected = self.page == page;
-                let focused = self.home_focus == HomeFocus::Navigation
-                    && self.home_navigation_selected == slot;
-                responsive_text_centered(
+            for (slot, (label, count)) in collection_summary.into_iter().enumerate() {
+                let x = 36.0 + slot as f32 * 234.0;
+                responsive_panel(
                     frame,
                     width,
                     height,
-                    x + 88.0,
-                    462.0,
+                    x,
+                    444.0,
+                    220.0,
+                    48.0,
+                    scale,
+                    brand::SURFACE_CARD,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    x + 14.0,
+                    451.0,
                     small_scale,
                     label,
-                    if focused || selected {
-                        brand::TEXT
-                    } else {
-                        brand::TEXT_MUTED
-                    },
+                    brand::TEXT_MUTED,
                 );
-                if selected || focused {
-                    responsive_fill(
-                        frame,
-                        width as usize,
-                        height as usize,
-                        x + 48.0,
-                        489.0,
-                        80.0,
-                        2.0,
-                        scale,
-                        if focused {
-                            brand::ACCENT_RED_LIGHT
-                        } else {
-                            brand::ACCENT_RED
-                        },
-                    );
-                }
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    x + 14.0,
+                    469.0,
+                    text_scale,
+                    &count.to_string(),
+                    brand::TEXT,
+                );
             }
         } else if self.page == LibraryPage::Settings {
             responsive_text(
@@ -7763,26 +7885,35 @@ mod tests {
     }
 
     #[test]
-    fn landscape_home_dock_navigates_to_console_pages() {
+    fn landscape_home_header_navigates_and_imports_from_the_console_bar() {
         let dir =
-            std::env::temp_dir().join(format!("aceris-landscape-dock-{}", std::process::id()));
+            std::env::temp_dir().join(format!("aceris-landscape-header-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let mut library = Library::new(Vec::new(), dir.display().to_string());
 
         for (x, expected) in [
-            (94, LibraryPage::Recent),
-            (300, LibraryPage::Games),
-            (480, LibraryPage::Favorites),
-            (660, LibraryPage::Homebrew),
-            (850, LibraryPage::Settings),
+            (60, LibraryPage::Home),
+            (188, LibraryPage::Home),
+            (288, LibraryPage::Recent),
+            (392, LibraryPage::Games),
+            (507, LibraryPage::Favorites),
+            (640, LibraryPage::Homebrew),
+            (924, LibraryPage::Settings),
         ] {
             library.select_page(LibraryPage::Home);
             assert_eq!(
-                library.click_responsive(x, 470, 1000, 600),
+                library.click_responsive(x, 32, 1000, 600),
                 ClickResult::Ignored
             );
             assert_eq!(library.page(), expected);
         }
+
+        library.select_page(LibraryPage::Home);
+        assert_eq!(
+            library.click_responsive(793, 32, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert!(library.take_folder_picker_request());
 
         fs::remove_dir_all(dir).unwrap();
     }
