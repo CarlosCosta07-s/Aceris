@@ -2119,9 +2119,7 @@ impl Library {
             LibraryPage::Settings => {
                 for index in 0..self.scan_config.directories.len().min(4) {
                     let row_top = 178.0 + index as f32 * 28.0;
-                    if (row_top..row_top + 25.0).contains(&y)
-                        && (670.0..724.0).contains(&x)
-                    {
+                    if (row_top..row_top + 25.0).contains(&y) && (670.0..724.0).contains(&x) {
                         self.remove_scan_directory_from_settings(index);
                         return ClickResult::Ignored;
                     }
@@ -2187,10 +2185,10 @@ impl Library {
                     let list_top = 170.0;
                     let row_step = 54.0;
                     let row_height = 48.0;
-                    let visible_rows =
-                        ((logical_height - 18.0 - list_top - row_height) / row_step)
-                            .floor()
-                            .max(0.0) as usize + 1;
+                    let visible_rows = ((logical_height - 18.0 - list_top - row_height) / row_step)
+                        .floor()
+                        .max(0.0) as usize
+                        + 1;
                     if !(28.0..730.0).contains(&x) || y < list_top {
                         return ClickResult::Ignored;
                     }
@@ -3257,27 +3255,63 @@ impl Library {
         let text_scale = (scale * 1.12).round().max(1.0) as usize;
         let small_scale = (scale * 0.92).round().max(1.0) as usize;
         let bottom = (logical_height - 18.0).max(400.0);
-        let homebrew_count = self.entries.iter().filter(|entry| {
-            entry.path.extension().and_then(|value| value.to_str())
-                .is_some_and(|value| value.eq_ignore_ascii_case("3dsx"))
-        }).count();
+        let homebrew_count = self
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry
+                    .path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| value.eq_ignore_ascii_case("3dsx"))
+            })
+            .count();
         let game_count = self.entries.len().saturating_sub(homebrew_count);
         let selected_entry = self.selected_entry();
 
         // Full-width top navigation inspired by modern console dashboards.
         responsive_fill(
-            frame, width as usize, height as usize,
-            0.0, 0.0, 1000.0, 70.0, scale, 0x160D22,
+            frame,
+            width as usize,
+            height as usize,
+            0.0,
+            0.0,
+            1000.0,
+            70.0,
+            scale,
+            0x160D22,
         );
         responsive_fill(
-            frame, width as usize, height as usize,
-            0.0, 68.0, 1000.0, 2.0, scale, 0x563B67,
+            frame,
+            width as usize,
+            height as usize,
+            0.0,
+            68.0,
+            1000.0,
+            2.0,
+            scale,
+            0x563B67,
         );
         responsive_panel(
-            frame, width, height, 18.0, 10.0, 94.0, 46.0, scale, brand::ACCENT_RED,
+            frame,
+            width,
+            height,
+            18.0,
+            10.0,
+            94.0,
+            46.0,
+            scale,
+            brand::ACCENT_RED,
         );
         responsive_text_centered(
-            frame, width, height, 65.0, 25.0, title_scale, "ACERIS", brand::TEXT,
+            frame,
+            width,
+            height,
+            65.0,
+            25.0,
+            title_scale,
+            "ACERIS",
+            brand::TEXT,
         );
 
         let tabs = [
@@ -3290,102 +3324,247 @@ impl Library {
         for (x, tab_width, page, label) in tabs {
             let selected = self.page == page;
             responsive_panel(
-                frame, width, height, x, 12.0, tab_width, 42.0, scale,
+                frame,
+                width,
+                height,
+                x,
+                12.0,
+                tab_width,
+                42.0,
+                scale,
                 if selected { 0x422038 } else { 0x21152F },
             );
             if selected {
                 responsive_fill(
-                    frame, width as usize, height as usize,
-                    x + 4.0, 52.0, tab_width - 8.0, 3.0, scale,
+                    frame,
+                    width as usize,
+                    height as usize,
+                    x + 4.0,
+                    52.0,
+                    tab_width - 8.0,
+                    3.0,
+                    scale,
                     brand::ACCENT_GREEN_LIGHT,
                 );
             }
             responsive_text_centered(
-                frame, width, height, x + tab_width * 0.5, 27.0,
-                text_scale, label,
+                frame,
+                width,
+                height,
+                x + tab_width * 0.5,
+                27.0,
+                text_scale,
+                label,
                 if selected { brand::TEXT } else { 0xBBAFC7 },
             );
         }
         responsive_panel(
-            frame, width, height, 875.0, 12.0, 107.0, 42.0, scale,
-            if self.page == LibraryPage::Settings { brand::ACCENT_RED } else { 0x2D1A3B },
+            frame,
+            width,
+            height,
+            875.0,
+            12.0,
+            107.0,
+            42.0,
+            scale,
+            if self.page == LibraryPage::Settings {
+                brand::ACCENT_RED
+            } else {
+                0x2D1A3B
+            },
         );
         responsive_text_centered(
-            frame, width, height, 928.0, 27.0, text_scale, "AJUSTES", brand::TEXT,
+            frame,
+            width,
+            height,
+            928.0,
+            27.0,
+            text_scale,
+            "AJUSTES",
+            brand::TEXT,
         );
 
         // A distinct right-side action panel leaves the main area for the collection.
         responsive_fill(
-            frame, width as usize, height as usize,
-            0.0, 70.0, 1000.0, logical_height - 70.0, scale, 0x1A1026,
+            frame,
+            width as usize,
+            height as usize,
+            0.0,
+            70.0,
+            1000.0,
+            logical_height - 70.0,
+            scale,
+            0x1A1026,
         );
         responsive_panel(
-            frame, width, height, 758.0, 82.0, 224.0,
-            (bottom - 82.0).max(280.0), scale, 0x21152F,
+            frame,
+            width,
+            height,
+            758.0,
+            82.0,
+            224.0,
+            (bottom - 82.0).max(280.0),
+            scale,
+            0x21152F,
         );
         responsive_text(
-            frame, width, height, 780.0, 103.0, title_scale, "ACERIS", brand::TEXT,
+            frame,
+            width,
+            height,
+            780.0,
+            103.0,
+            title_scale,
+            "ACERIS",
+            brand::TEXT,
         );
         responsive_text(
-            frame, width, height, 782.0, 132.0, small_scale,
-            "BIBLIOTECA DE JOGOS", brand::ACCENT_GREEN_LIGHT,
+            frame,
+            width,
+            height,
+            782.0,
+            132.0,
+            small_scale,
+            "BIBLIOTECA DE JOGOS",
+            brand::ACCENT_GREEN_LIGHT,
         );
         responsive_fill(
-            frame, width as usize, height as usize,
-            780.0, 153.0, 180.0, 1.0, scale, 0x563B67,
+            frame,
+            width as usize,
+            height as usize,
+            780.0,
+            153.0,
+            180.0,
+            1.0,
+            scale,
+            0x563B67,
         );
 
         if self.page == LibraryPage::Home {
             responsive_text(
-                frame, width, height, 28.0, 84.0, title_scale,
-                "SEU ESPAÇO DE JOGOS", brand::TEXT,
+                frame,
+                width,
+                height,
+                28.0,
+                84.0,
+                title_scale,
+                "SEU ESPAÇO DE JOGOS",
+                brand::TEXT,
             );
             responsive_text(
-                frame, width, height, 30.0, 109.0, text_scale,
-                "Continue de onde parou ou explore sua coleção", 0xBBAFC7,
+                frame,
+                width,
+                height,
+                30.0,
+                109.0,
+                text_scale,
+                "Continue de onde parou ou explore sua coleção",
+                0xBBAFC7,
             );
             responsive_panel(
                 frame, width, height, 28.0, 132.0, 702.0, 166.0, scale, 0x251731,
             );
             responsive_text(
-                frame, width, height, 52.0, 151.0, text_scale,
-                "CONTINUAR JOGANDO", brand::ACCENT_GREEN_LIGHT,
+                frame,
+                width,
+                height,
+                52.0,
+                151.0,
+                text_scale,
+                "CONTINUAR JOGANDO",
+                brand::ACCENT_GREEN_LIGHT,
             );
             if let Some(entry) = selected_entry {
                 render_cover_art(
-                    frame, width, height, scale, 58.0, 178.0, 112.0, 98.0,
-                    entry, title_scale,
+                    frame,
+                    width,
+                    height,
+                    scale,
+                    58.0,
+                    178.0,
+                    112.0,
+                    98.0,
+                    entry,
+                    title_scale,
                 );
                 responsive_text(
-                    frame, width, height, 194.0, 187.0, title_scale,
-                    &truncate(&entry.title, 42), brand::TEXT,
+                    frame,
+                    width,
+                    height,
+                    194.0,
+                    187.0,
+                    title_scale,
+                    &truncate(&entry.title, 42),
+                    brand::TEXT,
                 );
-                let extension = entry.path.extension().and_then(|value| value.to_str()).unwrap_or("3ds");
+                let extension = entry
+                    .path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("3ds");
                 responsive_text(
-                    frame, width, height, 196.0, 219.0, text_scale,
+                    frame,
+                    width,
+                    height,
+                    196.0,
+                    219.0,
+                    text_scale,
                     &format!("FORMATO .{}", extension.to_ascii_uppercase()),
                     brand::ACCENT_GREEN_LIGHT,
                 );
                 responsive_text(
-                    frame, width, height, 196.0, 245.0, small_scale,
-                    "Seu último jogo aberto", 0xBBAFC7,
+                    frame,
+                    width,
+                    height,
+                    196.0,
+                    245.0,
+                    small_scale,
+                    "Seu último jogo aberto",
+                    0xBBAFC7,
                 );
                 responsive_panel(
-                    frame, width, height, 520.0, 221.0, 180.0, 48.0, scale,
+                    frame,
+                    width,
+                    height,
+                    520.0,
+                    221.0,
+                    180.0,
+                    48.0,
+                    scale,
                     brand::ACCENT_RED,
                 );
                 responsive_text_centered(
-                    frame, width, height, 610.0, 238.0, text_scale, "CONTINUAR", brand::TEXT,
+                    frame,
+                    width,
+                    height,
+                    610.0,
+                    238.0,
+                    text_scale,
+                    "CONTINUAR",
+                    brand::TEXT,
                 );
             } else {
                 responsive_folder_icon(frame, width, height, 116.0, 225.0, scale);
                 responsive_text(
-                    frame, width, height, 202.0, 190.0, title_scale,
-                    if self.entries.is_empty() { "Sua coleção começa aqui" } else { "Sua biblioteca está pronta" },
+                    frame,
+                    width,
+                    height,
+                    202.0,
+                    190.0,
+                    title_scale,
+                    if self.entries.is_empty() {
+                        "Sua coleção começa aqui"
+                    } else {
+                        "Sua biblioteca está pronta"
+                    },
                     brand::TEXT,
                 );
                 responsive_text(
-                    frame, width, height, 204.0, 223.0, text_scale,
+                    frame,
+                    width,
+                    height,
+                    204.0,
+                    223.0,
+                    text_scale,
                     if self.entries.is_empty() {
                         "Adicione uma pasta para encontrar seus jogos."
                     } else {
@@ -3394,19 +3573,41 @@ impl Library {
                     0xBBAFC7,
                 );
                 responsive_panel(
-                    frame, width, height, 520.0, 221.0, 180.0, 48.0, scale,
+                    frame,
+                    width,
+                    height,
+                    520.0,
+                    221.0,
+                    180.0,
+                    48.0,
+                    scale,
                     brand::ACCENT_RED,
                 );
                 responsive_text_centered(
-                    frame, width, height, 610.0, 238.0, text_scale,
-                    if self.entries.is_empty() { "ADICIONAR PASTA" } else { "VER JOGOS" },
+                    frame,
+                    width,
+                    height,
+                    610.0,
+                    238.0,
+                    text_scale,
+                    if self.entries.is_empty() {
+                        "ADICIONAR PASTA"
+                    } else {
+                        "VER JOGOS"
+                    },
                     brand::TEXT,
                 );
             }
 
             responsive_text(
-                frame, width, height, 28.0, 318.0, text_scale,
-                "EXPLORE SUA BIBLIOTECA", brand::ACCENT_GREEN_LIGHT,
+                frame,
+                width,
+                height,
+                28.0,
+                318.0,
+                text_scale,
+                "EXPLORE SUA BIBLIOTECA",
+                brand::ACCENT_GREEN_LIGHT,
             );
             let cards = [
                 (28.0, 340.0, 220.0, "JOGOS", game_count),
@@ -3418,34 +3619,79 @@ impl Library {
                     frame, width, height, x, y, card_width, 82.0, scale, 0x21152F,
                 );
                 responsive_text(
-                    frame, width, height, x + 16.0, y + 17.0, small_scale,
-                    label, brand::ACCENT_GREEN_LIGHT,
+                    frame,
+                    width,
+                    height,
+                    x + 16.0,
+                    y + 17.0,
+                    small_scale,
+                    label,
+                    brand::ACCENT_GREEN_LIGHT,
                 );
                 responsive_text(
-                    frame, width, height, x + 16.0, y + 43.0, title_scale,
-                    &count.to_string(), brand::TEXT,
+                    frame,
+                    width,
+                    height,
+                    x + 16.0,
+                    y + 43.0,
+                    title_scale,
+                    &count.to_string(),
+                    brand::TEXT,
                 );
                 responsive_text(
-                    frame, width, height, x + card_width - 74.0, y + 51.0, small_scale,
-                    "EXPLORAR", 0xBBAFC7,
+                    frame,
+                    width,
+                    height,
+                    x + card_width - 74.0,
+                    y + 51.0,
+                    small_scale,
+                    "EXPLORAR",
+                    0xBBAFC7,
                 );
             }
         } else if self.page == LibraryPage::Settings {
             responsive_text(
-                frame, width, height, 28.0, 84.0, title_scale,
-                "CONFIGURAÇÕES", brand::TEXT,
+                frame,
+                width,
+                height,
+                28.0,
+                84.0,
+                title_scale,
+                "CONFIGURAÇÕES",
+                brand::TEXT,
             );
             responsive_text(
-                frame, width, height, 30.0, 109.0, text_scale,
-                "Pastas, desempenho e preferências da biblioteca", 0xBBAFC7,
+                frame,
+                width,
+                height,
+                30.0,
+                109.0,
+                text_scale,
+                "Pastas, desempenho e preferências da biblioteca",
+                0xBBAFC7,
             );
             responsive_panel(
-                frame, width, height, 28.0, 132.0, 702.0,
-                (bottom - 150.0).max(270.0), scale, 0x21152F,
+                frame,
+                width,
+                height,
+                28.0,
+                132.0,
+                702.0,
+                (bottom - 150.0).max(270.0),
+                scale,
+                0x21152F,
             );
             responsive_text(
-                frame, width, height, 48.0, 151.0, text_scale,
-                &format!("PASTAS MONITORADAS ({})", self.scan_config.directories.len()),
+                frame,
+                width,
+                height,
+                48.0,
+                151.0,
+                text_scale,
+                &format!(
+                    "PASTAS MONITORADAS ({})",
+                    self.scan_config.directories.len()
+                ),
                 brand::ACCENT_GREEN_LIGHT,
             );
             for (index, directory) in self.scan_config.directories.iter().take(4).enumerate() {
@@ -3454,64 +3700,161 @@ impl Library {
                     frame, width, height, 44.0, row_y, 620.0, 24.0, scale, 0x33223F,
                 );
                 responsive_text(
-                    frame, width, height, 54.0, row_y + 7.0, small_scale,
-                    &tail(&directory.to_string_lossy(), 76), brand::TEXT,
+                    frame,
+                    width,
+                    height,
+                    54.0,
+                    row_y + 7.0,
+                    small_scale,
+                    &tail(&directory.to_string_lossy(), 76),
+                    brand::TEXT,
                 );
                 responsive_panel(
-                    frame, width, height, 670.0, row_y + 1.0, 48.0, 22.0, scale, 0x422038,
+                    frame,
+                    width,
+                    height,
+                    670.0,
+                    row_y + 1.0,
+                    48.0,
+                    22.0,
+                    scale,
+                    0x422038,
                 );
                 responsive_text_centered(
-                    frame, width, height, 694.0, row_y + 6.0, small_scale, "REM", brand::TEXT,
+                    frame,
+                    width,
+                    height,
+                    694.0,
+                    row_y + 6.0,
+                    small_scale,
+                    "REM",
+                    brand::TEXT,
                 );
             }
             if self.scan_config.directories.len() > 4 {
                 responsive_text(
-                    frame, width, height, 54.0, 292.0, small_scale,
-                    &format!("+ {} outra(s) pasta(s)", self.scan_config.directories.len() - 4),
+                    frame,
+                    width,
+                    height,
+                    54.0,
+                    292.0,
+                    small_scale,
+                    &format!(
+                        "+ {} outra(s) pasta(s)",
+                        self.scan_config.directories.len() - 4
+                    ),
                     0xBBAFC7,
                 );
             }
             let settings_actions = [
-                (28.0, 280.0, 217.0, "ADICIONAR PASTA",
-                    if self.scan_path_input_focused { brand::ACCENT_RED } else { 0x2D1A3B }),
-                (255.0, 280.0, 220.0,
-                    if self.scan_config.options.recursive { "SUBPASTAS: SIM" } else { "SUBPASTAS: NÃO" },
-                    if self.scan_config.options.recursive { 0x28543F } else { 0x2D1A3B }),
-                (485.0, 280.0, 110.0,
-                    if self.performance_mode { "RÁPIDO: SIM" } else { "RÁPIDO: NÃO" },
-                    if self.performance_mode { 0x28543F } else { 0x2D1A3B }),
-                (605.0, 280.0, 125.0,
-                    "ZONA MORTA", 0x2D1A3B),
+                (
+                    28.0,
+                    280.0,
+                    217.0,
+                    "ADICIONAR PASTA",
+                    if self.scan_path_input_focused {
+                        brand::ACCENT_RED
+                    } else {
+                        0x2D1A3B
+                    },
+                ),
+                (
+                    255.0,
+                    280.0,
+                    220.0,
+                    if self.scan_config.options.recursive {
+                        "SUBPASTAS: SIM"
+                    } else {
+                        "SUBPASTAS: NÃO"
+                    },
+                    if self.scan_config.options.recursive {
+                        0x28543F
+                    } else {
+                        0x2D1A3B
+                    },
+                ),
+                (
+                    485.0,
+                    280.0,
+                    110.0,
+                    if self.performance_mode {
+                        "RÁPIDO: SIM"
+                    } else {
+                        "RÁPIDO: NÃO"
+                    },
+                    if self.performance_mode {
+                        0x28543F
+                    } else {
+                        0x2D1A3B
+                    },
+                ),
+                (605.0, 280.0, 125.0, "ZONA MORTA", 0x2D1A3B),
             ];
             for (x, y, card_width, label, color) in settings_actions {
-                responsive_panel(
-                    frame, width, height, x, y, card_width, 42.0, scale, color,
-                );
+                responsive_panel(frame, width, height, x, y, card_width, 42.0, scale, color);
                 responsive_text_centered(
-                    frame, width, height, x + card_width * 0.5, y + 14.0,
-                    small_scale, label, brand::TEXT,
+                    frame,
+                    width,
+                    height,
+                    x + card_width * 0.5,
+                    y + 14.0,
+                    small_scale,
+                    label,
+                    brand::TEXT,
                 );
             }
             responsive_text_centered(
-                frame, width, height, 667.0, 294.0, small_scale,
-                &format!("ZONA: {}%", self.gamepad_deadzone_percent), brand::TEXT,
+                frame,
+                width,
+                height,
+                667.0,
+                294.0,
+                small_scale,
+                &format!("ZONA: {}%", self.gamepad_deadzone_percent),
+                brand::TEXT,
             );
             if self.scan_path_input_focused {
                 responsive_text(
-                    frame, width, height, 48.0, 340.0, small_scale,
-                    &truncate(&self.search_query, 100), brand::ACCENT_GREEN_LIGHT,
+                    frame,
+                    width,
+                    height,
+                    48.0,
+                    340.0,
+                    small_scale,
+                    &truncate(&self.search_query, 100),
+                    brand::ACCENT_GREEN_LIGHT,
                 );
                 responsive_text(
-                    frame, width, height, 48.0, 360.0, small_scale,
-                    "Digite o caminho completo da pasta e pressione Enter/OK.", 0xBBAFC7,
+                    frame,
+                    width,
+                    height,
+                    48.0,
+                    360.0,
+                    small_scale,
+                    "Digite o caminho completo da pasta e pressione Enter/OK.",
+                    0xBBAFC7,
                 );
             }
             responsive_text(
-                frame, width, height, 48.0, 382.0, small_scale,
-                "PREFERÊNCIAS DA BIBLIOTECA", brand::ACCENT_GREEN_LIGHT,
+                frame,
+                width,
+                height,
+                48.0,
+                382.0,
+                small_scale,
+                "PREFERÊNCIAS DA BIBLIOTECA",
+                brand::ACCENT_GREEN_LIGHT,
             );
-            let view_label = if self.view_mode == LibraryViewMode::Grid { "VISTA: GRADE" } else { "VISTA: LISTA" };
-            let sort_label = if self.sort_descending { "ORDEM: Z–A" } else { "ORDEM: A–Z" };
+            let view_label = if self.view_mode == LibraryViewMode::Grid {
+                "VISTA: GRADE"
+            } else {
+                "VISTA: LISTA"
+            };
+            let sort_label = if self.sort_descending {
+                "ORDEM: Z–A"
+            } else {
+                "ORDEM: A–Z"
+            };
             let settings_footer = [
                 (28.0, 396.0, 217.0, view_label),
                 (255.0, 396.0, 220.0, sort_label),
@@ -3521,32 +3864,62 @@ impl Library {
                     frame, width, height, x, y, card_width, 32.0, scale, 0x2D1A3B,
                 );
                 responsive_text_centered(
-                    frame, width, height, x + card_width * 0.5, y + 10.0,
-                    small_scale, label, brand::TEXT,
+                    frame,
+                    width,
+                    height,
+                    x + card_width * 0.5,
+                    y + 10.0,
+                    small_scale,
+                    label,
+                    brand::TEXT,
                 );
             }
             if self.touch_keyboard_enabled {
                 responsive_panel(
-                    frame, width, height, 485.0, 396.0, 245.0, 32.0, scale,
-                    if self.virtual_controls_visible { 0x28543F } else { 0x2D1A3B },
+                    frame,
+                    width,
+                    height,
+                    485.0,
+                    396.0,
+                    245.0,
+                    32.0,
+                    scale,
+                    if self.virtual_controls_visible {
+                        0x28543F
+                    } else {
+                        0x2D1A3B
+                    },
                 );
                 responsive_text_centered(
-                    frame, width, height, 607.0, 406.0, small_scale,
-                    if self.virtual_controls_visible { "CONTROLES: ATIVOS" } else { "CONTROLES: OCULTOS" },
+                    frame,
+                    width,
+                    height,
+                    607.0,
+                    406.0,
+                    small_scale,
+                    if self.virtual_controls_visible {
+                        "CONTROLES: ATIVOS"
+                    } else {
+                        "CONTROLES: OCULTOS"
+                    },
                     brand::TEXT,
                 );
                 if logical_height >= 540.0 {
-                    let control_options = [
-                        (485.0, "OPACIDADE"),
-                        (568.0, "TAMANHO"),
-                        (651.0, "LAYOUT"),
-                    ];
+                    let control_options =
+                        [(485.0, "OPACIDADE"), (568.0, "TAMANHO"), (651.0, "LAYOUT")];
                     for (x, label) in control_options {
                         responsive_panel(
                             frame, width, height, x, 438.0, 79.0, 38.0, scale, 0x2D1A3B,
                         );
                         responsive_text_centered(
-                            frame, width, height, x + 39.5, 451.0, small_scale, label, brand::TEXT,
+                            frame,
+                            width,
+                            height,
+                            x + 39.5,
+                            451.0,
+                            small_scale,
+                            label,
+                            brand::TEXT,
                         );
                     }
                 }
@@ -3560,18 +3933,42 @@ impl Library {
                 LibraryPage::Home | LibraryPage::Settings => "BIBLIOTECA",
             };
             responsive_text(
-                frame, width, height, 28.0, 84.0, title_scale, page_title, brand::TEXT,
+                frame,
+                width,
+                height,
+                28.0,
+                84.0,
+                title_scale,
+                page_title,
+                brand::TEXT,
             );
             responsive_text(
-                frame, width, height, 30.0, 109.0, text_scale,
-                &format!("{} item(ns) disponíveis", self.visible_entry_count()), 0xBBAFC7,
+                frame,
+                width,
+                height,
+                30.0,
+                109.0,
+                text_scale,
+                &format!("{} item(ns) disponíveis", self.visible_entry_count()),
+                0xBBAFC7,
             );
             responsive_panel(
                 frame, width, height, 28.0, 126.0, 702.0, 32.0, scale, 0x21152F,
             );
             responsive_panel(
-                frame, width, height, 36.0, 130.0, 329.0, 24.0, scale,
-                if self.search_focused { 0x422038 } else { 0x33223F },
+                frame,
+                width,
+                height,
+                36.0,
+                130.0,
+                329.0,
+                24.0,
+                scale,
+                if self.search_focused {
+                    0x422038
+                } else {
+                    0x33223F
+                },
             );
             let search_label = if self.search_query.is_empty() {
                 "BUSCAR POR NOME OU CAMINHO".to_string()
@@ -3579,99 +3976,233 @@ impl Library {
                 format!("BUSCAR: {}", truncate(&self.search_query, 42))
             };
             responsive_text(
-                frame, width, height, 46.0, 138.0, small_scale,
+                frame,
+                width,
+                height,
+                46.0,
+                138.0,
+                small_scale,
                 &search_label,
-                if self.search_focused { brand::ACCENT_GREEN_LIGHT } else { 0xBBAFC7 },
+                if self.search_focused {
+                    brand::ACCENT_GREEN_LIGHT
+                } else {
+                    0xBBAFC7
+                },
             );
             responsive_panel(
                 frame, width, height, 368.0, 130.0, 34.0, 24.0, scale, 0x422038,
             );
             responsive_text_centered(
-                frame, width, height, 385.0, 137.0, small_scale, "X", brand::TEXT,
+                frame,
+                width,
+                height,
+                385.0,
+                137.0,
+                small_scale,
+                "X",
+                brand::TEXT,
             );
             responsive_panel(
                 frame, width, height, 410.0, 130.0, 108.0, 24.0, scale, 0x2D1A3B,
             );
             responsive_text_centered(
-                frame, width, height, 464.0, 137.0, small_scale,
-                self.format_filter.label(), brand::ACCENT_GREEN_LIGHT,
+                frame,
+                width,
+                height,
+                464.0,
+                137.0,
+                small_scale,
+                self.format_filter.label(),
+                brand::ACCENT_GREEN_LIGHT,
             );
             responsive_panel(
-                frame, width, height, 526.0, 130.0, 96.0, 24.0, scale,
-                if self.view_mode == LibraryViewMode::List { brand::ACCENT_RED } else { 0x2D1A3B },
+                frame,
+                width,
+                height,
+                526.0,
+                130.0,
+                96.0,
+                24.0,
+                scale,
+                if self.view_mode == LibraryViewMode::List {
+                    brand::ACCENT_RED
+                } else {
+                    0x2D1A3B
+                },
             );
             responsive_text_centered(
-                frame, width, height, 574.0, 137.0, small_scale,
-                if self.view_mode == LibraryViewMode::List { "LISTA" } else { "GRADE" },
+                frame,
+                width,
+                height,
+                574.0,
+                137.0,
+                small_scale,
+                if self.view_mode == LibraryViewMode::List {
+                    "LISTA"
+                } else {
+                    "GRADE"
+                },
                 brand::TEXT,
             );
             responsive_panel(
                 frame, width, height, 630.0, 130.0, 92.0, 24.0, scale, 0x2D1A3B,
             );
             responsive_text_centered(
-                frame, width, height, 676.0, 137.0, small_scale,
-                if self.sort_descending { "Z–A" } else { "A–Z" }, brand::TEXT,
+                frame,
+                width,
+                height,
+                676.0,
+                137.0,
+                small_scale,
+                if self.sort_descending {
+                    "Z–A"
+                } else {
+                    "A–Z"
+                },
+                brand::TEXT,
             );
 
             let entries = self.filtered_entries();
             if entries.is_empty() {
                 responsive_panel(
-                    frame, width, height, 28.0, 170.0, 702.0,
-                    (bottom - 190.0).max(190.0), scale, 0x21152F,
+                    frame,
+                    width,
+                    height,
+                    28.0,
+                    170.0,
+                    702.0,
+                    (bottom - 190.0).max(190.0),
+                    scale,
+                    0x21152F,
                 );
                 responsive_folder_icon(frame, width, height, 140.0, 270.0, scale);
                 let (empty_title, first_line) = if self.page == LibraryPage::Homebrew {
-                    ("Nenhum homebrew encontrado", "Adicione arquivos .3dsx à biblioteca.")
+                    (
+                        "Nenhum homebrew encontrado",
+                        "Adicione arquivos .3dsx à biblioteca.",
+                    )
                 } else if !self.search_query.is_empty() {
-                    ("Nenhum resultado encontrado", "Tente outro termo ou limpe a busca.")
+                    (
+                        "Nenhum resultado encontrado",
+                        "Tente outro termo ou limpe a busca.",
+                    )
                 } else {
-                    ("Sua biblioteca está vazia", "Adicione uma pasta com seus jogos para começar.")
+                    (
+                        "Sua biblioteca está vazia",
+                        "Adicione uma pasta com seus jogos para começar.",
+                    )
                 };
                 responsive_text(
-                    frame, width, height, 230.0, 235.0, title_scale, empty_title, brand::TEXT,
+                    frame,
+                    width,
+                    height,
+                    230.0,
+                    235.0,
+                    title_scale,
+                    empty_title,
+                    brand::TEXT,
                 );
                 responsive_text(
                     frame, width, height, 232.0, 270.0, text_scale, first_line, 0xBBAFC7,
                 );
                 responsive_panel(
-                    frame, width, height, 500.0, 315.0, 192.0, 42.0, scale, brand::ACCENT_RED,
+                    frame,
+                    width,
+                    height,
+                    500.0,
+                    315.0,
+                    192.0,
+                    42.0,
+                    scale,
+                    brand::ACCENT_RED,
                 );
                 responsive_text_centered(
-                    frame, width, height, 596.0, 329.0, small_scale,
-                    "ADICIONAR PASTA", brand::TEXT,
+                    frame,
+                    width,
+                    height,
+                    596.0,
+                    329.0,
+                    small_scale,
+                    "ADICIONAR PASTA",
+                    brand::TEXT,
                 );
             } else if self.view_mode == LibraryViewMode::List {
                 let list_top = 170.0;
                 let row_step = 54.0;
                 let row_height = 48.0;
-                let visible_rows =
-                    ((bottom - list_top - row_height) / row_step).floor().max(0.0) as usize + 1;
-                for (row, entry) in entries.iter().enumerate()
+                let visible_rows = ((bottom - list_top - row_height) / row_step)
+                    .floor()
+                    .max(0.0) as usize
+                    + 1;
+                for (row, entry) in entries
+                    .iter()
+                    .enumerate()
                     .skip(self.first_visible)
                     .take(visible_rows)
                 {
                     let y = list_top + (row - self.first_visible) as f32 * row_step;
                     responsive_panel(
-                        frame, width, height, 28.0, y, 702.0, row_height, scale,
-                        if row == self.selected { 0x422038 } else { 0x21152F },
+                        frame,
+                        width,
+                        height,
+                        28.0,
+                        y,
+                        702.0,
+                        row_height,
+                        scale,
+                        if row == self.selected {
+                            0x422038
+                        } else {
+                            0x21152F
+                        },
                     );
                     render_cover_art(
-                        frame, width, height, scale, 38.0, y + 5.0, 54.0, 38.0,
-                        entry, small_scale,
+                        frame,
+                        width,
+                        height,
+                        scale,
+                        38.0,
+                        y + 5.0,
+                        54.0,
+                        38.0,
+                        entry,
+                        small_scale,
                     );
                     responsive_text(
-                        frame, width, height, 108.0, y + 17.0, text_scale,
-                        &truncate(&entry.title, 64), brand::TEXT,
+                        frame,
+                        width,
+                        height,
+                        108.0,
+                        y + 17.0,
+                        text_scale,
+                        &truncate(&entry.title, 64),
+                        brand::TEXT,
                     );
-                    let extension = entry.path.extension().and_then(|value| value.to_str()).unwrap_or("3ds");
+                    let extension = entry
+                        .path
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("3ds");
                     responsive_text(
-                        frame, width, height, 650.0, y + 17.0, small_scale,
-                        &extension.to_ascii_uppercase(), brand::ACCENT_GREEN_LIGHT,
+                        frame,
+                        width,
+                        height,
+                        650.0,
+                        y + 17.0,
+                        small_scale,
+                        &extension.to_ascii_uppercase(),
+                        brand::ACCENT_GREEN_LIGHT,
                     );
                     if self.is_favorite(entry) {
                         responsive_text(
-                            frame, width, height, 694.0, y + 17.0, small_scale,
-                            "F", brand::ACCENT_GREEN_LIGHT,
+                            frame,
+                            width,
+                            height,
+                            694.0,
+                            y + 17.0,
+                            small_scale,
+                            "F",
+                            brand::ACCENT_GREEN_LIGHT,
                         );
                     }
                 }
@@ -3683,7 +4214,9 @@ impl Library {
                 let card_gap = 10.0;
                 let row_step = 132.0;
                 let visible_rows = landscape_grid_visible_rows(logical_height);
-                for (index, entry) in entries.iter().enumerate()
+                for (index, entry) in entries
+                    .iter()
+                    .enumerate()
                     .skip(self.first_visible)
                     .take(visible_rows * COLUMNS)
                 {
@@ -3693,9 +4226,19 @@ impl Library {
                     let x = 28.0 + column as f32 * (card_width + card_gap);
                     let y = card_top + row as f32 * row_step;
                     render_library_tile(
-                        frame, width, height, scale, x, y, card_width, card_height,
-                        entry, index == self.selected, self.is_favorite(entry),
-                        text_scale, small_scale,
+                        frame,
+                        width,
+                        height,
+                        scale,
+                        x,
+                        y,
+                        card_width,
+                        card_height,
+                        entry,
+                        index == self.selected,
+                        self.is_favorite(entry),
+                        text_scale,
+                        small_scale,
                     );
                 }
             }
@@ -3703,43 +4246,104 @@ impl Library {
 
         // Persistent right-hand actions mirror a console's selected-game panel.
         responsive_text(
-            frame, width, height, 780.0, 174.0, small_scale,
-            if self.page == LibraryPage::Home { "ULTIMO JOGO" } else if self.page == LibraryPage::Settings { "BIBLIOTECA" } else { "SELECIONADO" },
+            frame,
+            width,
+            height,
+            780.0,
+            174.0,
+            small_scale,
+            if self.page == LibraryPage::Home {
+                "ULTIMO JOGO"
+            } else if self.page == LibraryPage::Settings {
+                "BIBLIOTECA"
+            } else {
+                "SELECIONADO"
+            },
             brand::ACCENT_GREEN_LIGHT,
         );
         if let Some(entry) = selected_entry {
             responsive_text(
-                frame, width, height, 780.0, 197.0, text_scale,
-                &truncate(&entry.title, 26), brand::TEXT,
+                frame,
+                width,
+                height,
+                780.0,
+                197.0,
+                text_scale,
+                &truncate(&entry.title, 26),
+                brand::TEXT,
             );
-            let extension = entry.path.extension().and_then(|value| value.to_str()).unwrap_or("3ds");
+            let extension = entry
+                .path
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("3ds");
             responsive_text(
-                frame, width, height, 782.0, 220.0, small_scale,
-                &format!(".{}", extension.to_ascii_uppercase()), 0xBBAFC7,
+                frame,
+                width,
+                height,
+                782.0,
+                220.0,
+                small_scale,
+                &format!(".{}", extension.to_ascii_uppercase()),
+                0xBBAFC7,
             );
         } else {
             responsive_text(
-                frame, width, height, 780.0, 199.0, small_scale,
-                &format!("{} jogo(s)", game_count), brand::TEXT,
+                frame,
+                width,
+                height,
+                780.0,
+                199.0,
+                small_scale,
+                &format!("{} jogo(s)", game_count),
+                brand::TEXT,
             );
             responsive_text(
-                frame, width, height, 782.0, 220.0, small_scale,
-                &format!("{} homebrew(s)", homebrew_count), 0xBBAFC7,
+                frame,
+                width,
+                height,
+                782.0,
+                220.0,
+                small_scale,
+                &format!("{} homebrew(s)", homebrew_count),
+                0xBBAFC7,
             );
         }
         responsive_panel(
-            frame, width, height, 776.0, 238.0, 188.0, 42.0, scale,
-            if selected_entry.is_some() { brand::ACCENT_RED } else { 0x2D1A3B },
+            frame,
+            width,
+            height,
+            776.0,
+            238.0,
+            188.0,
+            42.0,
+            scale,
+            if selected_entry.is_some() {
+                brand::ACCENT_RED
+            } else {
+                0x2D1A3B
+            },
         );
         responsive_text_centered(
-            frame, width, height, 870.0, 252.0, small_scale,
-            "ABRIR JOGO", brand::TEXT,
+            frame,
+            width,
+            height,
+            870.0,
+            252.0,
+            small_scale,
+            "ABRIR JOGO",
+            brand::TEXT,
         );
         responsive_panel(
             frame, width, height, 776.0, 286.0, 188.0, 42.0, scale, 0x2D1A3B,
         );
         responsive_text_centered(
-            frame, width, height, 870.0, 300.0, small_scale,
+            frame,
+            width,
+            height,
+            870.0,
+            300.0,
+            small_scale,
             if selected_entry.is_some_and(|entry| self.is_favorite(entry)) {
                 "REMOVER FAVORITO"
             } else {
@@ -3748,42 +4352,90 @@ impl Library {
             brand::TEXT,
         );
         responsive_panel(
-            frame, width, height, 776.0, 336.0, 188.0, 42.0, scale, brand::ACCENT_RED,
+            frame,
+            width,
+            height,
+            776.0,
+            336.0,
+            188.0,
+            42.0,
+            scale,
+            brand::ACCENT_RED,
         );
         responsive_text_centered(
-            frame, width, height, 870.0, 350.0, small_scale, "ADICIONAR PASTA", brand::TEXT,
+            frame,
+            width,
+            height,
+            870.0,
+            350.0,
+            small_scale,
+            "ADICIONAR PASTA",
+            brand::TEXT,
         );
         responsive_panel(
             frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, 0x2D1A3B,
         );
         responsive_text_centered(
-            frame, width, height, 870.0, 398.0, small_scale, "ATUALIZAR", brand::TEXT,
+            frame,
+            width,
+            height,
+            870.0,
+            398.0,
+            small_scale,
+            "ATUALIZAR",
+            brand::TEXT,
         );
 
         responsive_text(
-            frame, width, height, 780.0, (bottom - 34.0).max(0.0), small_scale,
-            &format!("{} PASTA(S) MONITORADA(S)", self.scan_config.directories.len()),
+            frame,
+            width,
+            height,
+            780.0,
+            (bottom - 34.0).max(0.0),
+            small_scale,
+            &format!(
+                "{} PASTA(S) MONITORADA(S)",
+                self.scan_config.directories.len()
+            ),
             0xBBAFC7,
         );
         if let Some(status) = &self.status {
             responsive_text(
-                frame, width, height, 28.0, (bottom - 32.0).max(0.0),
-                small_scale, &truncate(status, 86), brand::ACCENT_RED_LIGHT,
+                frame,
+                width,
+                height,
+                28.0,
+                (bottom - 32.0).max(0.0),
+                small_scale,
+                &truncate(status, 86),
+                brand::ACCENT_RED_LIGHT,
             );
         }
         responsive_fill(
-            frame, width as usize, height as usize,
-            0.0, (logical_height - 18.0).max(0.0), 1000.0, 18.0, scale, 0x160D22,
+            frame,
+            width as usize,
+            height as usize,
+            0.0,
+            (logical_height - 18.0).max(0.0),
+            1000.0,
+            18.0,
+            scale,
+            0x160D22,
         );
         responsive_text(
-            frame, width, height, 22.0, (logical_height - 13.0).max(0.0),
-            small_scale, "ACERIS  |  RUST  |  SEUS ARQUIVOS, SUAS REGRAS", 0xBBAFC7,
+            frame,
+            width,
+            height,
+            22.0,
+            (logical_height - 13.0).max(0.0),
+            small_scale,
+            "ACERIS  |  RUST  |  SEUS ARQUIVOS, SUAS REGRAS",
+            0xBBAFC7,
         );
         if self.touch_keyboard_open {
             self.render_touch_keyboard(frame, width, height, scale, logical_height, text_scale);
         }
     }
-
 }
 
 fn landscape_grid_visible_rows(logical_height: f32) -> usize {
@@ -3825,31 +4477,69 @@ fn render_cover_art(
 ) {
     let (base, accent, highlight) = cover_palette(&entry.title);
     responsive_panel(
-        frame, width, height, x, y, cover_width, cover_height, scale, base,
+        frame,
+        width,
+        height,
+        x,
+        y,
+        cover_width,
+        cover_height,
+        scale,
+        base,
     );
     responsive_fill(
-        frame, width as usize, height as usize,
-        x + 4.0, y + 4.0, cover_width - 8.0, cover_height - 8.0,
-        scale, base,
+        frame,
+        width as usize,
+        height as usize,
+        x + 4.0,
+        y + 4.0,
+        cover_width - 8.0,
+        cover_height - 8.0,
+        scale,
+        base,
     );
     responsive_fill(
-        frame, width as usize, height as usize,
-        x + 10.0, y + cover_height * 0.24, cover_width - 20.0, 5.0,
-        scale, accent,
+        frame,
+        width as usize,
+        height as usize,
+        x + 10.0,
+        y + cover_height * 0.24,
+        cover_width - 20.0,
+        5.0,
+        scale,
+        accent,
     );
     responsive_fill(
-        frame, width as usize, height as usize,
-        x + cover_width * 0.18, y + cover_height * 0.40,
-        cover_width * 0.64, 4.0, scale, highlight,
+        frame,
+        width as usize,
+        height as usize,
+        x + cover_width * 0.18,
+        y + cover_height * 0.40,
+        cover_width * 0.64,
+        4.0,
+        scale,
+        highlight,
     );
     responsive_fill(
-        frame, width as usize, height as usize,
-        x + cover_width * 0.34, y + cover_height * 0.57,
-        cover_width * 0.32, 4.0, scale, accent,
+        frame,
+        width as usize,
+        height as usize,
+        x + cover_width * 0.34,
+        y + cover_height * 0.57,
+        cover_width * 0.32,
+        4.0,
+        scale,
+        accent,
     );
     responsive_text_centered(
-        frame, width, height, x + cover_width * 0.5, y + cover_height * 0.68,
-        text_scale, "3DS", brand::TEXT,
+        frame,
+        width,
+        height,
+        x + cover_width * 0.5,
+        y + cover_height * 0.68,
+        text_scale,
+        "3DS",
+        brand::TEXT,
     );
 }
 
@@ -3870,44 +4560,107 @@ fn render_library_tile(
     small_scale: usize,
 ) {
     responsive_panel(
-        frame, width, height, x, y, card_width, card_height, scale,
+        frame,
+        width,
+        height,
+        x,
+        y,
+        card_width,
+        card_height,
+        scale,
         if selected { 0x422038 } else { 0x21152F },
     );
     let (base, accent, highlight) = cover_palette(&entry.title);
     responsive_fill(
-        frame, width as usize, height as usize,
-        x + 6.0, y + 6.0, card_width - 12.0, 70.0, scale, base,
+        frame,
+        width as usize,
+        height as usize,
+        x + 6.0,
+        y + 6.0,
+        card_width - 12.0,
+        70.0,
+        scale,
+        base,
     );
     responsive_fill(
-        frame, width as usize, height as usize,
-        x + 14.0, y + 20.0, card_width - 28.0, 4.0, scale, accent,
+        frame,
+        width as usize,
+        height as usize,
+        x + 14.0,
+        y + 20.0,
+        card_width - 28.0,
+        4.0,
+        scale,
+        accent,
     );
     responsive_fill(
-        frame, width as usize, height as usize,
-        x + 28.0, y + 37.0, card_width - 56.0, 4.0, scale, highlight,
+        frame,
+        width as usize,
+        height as usize,
+        x + 28.0,
+        y + 37.0,
+        card_width - 56.0,
+        4.0,
+        scale,
+        highlight,
     );
     responsive_text_centered(
-        frame, width, height, x + card_width * 0.5, y + 53.0,
-        text_scale, "3DS", brand::TEXT,
+        frame,
+        width,
+        height,
+        x + card_width * 0.5,
+        y + 53.0,
+        text_scale,
+        "3DS",
+        brand::TEXT,
     );
     if favorite {
         responsive_panel(
-            frame, width, height, x + card_width - 28.0, y + 8.0,
-            20.0, 20.0, scale, 0x422038,
+            frame,
+            width,
+            height,
+            x + card_width - 28.0,
+            y + 8.0,
+            20.0,
+            20.0,
+            scale,
+            0x422038,
         );
         responsive_text_centered(
-            frame, width, height, x + card_width - 18.0, y + 13.0,
-            small_scale, "F", brand::ACCENT_GREEN_LIGHT,
+            frame,
+            width,
+            height,
+            x + card_width - 18.0,
+            y + 13.0,
+            small_scale,
+            "F",
+            brand::ACCENT_GREEN_LIGHT,
         );
     }
     responsive_text(
-        frame, width, height, x + 10.0, y + 87.0, small_scale,
-        &truncate(&entry.title, 25), brand::TEXT,
+        frame,
+        width,
+        height,
+        x + 10.0,
+        y + 87.0,
+        small_scale,
+        &truncate(&entry.title, 25),
+        brand::TEXT,
     );
-    let extension = entry.path.extension().and_then(|value| value.to_str()).unwrap_or("3ds");
+    let extension = entry
+        .path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("3ds");
     responsive_text(
-        frame, width, height, x + 10.0, y + 108.0, small_scale,
-        &extension.to_ascii_uppercase(), brand::ACCENT_GREEN_LIGHT,
+        frame,
+        width,
+        height,
+        x + 10.0,
+        y + 108.0,
+        small_scale,
+        &extension.to_ascii_uppercase(),
+        brand::ACCENT_GREEN_LIGHT,
     );
 }
 
@@ -5321,10 +6074,8 @@ mod tests {
 
     #[test]
     fn console_home_add_folder_action_opens_path_entry() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-console-add-folder-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aceris-console-add-folder-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let mut library = Library::new(Vec::new(), dir.display().to_string());
         library.set_touch_keyboard_enabled(true);
