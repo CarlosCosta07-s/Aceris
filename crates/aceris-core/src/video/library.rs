@@ -7924,15 +7924,7 @@ fn render_cover_art(
             brand::SURFACE_RAISED,
         );
         draw_smdh_icon(
-            frame,
-            width,
-            height,
-            scale,
-            icon_x,
-            icon_y,
-            icon_size,
-            icon_size,
-            icon,
+            frame, width, height, scale, icon_x, icon_y, icon_size, icon_size, icon,
         );
         return;
     }
