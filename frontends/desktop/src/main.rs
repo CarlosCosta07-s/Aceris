@@ -771,7 +771,7 @@ fn emulate(
 ) -> Result<Flow, String> {
     let frame_time = Duration::from_micros(16_667);
     let mut keyboard = window::KeyboardInput::default();
-    let mut gamepad = GamepadManager::new();
+    let mut gamepad = GamepadManager::new(settings_directory, system.game_identity());
     let mut audio = audio::AudioOutput::open();
     let mut frame = Vec::new();
     let mut menu_open = false;

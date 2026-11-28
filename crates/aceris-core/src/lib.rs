@@ -11,6 +11,7 @@ pub mod game_identity;
 pub mod gpu;
 pub mod hid;
 pub mod input;
+pub mod input_mapping;
 pub mod loaded_image;
 pub mod loader;
 pub mod memory;

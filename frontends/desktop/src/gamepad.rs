@@ -3,18 +3,27 @@
 //! GilRs supplies OS-specific device enumeration and hotplug events. Aceris
 //! owns the mapping from the standardized controller layout to 3DS controls.
 
-use aceris_core::input::{CIRCLE_PAD_LIMIT, InputState, pad};
+use aceris_core::{
+    GameIdentity,
+    input::{CIRCLE_PAD_LIMIT, InputState},
+    input_mapping::{GamepadControl, GamepadMapping},
+};
 use gilrs::{Axis, Button, GamepadId, Gilrs};
+use std::path::{Path, PathBuf};
 
 use crate::window::KeyboardInput;
 
 pub(crate) struct GamepadManager {
     gilrs: Option<Gilrs>,
     active_gamepad: Option<GamepadId>,
+    active_device_uuid: Option<[u8; 16]>,
+    settings_directory: PathBuf,
+    game_identity: Option<GameIdentity>,
+    mapping: GamepadMapping,
 }
 
 impl GamepadManager {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(settings_directory: &Path, game_identity: Option<GameIdentity>) -> Self {
         let gilrs = match Gilrs::new() {
             Ok(gilrs) => Some(gilrs),
             Err(error) => {
@@ -25,6 +34,10 @@ impl GamepadManager {
         Self {
             gilrs,
             active_gamepad: None,
+            active_device_uuid: None,
+            settings_directory: settings_directory.to_path_buf(),
+            game_identity,
+            mapping: GamepadMapping::load_for_context(settings_directory, None, game_identity),
         }
     }
 
@@ -74,10 +87,26 @@ impl GamepadManager {
         self.active_gamepad = active;
 
         let Some(id) = active else {
+            self.active_device_uuid = None;
+            self.mapping = GamepadMapping::load_for_context(
+                &self.settings_directory,
+                None,
+                self.game_identity,
+            );
             return (0, (0, 0));
         };
         let gamepad = gilrs.gamepad(id);
-        let buttons = button_mask(&gamepad);
+        let reported_uuid = gamepad.uuid();
+        let device_uuid = (!reported_uuid.iter().all(|byte| *byte == 0)).then_some(reported_uuid);
+        if device_uuid != self.active_device_uuid {
+            self.active_device_uuid = device_uuid;
+            self.mapping = GamepadMapping::load_for_context(
+                &self.settings_directory,
+                device_uuid,
+                self.game_identity,
+            );
+        }
+        let buttons = button_mask(&gamepad, &self.mapping);
         let axes = (
             axis_to_circle_pad(gamepad.value(Axis::LeftStickX), deadzone_percent),
             axis_to_circle_pad(-gamepad.value(Axis::LeftStickY), deadzone_percent),
@@ -86,53 +115,27 @@ impl GamepadManager {
     }
 }
 
-fn button_bit(button: Button) -> u32 {
-    match button {
-        Button::South => pad::A,
-        Button::East => pad::B,
-        Button::North => pad::X,
-        Button::West => pad::Y,
-        Button::DPadUp => pad::UP,
-        Button::DPadDown => pad::DOWN,
-        Button::DPadLeft => pad::LEFT,
-        Button::DPadRight => pad::RIGHT,
-        // Gilrs names the shoulder buttons Left/RightTrigger; Trigger2 is
-        // the separate ZL/ZR trigger input on controllers that expose it.
-        Button::LeftTrigger => pad::L,
-        Button::RightTrigger => pad::R,
-        Button::LeftTrigger2 => pad::ZL,
-        Button::RightTrigger2 => pad::ZR,
-        Button::Start => pad::START,
-        Button::Select => pad::SELECT,
-        _ => 0,
+fn gilrs_button(control: GamepadControl) -> Button {
+    match control {
+        GamepadControl::South => Button::South,
+        GamepadControl::East => Button::East,
+        GamepadControl::North => Button::North,
+        GamepadControl::West => Button::West,
+        GamepadControl::DPadUp => Button::DPadUp,
+        GamepadControl::DPadDown => Button::DPadDown,
+        GamepadControl::DPadLeft => Button::DPadLeft,
+        GamepadControl::DPadRight => Button::DPadRight,
+        GamepadControl::LeftShoulder => Button::LeftTrigger,
+        GamepadControl::RightShoulder => Button::RightTrigger,
+        GamepadControl::LeftTrigger => Button::LeftTrigger2,
+        GamepadControl::RightTrigger => Button::RightTrigger2,
+        GamepadControl::Start => Button::Start,
+        GamepadControl::Select => Button::Select,
     }
 }
 
-fn button_mask(gamepad: &gilrs::Gamepad<'_>) -> u32 {
-    const BUTTONS: [Button; 14] = [
-        Button::South,
-        Button::East,
-        Button::North,
-        Button::West,
-        Button::DPadUp,
-        Button::DPadDown,
-        Button::DPadLeft,
-        Button::DPadRight,
-        Button::LeftTrigger,
-        Button::RightTrigger,
-        Button::LeftTrigger2,
-        Button::RightTrigger2,
-        Button::Start,
-        Button::Select,
-    ];
-
-    BUTTONS.iter().fold(0, |mask, button| {
-        if gamepad.is_pressed(*button) {
-            mask | button_bit(*button)
-        } else {
-            mask
-        }
-    })
+fn button_mask(gamepad: &gilrs::Gamepad<'_>, mapping: &GamepadMapping) -> u32 {
+    mapping.mask_from_pressed(|control| gamepad.is_pressed(gilrs_button(control)))
 }
 
 fn axis_to_circle_pad(value: f32, deadzone_percent: u8) -> i16 {
@@ -157,20 +160,33 @@ fn axis_to_circle_pad(value: f32, deadzone_percent: u8) -> i16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aceris_core::input::pad;
+    use aceris_core::input_mapping::PadButton;
 
     #[test]
-    fn standardized_gamepad_buttons_map_to_3ds_controls() {
-        assert_eq!(button_bit(Button::South), pad::A);
-        assert_eq!(button_bit(Button::East), pad::B);
-        assert_eq!(button_bit(Button::North), pad::X);
-        assert_eq!(button_bit(Button::West), pad::Y);
-        assert_eq!(button_bit(Button::LeftTrigger), pad::L);
-        assert_eq!(button_bit(Button::RightTrigger), pad::R);
-        assert_eq!(button_bit(Button::LeftTrigger2), pad::ZL);
-        assert_eq!(button_bit(Button::RightTrigger2), pad::ZR);
-        assert_eq!(button_bit(Button::Start), pad::START);
-        assert_eq!(button_bit(Button::Select), pad::SELECT);
-        assert_eq!(button_bit(Button::Mode), 0);
+    fn gilrs_controls_cover_the_standard_3ds_button_sources() {
+        assert_eq!(gilrs_button(GamepadControl::South), Button::South);
+        assert_eq!(gilrs_button(GamepadControl::East), Button::East);
+        assert_eq!(gilrs_button(GamepadControl::LeftShoulder), Button::LeftTrigger);
+        assert_eq!(gilrs_button(GamepadControl::RightShoulder), Button::RightTrigger);
+        assert_eq!(gilrs_button(GamepadControl::LeftTrigger), Button::LeftTrigger2);
+        assert_eq!(gilrs_button(GamepadControl::RightTrigger), Button::RightTrigger2);
+        assert_eq!(GamepadMapping::default().target(GamepadControl::LeftTrigger), Some(PadButton::ZL));
+        assert_eq!(GamepadMapping::default().target(GamepadControl::RightTrigger), Some(PadButton::ZR));
+    }
+
+    #[test]
+    fn remapped_controls_produce_the_selected_hardware_bits() {
+        let mut mapping = GamepadMapping::default();
+        mapping.set_target(GamepadControl::South, Some(PadButton::X));
+        mapping.set_target(GamepadControl::East, None);
+        assert_eq!(
+            mapping.mask_from_pressed(|control| matches!(
+                control,
+                GamepadControl::South | GamepadControl::East
+            )),
+            pad::X
+        );
     }
 
     #[test]

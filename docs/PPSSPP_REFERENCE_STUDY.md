@@ -20,7 +20,7 @@ Este estudo registra quais recursos observados no PPSSPP fazem sentido para o Ac
 | Área | Ideia de referência | Estado atual do Aceris | Decisão |
 |---|---|---|---|
 | Controles virtuais | Mover, redimensionar, opacidade, presets, ocultar e layouts por jogo | Android já tem editor por arraste/pinça, opacidade, escala, presets, orientação e override por Title ID | **Manter e completar**; validar em aparelho e melhorar descoberta/acessibilidade |
-| Controles físicos | Remapeamento de botões/eixos, deadzone, sensibilidade, inversão e perfis por dispositivo | Desktop já mapeia teclado e layout padrão de gamepad, incluindo L/R e ZL/ZR; Android recebe botões, analógico e L2/R2 digital/analógico. Deadzone é configurável; remapeamento, sensibilidade, inversão e perfis por dispositivo ainda faltam | **Adotar e completar** nos dois hosts |
+| Controles físicos | Remapeamento de botões/eixos, deadzone, sensibilidade, inversão e perfis por dispositivo | Modelo de remapeamento de botões versionado no core; desktop aplica perfis global, por UUID do modelo do controle e por Title ID. Android ainda precisa consumir o mesmo modelo; eixos, sensibilidade, inversão e editor visual continuam pendentes | **Completar a integração Android, editor e calibração** |
 | Atalhos | Ações configuráveis de pausa, menu, screenshot e progresso | Menu rápido existe; atalhos continuam fixos | **Adotar** com detecção de conflitos e padrões restauráveis |
 | Perfis por jogo | Overrides com herança global | Layout de telas e controles virtuais Android possuem overrides por jogo; schema geral ainda não existe | **Expandir** para controles físicos, performance e opções realmente disponíveis |
 | Overlay de diagnóstico | FPS/frametime, estado dos subsistemas, falhas e informações do backend | Há overlay durante o jogo em PC e Android com PC guest, solicitações não tratadas e métricas de desempenho do host; ainda faltam velocidade guest e estados detalhados por subsistema | **Expandir**, sem confundir FPS apresentado com velocidade guest |
@@ -38,6 +38,32 @@ Este estudo registra quais recursos observados no PPSSPP fazem sentido para o Ac
 | Multiplayer local | Comunicação local entre instâncias/aparelhos | Serviços de rede 3DS ainda são parciais; não há multiplayer funcional | **Estudar depois** de fechar serviços de rede e validar protocolo 3DS |
 | Conquistas | Integração opcional com serviço externo | Não disponível | **Estudar depois** de revisar API, autenticação, regras, privacidade e integridade |
 | Áudio | Volume, mute, dispositivo, latência e visualização de estado | Sink host existe, mas a inicialização e a saída DSP/CSND ainda precisam de validação funcional | **Adotar após corrigir áudio**; não expor controles que não controlam o caminho real |
+
+## Modelo de remapeamento físico implementado no núcleo
+
+O núcleo define o schema `ACERIS_GAMEPAD_MAPPING_V1`, com entradas padronizadas (`south`, `east`, `north`, `west`, D-pad, ombros, gatilhos, Start e Select). Os destinos são botões 3DS (`a`, `b`, `x`, `y`, `l`, `r`, `zl`, `zr`, direções, Start e Select) ou `none` para desativar uma entrada. O parser rejeita versões desconhecidas, campos ausentes, fora de ordem ou inválidos.
+
+Os arquivos ficam em `.aceris/gamepad_mapping_v1.txt` (global), `.aceris/gamepad_devices/<uuid>.v1` (modelo de controle, desktop) e `.aceris/gamepad_games/<title-id>.v1` (jogo). A precedência é jogo, modelo de controle e global. O UUID de 16 bytes oferecido por GilRs identifica o modelo do controle, não uma unidade física individual; UUID zero não gera perfil para evitar colisões. A edição visual/captura ainda será construída; nesta etapa, os arquivos podem ser ajustados manualmente.
+
+Exemplo:
+
+```text
+ACERIS_GAMEPAD_MAPPING_V1
+south=a
+east=b
+north=x
+west=y
+dpad_up=up
+dpad_down=down
+dpad_left=left
+dpad_right=right
+left_shoulder=l
+right_shoulder=r
+left_trigger=zl
+right_trigger=zr
+start=start
+select=select
+```
 
 ## O que não deve ser copiado literalmente
 
