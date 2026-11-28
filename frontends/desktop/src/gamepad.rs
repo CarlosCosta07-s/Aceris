@@ -52,12 +52,19 @@ pub(crate) struct GamepadManager {
     gilrs: Option<Gilrs>,
     active_gamepad: Option<GamepadId>,
     active_device_uuid: Option<[u8; 16]>,
+    previous_library_navigation: u8,
     settings_directory: PathBuf,
     game_identity: Option<GameIdentity>,
     mapping: GamepadMapping,
     axis_settings: GamepadAxisSettings,
     mapping_capture_active: bool,
 }
+
+pub(crate) const LIBRARY_NAV_UP: u8 = 1 << 0;
+pub(crate) const LIBRARY_NAV_DOWN: u8 = 1 << 1;
+pub(crate) const LIBRARY_NAV_LEFT: u8 = 1 << 2;
+pub(crate) const LIBRARY_NAV_RIGHT: u8 = 1 << 3;
+pub(crate) const LIBRARY_NAV_CONFIRM: u8 = 1 << 4;
 
 impl GamepadManager {
     pub(crate) fn new(settings_directory: &Path, game_identity: Option<GameIdentity>) -> Self {
@@ -72,6 +79,7 @@ impl GamepadManager {
             gilrs,
             active_gamepad: None,
             active_device_uuid: None,
+            previous_library_navigation: 0,
             settings_directory: settings_directory.to_path_buf(),
             game_identity,
             mapping: GamepadMapping::load_for_context(settings_directory, None, game_identity),
@@ -82,6 +90,42 @@ impl GamepadManager {
             ),
             mapping_capture_active: false,
         }
+    }
+
+    /// Returns newly pressed launcher buttons using the standard gamepad layout.
+    ///
+    /// The edge-triggered result prevents a held D-pad or confirm button from
+    /// repeating navigation every frame.
+    pub(crate) fn poll_library_navigation(&mut self) -> u8 {
+        let _ = self.poll_mapping_capture();
+        let (active, current) = {
+            let Some(gilrs) = self.gilrs.as_mut() else {
+                self.active_gamepad = None;
+                self.previous_library_navigation = 0;
+                return 0;
+            };
+            let active = self
+                .active_gamepad
+                .filter(|id| gilrs.gamepad(*id).is_connected())
+                .or_else(|| {
+                    gilrs
+                        .gamepads()
+                        .find(|(_, gamepad)| gamepad.is_connected())
+                        .map(|(id, _)| id)
+                });
+            let current = active
+                .map(|id| library_navigation_mask(|button| gilrs.gamepad(id).is_pressed(button)))
+                .unwrap_or(0);
+            (active, current)
+        };
+
+        if active != self.active_gamepad {
+            self.previous_library_navigation = 0;
+        }
+        self.active_gamepad = active;
+        let newly_pressed = current & !self.previous_library_navigation;
+        self.previous_library_navigation = current;
+        newly_pressed
     }
 
     /// Combines the keyboard and the active physical controller without one
@@ -343,6 +387,21 @@ impl GamepadManager {
     }
 }
 
+fn library_navigation_mask(mut is_pressed: impl FnMut(Button) -> bool) -> u8 {
+    let controls = [
+        (Button::DPadUp, LIBRARY_NAV_UP),
+        (Button::DPadDown, LIBRARY_NAV_DOWN),
+        (Button::DPadLeft, LIBRARY_NAV_LEFT),
+        (Button::DPadRight, LIBRARY_NAV_RIGHT),
+        (Button::South, LIBRARY_NAV_CONFIRM),
+        (Button::Start, LIBRARY_NAV_CONFIRM),
+    ];
+    controls
+        .into_iter()
+        .filter_map(|(button, mask)| is_pressed(button).then_some(mask))
+        .fold(0, |pressed, mask| pressed | mask)
+}
+
 fn gilrs_button(control: GamepadControl) -> Button {
     match control {
         GamepadControl::South => Button::South,
@@ -391,6 +450,27 @@ mod tests {
     use super::*;
     use aceris_core::input::{gamepad_axes_to_circle_pad, pad};
     use aceris_core::input_mapping::PadButton;
+
+    #[test]
+    fn launcher_navigation_uses_standard_dpad_and_confirm_buttons() {
+        let pressed = [Button::DPadUp, Button::DPadRight, Button::South];
+        assert_eq!(
+            library_navigation_mask(|button| pressed.contains(&button)),
+            LIBRARY_NAV_UP | LIBRARY_NAV_RIGHT | LIBRARY_NAV_CONFIRM
+        );
+        assert_eq!(
+            library_navigation_mask(|button| button == Button::Start),
+            LIBRARY_NAV_CONFIRM
+        );
+    }
+
+    #[test]
+    fn launcher_navigation_edges_do_not_repeat_while_button_is_held() {
+        let current = LIBRARY_NAV_DOWN | LIBRARY_NAV_CONFIRM;
+        let previous = LIBRARY_NAV_DOWN;
+        assert_eq!(current & !previous, LIBRARY_NAV_CONFIRM);
+        assert_eq!(current & !current, 0);
+    }
 
     #[test]
     fn analog_profile_scope_cycles_only_through_available_contexts() {
