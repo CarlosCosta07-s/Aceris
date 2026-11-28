@@ -66,7 +66,6 @@ impl GamepadManager {
         input.set_circle_pad(i32::from(x), i32::from(y));
     }
 
-
     pub(crate) fn mapping(&self) -> &GamepadMapping {
         &self.mapping
     }
