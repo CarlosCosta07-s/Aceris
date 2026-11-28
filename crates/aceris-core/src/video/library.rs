@@ -2593,7 +2593,7 @@ impl Library {
                     height,
                     38.0,
                     594.0 + settings_offset,
-                    324.0,
+                    158.0,
                     44.0,
                     scale,
                     if self.performance_mode {
@@ -2606,14 +2606,35 @@ impl Library {
                     frame,
                     width,
                     height,
-                    200.0,
+                    117.0,
                     608.0 + settings_offset,
                     small_scale,
                     if self.performance_mode {
-                        "MODO DESEMPENHO: ATIVADO"
+                        "DESEMPENHO: SIM"
                     } else {
-                        "MODO DESEMPENHO: DESATIVADO"
+                        "DESEMPENHO: NÃO"
                     },
+                    brand::TEXT,
+                );
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    204.0,
+                    594.0 + settings_offset,
+                    158.0,
+                    44.0,
+                    scale,
+                    0x2D1A3B,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    283.0,
+                    608.0 + settings_offset,
+                    small_scale,
+                    &format!("DEADZONE: {}%", self.gamepad_deadzone_percent),
                     brand::TEXT,
                 );
             }
@@ -3961,7 +3982,7 @@ impl Library {
                     height,
                     590.0,
                     296.0,
-                    380.0,
+                    185.0,
                     44.0,
                     scale,
                     if self.performance_mode {
@@ -3974,14 +3995,35 @@ impl Library {
                     frame,
                     width,
                     height,
-                    780.0,
+                    682.0,
                     311.0,
                     text_scale,
                     if self.performance_mode {
-                        "MODO DESEMPENHO: SIM"
+                        "DESEMPENHO: SIM"
                     } else {
-                        "MODO DESEMPENHO: NÃO"
+                        "DESEMPENHO: NÃO"
                     },
+                    brand::TEXT,
+                );
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    785.0,
+                    296.0,
+                    185.0,
+                    44.0,
+                    scale,
+                    0x2D1A3B,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    877.0,
+                    311.0,
+                    text_scale,
+                    &format!("DEADZONE: {}%", self.gamepad_deadzone_percent),
                     brand::TEXT,
                 );
                 responsive_text(
