@@ -46,6 +46,23 @@ pub mod library {
     pub const GRID_GAP_Y: f32 = 12.0;
     pub const GRID_STEP_X: f32 = GRID_CARD_WIDTH + GRID_GAP_X;
     pub const GRID_STEP_Y: f32 = GRID_CARD_HEIGHT + GRID_GAP_Y;
+
+    /// Contextual details rail for the selected title.
+    pub const DETAILS_PANEL_X: f32 = 760.0;
+    pub const DETAILS_PANEL_TOP: f32 = 162.0;
+    pub const DETAILS_PANEL_WIDTH: f32 = 212.0;
+    pub const DETAILS_PANEL_HEIGHT: f32 = 310.0;
+    pub const DETAILS_CENTER_X: f32 = 866.0;
+    pub const DETAILS_ART_X: f32 = 820.0;
+    pub const DETAILS_ART_TOP: f32 = 190.0;
+    pub const DETAILS_ART_SIZE: f32 = 92.0;
+    pub const DETAILS_BUTTON_X: f32 = 772.0;
+    pub const DETAILS_BUTTON_WIDTH: f32 = 188.0;
+    pub const DETAILS_BUTTON_HEIGHT: f32 = 32.0;
+    pub const DETAILS_PLAY_Y: f32 = 330.0;
+    pub const DETAILS_FAVORITE_Y: f32 = 366.0;
+    pub const DETAILS_IMPORT_Y: f32 = 402.0;
+    pub const DETAILS_REFRESH_Y: f32 = 438.0;
 }
 
 /// Shared geometry for the console-style landscape Home dashboard.

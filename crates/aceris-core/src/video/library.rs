@@ -2622,21 +2622,29 @@ impl Library {
         }
         if self.page != LibraryPage::Home
             && self.page != LibraryPage::Settings
-            && (760.0..980.0).contains(&x)
+            && (ui::library::DETAILS_PANEL_X..980.0).contains(&x)
         {
-            if (238.0..282.0).contains(&y) {
+            let play_bottom = ui::library::DETAILS_PLAY_Y
+                + ui::library::DETAILS_BUTTON_HEIGHT;
+            let favorite_bottom = ui::library::DETAILS_FAVORITE_Y
+                + ui::library::DETAILS_BUTTON_HEIGHT;
+            let import_bottom = ui::library::DETAILS_IMPORT_Y
+                + ui::library::DETAILS_BUTTON_HEIGHT;
+            let refresh_bottom = ui::library::DETAILS_REFRESH_Y
+                + ui::library::DETAILS_BUTTON_HEIGHT;
+            if (ui::library::DETAILS_PLAY_Y..play_bottom).contains(&y) {
                 if self.selected_entry().is_some() {
                     return ClickResult::Activated;
                 }
-            } else if (286.0..328.0).contains(&y) {
+            } else if (ui::library::DETAILS_FAVORITE_Y..favorite_bottom).contains(&y) {
                 if self.selected_entry().is_some() {
                     self.toggle_selected_favorite();
                 }
                 return ClickResult::Ignored;
-            } else if (336.0..378.0).contains(&y) {
+            } else if (ui::library::DETAILS_IMPORT_Y..import_bottom).contains(&y) {
                 self.request_folder_picker();
                 return ClickResult::Ignored;
-            } else if (384.0..426.0).contains(&y) {
+            } else if (ui::library::DETAILS_REFRESH_Y..refresh_bottom).contains(&y) {
                 self.reload();
                 return ClickResult::Ignored;
             }
@@ -5850,14 +5858,25 @@ impl Library {
                     brand::TEXT_MUTED,
                 );
             } else {
-                responsive_text(
+                responsive_panel(
                     frame,
                     width,
                     height,
-                    780.0,
+                    ui::library::DETAILS_PANEL_X,
+                    ui::library::DETAILS_PANEL_TOP,
+                    ui::library::DETAILS_PANEL_WIDTH,
+                    ui::library::DETAILS_PANEL_HEIGHT,
+                    scale,
+                    brand::SURFACE_PANEL,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    ui::library::DETAILS_CENTER_X,
                     174.0,
                     small_scale,
-                    "EM FOCO",
+                    "DETALHES DO JOGO",
                     brand::ACCENT_GREEN_LIGHT,
                 );
                 if let Some(entry) = selected_entry {
@@ -5866,22 +5885,22 @@ impl Library {
                         width,
                         height,
                         scale,
-                        780.0,
-                        186.0,
-                        54.0,
-                        48.0,
+                        ui::library::DETAILS_ART_X,
+                        ui::library::DETAILS_ART_TOP,
+                        ui::library::DETAILS_ART_SIZE,
+                        ui::library::DETAILS_ART_SIZE,
                         entry,
                         self.smdh_icons.get(&entry.path),
                         small_scale,
                     );
-                    responsive_text(
+                    responsive_text_centered(
                         frame,
                         width,
                         height,
-                        846.0,
-                        190.0,
-                        small_scale,
-                        &truncate(&entry.title, 18),
+                        ui::library::DETAILS_CENTER_X,
+                        292.0,
+                        text_scale,
+                        &truncate(&entry.title, 24),
                         brand::TEXT,
                     );
                     let extension = entry
@@ -5896,12 +5915,12 @@ impl Library {
                     } else {
                         "NA BIBLIOTECA"
                     };
-                    responsive_text(
+                    responsive_text_centered(
                         frame,
                         width,
                         height,
-                        846.0,
-                        214.0,
+                        ui::library::DETAILS_CENTER_X,
+                        310.0,
                         small_scale,
                         &format!(".{}  ·  {state}", extension.to_ascii_uppercase()),
                         if self.is_favorite(entry) {
@@ -5913,119 +5932,86 @@ impl Library {
                         },
                     );
                 } else {
-                    responsive_text(
+                    responsive_folder_icon(frame, width, height, 832.0, 204.0, scale);
+                    responsive_text_centered(
                         frame,
                         width,
                         height,
-                        780.0,
-                        199.0,
-                        small_scale,
-                        &format!("{} jogo(s)", game_count),
+                        ui::library::DETAILS_CENTER_X,
+                        292.0,
+                        text_scale,
+                        "Selecione um jogo",
                         brand::TEXT,
                     );
-                    responsive_text(
+                    responsive_text_centered(
                         frame,
                         width,
                         height,
-                        782.0,
-                        220.0,
+                        ui::library::DETAILS_CENTER_X,
+                        310.0,
                         small_scale,
-                        &format!("{} homebrew(s)", homebrew_count),
+                        &format!("{} jogo(s) · {} homebrew(s)", game_count, homebrew_count),
                         brand::TEXT_MUTED,
                     );
                 }
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    776.0,
-                    238.0,
-                    188.0,
-                    42.0,
-                    scale,
-                    if selected_entry.is_some() {
-                        brand::ACCENT_RED
-                    } else {
-                        brand::SURFACE_CARD
-                    },
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    870.0,
-                    252.0,
-                    small_scale,
-                    "ABRIR JOGO",
-                    brand::TEXT,
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    776.0,
-                    286.0,
-                    188.0,
-                    42.0,
-                    scale,
-                    brand::SURFACE_CARD,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    870.0,
-                    300.0,
-                    small_scale,
-                    if selected_entry.is_some_and(|entry| self.is_favorite(entry)) {
-                        "REMOVER FAVORITO"
-                    } else {
-                        "ADICIONAR FAVORITO"
-                    },
-                    brand::TEXT,
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    776.0,
-                    336.0,
-                    188.0,
-                    42.0,
-                    scale,
-                    brand::ACCENT_RED,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    870.0,
-                    350.0,
-                    small_scale,
-                    "IMPORTAR PASTA",
-                    brand::TEXT,
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    776.0,
-                    384.0,
-                    188.0,
-                    42.0,
-                    scale,
-                    brand::SURFACE_CARD,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    870.0,
-                    398.0,
-                    small_scale,
-                    "ATUALIZAR",
-                    brand::TEXT,
-                );
+
+                let detail_actions = [
+                    (
+                        ui::library::DETAILS_PLAY_Y,
+                        if selected_entry.is_some() {
+                            "INICIAR JOGO"
+                        } else {
+                            "NENHUM JOGO SELECIONADO"
+                        },
+                        if selected_entry.is_some() {
+                            brand::ACCENT_RED
+                        } else {
+                            brand::SURFACE_CARD
+                        },
+                    ),
+                    (
+                        ui::library::DETAILS_FAVORITE_Y,
+                        if selected_entry.is_some_and(|entry| self.is_favorite(entry)) {
+                            "REMOVER FAVORITO"
+                        } else {
+                            "ADICIONAR FAVORITO"
+                        },
+                        brand::SURFACE_SELECTED,
+                    ),
+                    (
+                        ui::library::DETAILS_IMPORT_Y,
+                        "IMPORTAR PASTA",
+                        brand::SURFACE_CARD,
+                    ),
+                    (
+                        ui::library::DETAILS_REFRESH_Y,
+                        "ATUALIZAR",
+                        brand::SURFACE_CARD,
+                    ),
+                ];
+                for (y, label, color) in detail_actions {
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        ui::library::DETAILS_BUTTON_X,
+                        y,
+                        ui::library::DETAILS_BUTTON_WIDTH,
+                        ui::library::DETAILS_BUTTON_HEIGHT,
+                        scale,
+                        color,
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        ui::library::DETAILS_CENTER_X,
+                        y + 10.0,
+                        small_scale,
+                        label,
+                        brand::TEXT,
+                    );
+                }
 
                 responsive_text(
                     frame,
@@ -8505,12 +8491,63 @@ mod tests {
         );
 
         assert_eq!(
-            library.click_responsive(870, 307, 1000, 600),
+            library.click_responsive(
+                ui::library::DETAILS_CENTER_X as i32,
+                (ui::library::DETAILS_FAVORITE_Y
+                    + ui::library::DETAILS_BUTTON_HEIGHT * 0.5) as i32,
+                1000,
+                600
+            ),
             ClickResult::Ignored
         );
         assert_eq!(library.favorite_count(), 1);
         assert_eq!(library.selected_entry().unwrap().title, "Game 1");
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn library_details_rail_keeps_play_favorite_import_and_refresh_actions() {
+        let mut library = library(2);
+        let center_x = ui::library::DETAILS_CENTER_X as i32;
+        let center_y = |top: f32| {
+            (top + ui::library::DETAILS_BUTTON_HEIGHT * 0.5) as i32
+        };
+
+        assert_eq!(
+            library.click_responsive(center_x, center_y(ui::library::DETAILS_PLAY_Y), 1000, 600),
+            ClickResult::Activated
+        );
+        assert_eq!(
+            library.click_responsive(
+                center_x,
+                center_y(ui::library::DETAILS_FAVORITE_Y),
+                1000,
+                600
+            ),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.favorite_count(), 1);
+
+        assert_eq!(
+            library.click_responsive(
+                center_x,
+                center_y(ui::library::DETAILS_IMPORT_Y),
+                1000,
+                600
+            ),
+            ClickResult::Ignored
+        );
+        assert!(library.take_folder_picker_request());
+        library.select_page(LibraryPage::Games);
+        assert_eq!(
+            library.click_responsive(
+                center_x,
+                center_y(ui::library::DETAILS_REFRESH_Y),
+                1000,
+                600
+            ),
+            ClickResult::Ignored
+        );
     }
 
     #[test]

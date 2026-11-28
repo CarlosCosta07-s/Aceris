@@ -41,7 +41,7 @@ Use a consistent spacing scale, predictable alignment, restrained borders, subtl
 - Top content bar for page title, search, import action and contextual controls.
 - Main content area with a large featured/continue-playing region, followed by a horizontal shelf of five square game covers. Selection uses a clear red focus frame and controller navigation moves across the visible covers before scrolling the shelf.
 - A responsive game-card grid with cover art when available, readable title, subtle format metadata and a clear focus/selected state.
-- A details view/panel for the selected title with Play, Favorite and relevant metadata/actions.
+- A details panel for the selected title with centered square artwork, title, container format, recent/favorite state, and clear Play, Favorite, Import and Refresh actions.
 - Controller and keyboard navigation must mirror pointer navigation; focus must always be visible.
 
 ### Android
