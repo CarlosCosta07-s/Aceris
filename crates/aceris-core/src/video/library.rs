@@ -2624,7 +2624,7 @@ impl Library {
             54.0,
             small_scale,
             "Emulador de Nintendo 3DS",
-            0xBBAFC7,
+            0xB6C7D5,
         );
 
         // Four compact destinations keep Home reachable on narrow phone screens.
@@ -2647,7 +2647,7 @@ impl Library {
                 if self.page == page {
                     0x17485D
                 } else {
-                    0x202A34
+                    0x243543
                 },
             );
             responsive_text(
@@ -2690,10 +2690,10 @@ impl Library {
                 212.0,
                 small_scale,
                 "Sua coleção pessoal de Nintendo 3DS",
-                0xBBAFC7,
+                0xB6C7D5,
             );
             responsive_panel(
-                frame, width, height, 20.0, 250.0, 360.0, 184.0, scale, 0x1D2A35,
+                frame, width, height, 20.0, 250.0, 360.0, 184.0, scale, 0x1B2D3D,
             );
             if let Some(entry) = home_entries
                 .get(self.selected)
@@ -2805,7 +2805,7 @@ impl Library {
                     } else {
                         "Explore os jogos disponíveis."
                     },
-                    0xBBAFC7,
+                    0xB6C7D5,
                 );
                 responsive_panel(
                     frame,
@@ -2850,7 +2850,7 @@ impl Library {
             );
             if home_entries.is_empty() {
                 responsive_panel(
-                    frame, width, height, 20.0, 482.0, 360.0, 142.0, scale, 0x202A34,
+                    frame, width, height, 20.0, 482.0, 360.0, 142.0, scale, 0x243543,
                 );
                 responsive_text_centered(
                     frame,
@@ -2903,7 +2903,7 @@ impl Library {
             ];
             for (slot, (symbol, label)) in dock_actions.into_iter().enumerate() {
                 let x = 12.0 + slot as f32 * 96.0;
-                responsive_panel(frame, width, height, x, 676.0, 88.0, 44.0, scale, 0x202A34);
+                responsive_panel(frame, width, height, x, 676.0, 88.0, 44.0, scale, 0x243543);
                 responsive_panel(
                     frame,
                     width,
@@ -2949,7 +2949,7 @@ impl Library {
                 212.0,
                 small_scale,
                 "Gerencie as pastas da sua biblioteca",
-                0xBBAFC7,
+                0xB6C7D5,
             );
             responsive_panel(
                 frame,
@@ -2964,7 +2964,7 @@ impl Library {
                     360.0
                 },
                 scale,
-                0x21152F,
+                0x192B3A,
             );
             responsive_text(
                 frame,
@@ -2982,7 +2982,7 @@ impl Library {
             for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
                 let row_y = 300.0 + index as f32 * 32.0;
                 responsive_panel(
-                    frame, width, height, 34.0, row_y, 340.0, 28.0, scale, 0x33223F,
+                    frame, width, height, 34.0, row_y, 340.0, 28.0, scale, 0x2B4255,
                 );
                 responsive_text(
                     frame,
@@ -3003,7 +3003,7 @@ impl Library {
                     36.0,
                     24.0,
                     scale,
-                    0x422038,
+                    0x17485D,
                 );
                 responsive_text_centered(
                     frame,
@@ -3028,7 +3028,7 @@ impl Library {
                         "+ {} outra(s) pasta(s)",
                         self.scan_config.directories.len() - 3
                     ),
-                    0xBBAFC7,
+                    0xB6C7D5,
                 );
             }
             responsive_panel(
@@ -3043,7 +3043,7 @@ impl Library {
                 if self.scan_config.options.recursive {
                     0x28543F
                 } else {
-                    0x2D1A3B
+                    0x23394B
                 },
             );
             responsive_text_centered(
@@ -3072,7 +3072,7 @@ impl Library {
                 if self.scan_path_input_focused {
                     brand::ACCENT_RED
                 } else {
-                    0x2D1A3B
+                    0x23394B
                 },
             );
             responsive_text_centered(
@@ -3148,7 +3148,7 @@ impl Library {
                     if self.performance_mode {
                         0x28543F
                     } else {
-                        0x2D1A3B
+                        0x23394B
                     },
                 );
                 responsive_text_centered(
@@ -3174,7 +3174,7 @@ impl Library {
                     158.0,
                     44.0,
                     scale,
-                    0x2D1A3B,
+                    0x23394B,
                 );
                 responsive_text_centered(
                     frame,
@@ -3207,7 +3207,7 @@ impl Library {
                     324.0,
                     38.0,
                     scale,
-                    0x2D1A3B,
+                    0x23394B,
                 );
                 responsive_text_centered(
                     frame,
@@ -3232,7 +3232,7 @@ impl Library {
                     324.0,
                     38.0,
                     scale,
-                    0x2D1A3B,
+                    0x23394B,
                 );
                 responsive_text_centered(
                     frame,
@@ -3251,7 +3251,7 @@ impl Library {
             }
             if self.touch_keyboard_enabled {
                 responsive_panel(
-                    frame, width, height, 38.0, 594.0, 104.0, 40.0, scale, 0x2D1A3B,
+                    frame, width, height, 38.0, 594.0, 104.0, 40.0, scale, 0x23394B,
                 );
                 responsive_text_centered(
                     frame,
@@ -3264,7 +3264,7 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_panel(
-                    frame, width, height, 148.0, 594.0, 104.0, 40.0, scale, 0x2D1A3B,
+                    frame, width, height, 148.0, 594.0, 104.0, 40.0, scale, 0x23394B,
                 );
                 responsive_text_centered(
                     frame,
@@ -3277,7 +3277,7 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_panel(
-                    frame, width, height, 258.0, 594.0, 104.0, 40.0, scale, 0x2D1A3B,
+                    frame, width, height, 258.0, 594.0, 104.0, 40.0, scale, 0x23394B,
                 );
                 responsive_text_centered(
                     frame,
@@ -3306,7 +3306,7 @@ impl Library {
                 212.0,
                 small_scale,
                 &count_text,
-                0xBBAFC7,
+                0xB6C7D5,
             );
             if matches!(
                 self.page,
@@ -3316,7 +3316,7 @@ impl Library {
                     | LibraryPage::Homebrew
             ) {
                 responsive_panel(
-                    frame, width, height, 20.0, 222.0, 360.0, 26.0, scale, 0x2D1A3B,
+                    frame, width, height, 20.0, 222.0, 360.0, 26.0, scale, 0x23394B,
                 );
                 responsive_text_centered(
                     frame,
@@ -3330,7 +3330,7 @@ impl Library {
                 );
             }
             responsive_panel(
-                frame, width, height, 306.0, 170.0, 78.0, 44.0, scale, 0x2D1A3B,
+                frame, width, height, 306.0, 170.0, 78.0, 44.0, scale, 0x23394B,
             );
             responsive_text(
                 frame,
@@ -3356,7 +3356,7 @@ impl Library {
                     360.0,
                     card_height,
                     scale,
-                    0x21152F,
+                    0x192B3A,
                 );
                 // Rows keep at least one text line of clearance: the "Pasta de
                 // jogos" label sits 22 units above `path_y`, and it used to
@@ -3438,7 +3438,7 @@ impl Library {
                     line_one_y,
                     small_scale,
                     first_line,
-                    0xBBAFC7,
+                    0xB6C7D5,
                 );
                 responsive_text_centered(
                     frame,
@@ -3448,7 +3448,7 @@ impl Library {
                     line_two_y,
                     small_scale,
                     second_line,
-                    0xBBAFC7,
+                    0xB6C7D5,
                 );
                 responsive_text(
                     frame,
@@ -3461,7 +3461,7 @@ impl Library {
                     brand::ACCENT_GREEN_LIGHT,
                 );
                 responsive_panel(
-                    frame, width, height, 38.0, path_y, 324.0, 48.0, scale, 0x2D1A3B,
+                    frame, width, height, 38.0, path_y, 324.0, 48.0, scale, 0x23394B,
                 );
                 responsive_text(
                     frame,
@@ -3502,7 +3502,7 @@ impl Library {
                     formats_y,
                     small_scale,
                     formats,
-                    0xBBAFC7,
+                    0xB6C7D5,
                 );
             } else {
                 let row_height = 58.0;
@@ -3527,9 +3527,9 @@ impl Library {
                         50.0,
                         scale,
                         if row == self.selected {
-                            0x422038
+                            0x17485D
                         } else {
-                            0x21152F
+                            0x192B3A
                         },
                     );
                     responsive_panel(
@@ -3541,7 +3541,7 @@ impl Library {
                         46.0,
                         36.0,
                         scale,
-                        0x2D1A3B,
+                        0x23394B,
                     );
                     responsive_text(
                         frame,
@@ -3613,7 +3613,7 @@ impl Library {
             (logical_height - 22.0).max(0.0),
             small_scale,
             "Aceris  |  Rust  |  Seus arquivos, suas regras",
-            0xBBAFC7,
+            0xB6C7D5,
         );
     }
 
@@ -3675,7 +3675,7 @@ impl Library {
     ) {
         let top = search_keyboard_top(logical_height);
         responsive_panel(
-            frame, width, height, 128.0, top, 842.0, 174.0, scale, 0x21152F,
+            frame, width, height, 128.0, top, 842.0, 174.0, scale, 0x192B3A,
         );
         if self.scan_path_input_focused {
             responsive_text(
@@ -3705,7 +3705,7 @@ impl Library {
             let y = top + 8.0 + row as f32 * 40.0;
             for (column, character) in keys.chars().enumerate() {
                 let x = *start_x + column as f32 * 66.0;
-                responsive_panel(frame, width, height, x, y, 58.0, 34.0, scale, 0x33223F);
+                responsive_panel(frame, width, height, x, y, 58.0, 34.0, scale, 0x2B4255);
                 let label = character.to_ascii_uppercase().to_string();
                 responsive_text_centered(
                     frame,
@@ -3734,7 +3734,7 @@ impl Library {
                 key_width,
                 34.0,
                 scale,
-                0x422038,
+                0x17485D,
             );
             responsive_text_centered(
                 frame,
@@ -3861,7 +3861,7 @@ impl Library {
                     tab_width,
                     42.0,
                     scale,
-                    if selected { 0x17485D } else { 0x202A34 },
+                    if selected { 0x17485D } else { 0x243543 },
                 );
                 if selected {
                     responsive_fill(
@@ -3884,7 +3884,7 @@ impl Library {
                     27.0,
                     text_scale,
                     label,
-                    if selected { brand::TEXT } else { 0xBBAFC7 },
+                    if selected { brand::TEXT } else { 0xB6C7D5 },
                 );
             }
             responsive_panel(
@@ -3899,7 +3899,7 @@ impl Library {
                 if self.page == LibraryPage::Settings {
                     brand::ACCENT_RED
                 } else {
-                    0x2D1A3B
+                    0x23394B
                 },
             );
             responsive_text_centered(
@@ -3936,7 +3936,7 @@ impl Library {
                 224.0,
                 (bottom - 82.0).max(280.0),
                 scale,
-                0x1D2A35,
+                0x1B2D3D,
             );
             responsive_text(
                 frame,
@@ -3967,7 +3967,7 @@ impl Library {
                 180.0,
                 1.0,
                 scale,
-                0x563B67,
+                0x3B6578,
             );
         }
 
@@ -3999,7 +3999,7 @@ impl Library {
 
             if home_entries.is_empty() {
                 responsive_panel(
-                    frame, width, height, 28.0, 142.0, 924.0, 210.0, scale, 0x202A34,
+                    frame, width, height, 28.0, 142.0, 924.0, 210.0, scale, 0x243543,
                 );
                 responsive_folder_icon(frame, width, height, 150.0, 250.0, scale);
                 responsive_text(
@@ -4111,12 +4111,12 @@ impl Library {
                     if selected_entry.is_some() {
                         brand::ACCENT_RED
                     } else {
-                        0x2D4150
+                        0x304A5E
                     },
                 ),
                 (260.0, favorite_label, 0x17485D),
                 (492.0, "IMPORTAR PASTA", brand::ACCENT_RED),
-                (724.0, "ATUALIZAR", 0x2D4150),
+                (724.0, "ATUALIZAR", 0x304A5E),
             ];
             for (x, label, color) in home_actions {
                 responsive_panel(frame, width, height, x, 380.0, 220.0, 44.0, scale, color);
@@ -4161,7 +4161,7 @@ impl Library {
                     176.0,
                     52.0,
                     scale,
-                    if selected { 0x17485D } else { 0x202A34 },
+                    if selected { 0x17485D } else { 0x243543 },
                 );
                 responsive_panel(
                     frame,
@@ -4175,7 +4175,7 @@ impl Library {
                     if selected {
                         brand::ACCENT_RED
                     } else {
-                        0x2D4150
+                        0x304A5E
                     },
                 );
                 responsive_text_centered(
@@ -4218,7 +4218,7 @@ impl Library {
                 109.0,
                 text_scale,
                 "Pastas, desempenho e preferências da biblioteca",
-                0xBBAFC7,
+                0xB6C7D5,
             );
             responsive_panel(
                 frame,
@@ -4229,7 +4229,7 @@ impl Library {
                 702.0,
                 (bottom - 132.0).max(270.0),
                 scale,
-                0x21152F,
+                0x192B3A,
             );
             responsive_text(
                 frame,
@@ -4247,7 +4247,7 @@ impl Library {
             for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
                 let row_y = 178.0 + index as f32 * 28.0;
                 responsive_panel(
-                    frame, width, height, 44.0, row_y, 620.0, 24.0, scale, 0x33223F,
+                    frame, width, height, 44.0, row_y, 620.0, 24.0, scale, 0x2B4255,
                 );
                 responsive_text(
                     frame,
@@ -4268,7 +4268,7 @@ impl Library {
                     48.0,
                     22.0,
                     scale,
-                    0x422038,
+                    0x17485D,
                 );
                 responsive_text_centered(
                     frame,
@@ -4293,7 +4293,7 @@ impl Library {
                         "+ {} outra(s) pasta(s)",
                         self.scan_config.directories.len() - 3
                     ),
-                    0xBBAFC7,
+                    0xB6C7D5,
                 );
             }
             let settings_actions = [
@@ -4305,7 +4305,7 @@ impl Library {
                     if self.scan_path_input_focused {
                         brand::ACCENT_RED
                     } else {
-                        0x2D1A3B
+                        0x23394B
                     },
                 ),
                 (
@@ -4320,7 +4320,7 @@ impl Library {
                     if self.scan_config.options.recursive {
                         0x28543F
                     } else {
-                        0x2D1A3B
+                        0x23394B
                     },
                 ),
                 (
@@ -4335,7 +4335,7 @@ impl Library {
                     if self.performance_mode {
                         0x28543F
                     } else {
-                        0x2D1A3B
+                        0x23394B
                     },
                 ),
             ];
@@ -4353,7 +4353,7 @@ impl Library {
                 );
             }
             responsive_panel(
-                frame, width, height, 605.0, 280.0, 125.0, 42.0, scale, 0x2D1A3B,
+                frame, width, height, 605.0, 280.0, 125.0, 42.0, scale, 0x23394B,
             );
             responsive_text_centered(
                 frame,
@@ -4394,7 +4394,7 @@ impl Library {
                     360.0,
                     small_scale,
                     "Digite o caminho completo da pasta e pressione Enter/OK.",
-                    0xBBAFC7,
+                    0xB6C7D5,
                 );
             }
             responsive_text(
@@ -4423,7 +4423,7 @@ impl Library {
             ];
             for (x, y, card_width, label) in settings_footer {
                 responsive_panel(
-                    frame, width, height, x, y, card_width, 32.0, scale, 0x2D1A3B,
+                    frame, width, height, x, y, card_width, 32.0, scale, 0x23394B,
                 );
                 responsive_text_centered(
                     frame,
@@ -4449,7 +4449,7 @@ impl Library {
                     if self.virtual_controls_visible {
                         0x28543F
                     } else {
-                        0x2D1A3B
+                        0x23394B
                     },
                 );
                 responsive_text_centered(
@@ -4471,7 +4471,7 @@ impl Library {
                         [(485.0, "OPACIDADE"), (568.0, "TAMANHO"), (651.0, "LAYOUT")];
                     for (x, label) in control_options {
                         responsive_panel(
-                            frame, width, height, x, 438.0, 79.0, 38.0, scale, 0x2D1A3B,
+                            frame, width, height, x, 438.0, 79.0, 38.0, scale, 0x23394B,
                         );
                         responsive_text_centered(
                             frame,
@@ -4512,10 +4512,10 @@ impl Library {
                 109.0,
                 text_scale,
                 &format!("{} item(ns) disponíveis", self.visible_entry_count()),
-                0xBBAFC7,
+                0xB6C7D5,
             );
             responsive_panel(
-                frame, width, height, 28.0, 126.0, 702.0, 32.0, scale, 0x21152F,
+                frame, width, height, 28.0, 126.0, 702.0, 32.0, scale, 0x192B3A,
             );
             responsive_panel(
                 frame,
@@ -4527,9 +4527,9 @@ impl Library {
                 24.0,
                 scale,
                 if self.search_focused {
-                    0x422038
+                    0x17485D
                 } else {
-                    0x33223F
+                    0x2B4255
                 },
             );
             let search_label = if self.search_query.is_empty() {
@@ -4548,11 +4548,11 @@ impl Library {
                 if self.search_focused {
                     brand::ACCENT_GREEN_LIGHT
                 } else {
-                    0xBBAFC7
+                    0xB6C7D5
                 },
             );
             responsive_panel(
-                frame, width, height, 368.0, 130.0, 34.0, 24.0, scale, 0x422038,
+                frame, width, height, 368.0, 130.0, 34.0, 24.0, scale, 0x17485D,
             );
             responsive_text_centered(
                 frame,
@@ -4565,7 +4565,7 @@ impl Library {
                 brand::TEXT,
             );
             responsive_panel(
-                frame, width, height, 410.0, 130.0, 108.0, 24.0, scale, 0x2D1A3B,
+                frame, width, height, 410.0, 130.0, 108.0, 24.0, scale, 0x23394B,
             );
             responsive_text_centered(
                 frame,
@@ -4589,7 +4589,7 @@ impl Library {
                 if self.view_mode == LibraryViewMode::List {
                     brand::ACCENT_RED
                 } else {
-                    0x2D1A3B
+                    0x23394B
                 },
             );
             responsive_text_centered(
@@ -4607,7 +4607,7 @@ impl Library {
                 brand::TEXT,
             );
             responsive_panel(
-                frame, width, height, 630.0, 130.0, 92.0, 24.0, scale, 0x2D1A3B,
+                frame, width, height, 630.0, 130.0, 92.0, 24.0, scale, 0x23394B,
             );
             responsive_text_centered(
                 frame,
@@ -4635,7 +4635,7 @@ impl Library {
                     702.0,
                     (bottom - 190.0).max(190.0),
                     scale,
-                    0x21152F,
+                    0x192B3A,
                 );
                 responsive_folder_icon(frame, width, height, 140.0, 270.0, scale);
                 let (empty_title, first_line) = if self.page == LibraryPage::Homebrew {
@@ -4665,7 +4665,7 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_text(
-                    frame, width, height, 232.0, 270.0, text_scale, first_line, 0xBBAFC7,
+                    frame, width, height, 232.0, 270.0, text_scale, first_line, 0xB6C7D5,
                 );
                 responsive_panel(
                     frame,
@@ -4713,9 +4713,9 @@ impl Library {
                         row_height,
                         scale,
                         if row == self.selected {
-                            0x422038
+                            0x17485D
                         } else {
-                            0x21152F
+                            0x192B3A
                         },
                     );
                     render_cover_art(
@@ -4848,7 +4848,7 @@ impl Library {
                     220.0,
                     small_scale,
                     &format!(".{}", extension.to_ascii_uppercase()),
-                    0xBBAFC7,
+                    0xB6C7D5,
                 );
             } else {
                 responsive_text(
@@ -4869,7 +4869,7 @@ impl Library {
                     220.0,
                     small_scale,
                     &format!("{} homebrew(s)", homebrew_count),
-                    0xBBAFC7,
+                    0xB6C7D5,
                 );
             }
             responsive_panel(
@@ -4884,7 +4884,7 @@ impl Library {
                 if selected_entry.is_some() {
                     brand::ACCENT_RED
                 } else {
-                    0x2D1A3B
+                    0x23394B
                 },
             );
             responsive_text_centered(
@@ -4898,7 +4898,7 @@ impl Library {
                 brand::TEXT,
             );
             responsive_panel(
-                frame, width, height, 776.0, 286.0, 188.0, 42.0, scale, 0x2D1A3B,
+                frame, width, height, 776.0, 286.0, 188.0, 42.0, scale, 0x23394B,
             );
             responsive_text_centered(
                 frame,
@@ -4936,7 +4936,7 @@ impl Library {
                 brand::TEXT,
             );
             responsive_panel(
-                frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, 0x2D1A3B,
+                frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, 0x23394B,
             );
             responsive_text_centered(
                 frame,
@@ -4960,7 +4960,7 @@ impl Library {
                     "{} PASTA(S) MONITORADA(S)",
                     self.scan_config.directories.len()
                 ),
-                0xBBAFC7,
+                0xB6C7D5,
             );
         }
         if let Some(status) = &self.status {
@@ -4994,7 +4994,7 @@ impl Library {
             (logical_height - 13.0).max(0.0),
             small_scale,
             "ACERIS  |  RUST  |  SEUS ARQUIVOS, SUAS REGRAS",
-            0xBBAFC7,
+            0xB6C7D5,
         );
         if self.touch_keyboard_open {
             self.render_touch_keyboard(frame, width, height, scale, logical_height, text_scale);
@@ -5062,7 +5062,7 @@ impl Library {
         fill(&mut out, 0, HEADER_HEIGHT - 3, w as i32, 3, red);
         draw_text(&mut out, w, h, MARGIN, 14, 4, "ACERIS", text);
         let count = format!("{} JOGOS", self.entries.len());
-        let count_x = w as i32 - MARGIN - font::text_width(count.chars().count(), 1) as i32;
+        let count_x = w as i32 - MARGIN - font::measure_text(&count, 1) as i32;
         draw_text(
             &mut out,
             w,
@@ -5343,7 +5343,7 @@ fn render_home_game_tile(
         card_width,
         card_height,
         scale,
-        if selected { 0x173B4A } else { 0x202A34 },
+        if selected { 0x173B4A } else { 0x243543 },
     );
     responsive_fill(
         frame,
@@ -5423,7 +5423,7 @@ fn render_library_tile(
         card_width,
         card_height,
         scale,
-        if selected { 0x422038 } else { 0x21152F },
+        if selected { 0x17485D } else { 0x192B3A },
     );
     if let Some(icon) = smdh_icon {
         draw_smdh_icon(
@@ -5493,7 +5493,7 @@ fn render_library_tile(
             20.0,
             20.0,
             scale,
-            0x422038,
+            0x17485D,
         );
         responsive_text_centered(
             frame,
@@ -5728,6 +5728,63 @@ fn responsive_fill(
     }
 }
 
+/// Fills a rounded RGBA rectangle using row spans, keeping card rendering
+/// inexpensive on the shared PC and Android UI path.
+#[allow(clippy::too_many_arguments)]
+fn responsive_rounded_fill(
+    frame: &mut [u8],
+    width: usize,
+    height: usize,
+    x: f32,
+    y: f32,
+    rect_width: f32,
+    rect_height: f32,
+    scale: f32,
+    radius: f32,
+    color: u32,
+) {
+    if width == 0 || height == 0 || !scale.is_finite() || scale <= 0.0
+        || frame.len() != width.saturating_mul(height).saturating_mul(4)
+    {
+        return;
+    }
+    let left = (x * scale).floor().max(0.0) as usize;
+    let top = (y * scale).floor().max(0.0) as usize;
+    let right = ((x + rect_width) * scale).ceil().min(width as f32) as usize;
+    let bottom = ((y + rect_height) * scale).ceil().min(height as f32) as usize;
+    if left >= right || top >= bottom {
+        return;
+    }
+    let rect_w = (right - left) as f32;
+    let rect_h = (bottom - top) as f32;
+    let corner = (radius * scale).max(0.0).min(rect_w * 0.5).min(rect_h * 0.5);
+    let red = (color >> 16) as u8;
+    let green = (color >> 8) as u8;
+    let blue = color as u8;
+    for row in top..bottom {
+        let local_y = (row - top) as f32 + 0.5;
+        let distance = if local_y < corner {
+            corner - local_y
+        } else if local_y > rect_h - corner {
+            local_y - (rect_h - corner)
+        } else {
+            0.0
+        };
+        let inset = if distance > 0.0 && corner > 0.0 {
+            (corner - (corner * corner - distance * distance).max(0.0).sqrt()).ceil() as usize
+        } else {
+            0
+        };
+        let row_left = left.saturating_add(inset).min(right);
+        let row_right = right.saturating_sub(inset).max(row_left);
+        let start = (row * width + row_left) * 4;
+        let end = (row * width + row_right) * 4;
+        for pixel in frame[start..end].chunks_exact_mut(4) {
+            pixel.copy_from_slice(&[red, green, blue, 255]);
+        }
+    }
+}
+
 // Panels share the target geometry directly to avoid transient layout allocations.
 #[allow(clippy::too_many_arguments)]
 fn responsive_panel(
@@ -5741,64 +5798,29 @@ fn responsive_panel(
     scale: f32,
     color: u32,
 ) {
-    // Offset shadow separates cards from the shared dark canvas without
-    // changing their hit targets or the logical layout coordinates.
-    responsive_fill(
-        frame,
-        width as usize,
-        height as usize,
-        x + 3.0,
-        y + 3.0,
-        rect_width,
-        rect_height,
-        scale,
-        0x090F15,
+    // Rounded shadows, borders and surfaces share one shape language across
+    // Home, library pages, settings and the touch-first portrait layout.
+    responsive_rounded_fill(
+        frame, width as usize, height as usize,
+        x + 3.0, y + 4.0, rect_width, rect_height, scale, 6.0, 0x090F15,
     );
-    // Neutral outer stroke and the existing per-control fill.
-    responsive_fill(
-        frame,
-        width as usize,
-        height as usize,
-        x,
-        y,
-        rect_width,
-        rect_height,
-        scale,
-        0x3B4D5A,
+    responsive_rounded_fill(
+        frame, width as usize, height as usize,
+        x, y, rect_width, rect_height, scale, 6.0, 0x39576B,
+    );
+    responsive_rounded_fill(
+        frame, width as usize, height as usize,
+        x + 1.0, y + 1.0, rect_width - 2.0, rect_height - 2.0,
+        scale, 5.0, color,
     );
     responsive_fill(
-        frame,
-        width as usize,
-        height as usize,
-        x + 1.0,
-        y + 1.0,
-        rect_width - 2.0,
-        rect_height - 2.0,
-        scale,
-        color,
-    );
-    // A restrained top highlight and bottom edge add depth without gradients.
-    responsive_fill(
-        frame,
-        width as usize,
-        height as usize,
-        x + 2.0,
-        y + 2.0,
-        rect_width - 4.0,
-        1.0,
-        scale,
-        0x526A78,
+        frame, width as usize, height as usize,
+        x + 7.0, y + 2.0, rect_width - 14.0, 1.0, scale, 0x6C91A5,
     );
     responsive_fill(
-        frame,
-        width as usize,
-        height as usize,
-        x + 2.0,
-        y + rect_height - 2.0,
-        rect_width - 4.0,
-        1.0,
-        scale,
-        0x101820,
+        frame, width as usize, height as usize,
+        x + 7.0, y + rect_height - 2.0, rect_width - 14.0, 1.0,
+        scale, 0x172635,
     );
 }
 
@@ -5844,7 +5866,7 @@ fn responsive_text_centered(
     let Some((_, ui_scale, logical_width, _)) = responsive_metrics(width, height) else {
         return;
     };
-    let glyph_width = font::text_width(text.chars().count(), text_scale.max(1)) as f32;
+    let glyph_width = font::measure_text(text, text_scale.max(1)) as f32;
     let logical_text_width = glyph_width / ui_scale;
     let x = (center_x - logical_text_width * 0.5).clamp(0.0, logical_width);
     responsive_text(frame, width, height, x, y, text_scale, text, color);
@@ -5893,7 +5915,7 @@ fn responsive_folder_icon(frame: &mut [u8], width: u32, height: u32, x: f32, y: 
         62.0,
         38.0,
         scale,
-        0x2D1A3B,
+        0x23394B,
     );
 }
 
@@ -6013,10 +6035,8 @@ mod tests {
 
     #[test]
     fn library_skips_malformed_ncsd_images_when_caching_icons() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-ncsd-icon-invalid-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aceris-ncsd-icon-invalid-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let three_ds = dir.join("invalid.3ds");
         let cci = dir.join("invalid.cci");
@@ -6054,7 +6074,7 @@ mod tests {
             40.0,
             24.0,
             1.0,
-            0x21152F,
+            0x192B3A,
         );
 
         let pixel = |x: usize, y: usize| {
@@ -6062,10 +6082,11 @@ mod tests {
             [frame[offset], frame[offset + 1], frame[offset + 2]]
         };
         assert_eq!(pixel(52, 20), [0x09, 0x0F, 0x15]);
-        assert_eq!(pixel(10, 10), [0x3B, 0x4D, 0x5A]);
-        assert_eq!(pixel(11, 11), [0x21, 0x15, 0x2F]);
-        assert_eq!(pixel(12, 12), [0x52, 0x6A, 0x78]);
-        assert_eq!(pixel(12, 32), [0x10, 0x18, 0x20]);
+        assert_eq!(pixel(10, 10), [0, 0, 0]);
+        assert_eq!(pixel(14, 10), [0x39, 0x57, 0x6B]);
+        assert_eq!(pixel(15, 15), [0x19, 0x2B, 0x3A]);
+        assert_eq!(pixel(18, 12), [0x6C, 0x91, 0xA5]);
+        assert_eq!(pixel(18, 32), [0x17, 0x26, 0x35]);
     }
 
     #[test]

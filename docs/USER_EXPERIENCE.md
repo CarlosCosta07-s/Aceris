@@ -24,7 +24,7 @@ Sinais recorrentes de interesse da comunidade incluem controles virtuais ajustá
 
 ### PCSX2
 
-A interface Qt moderna popularizou uma biblioteca visual com capas, modos de grade e lista, propriedades independentes por jogo, configuração de controles simplificada com mapeamento automático e suporte nativo a controles populares. As propriedades por jogo são especialmente importantes: uma correção ou ajuste para um título não deve alterar a experiência de todos os outros.
+A interface Qt moderna popularizou uma biblioteca visual com capas, modos de grade e lista, propriedades independentes por jogo, configuração de controles simplificada com mapeamento automático e suporte nativo a controles populares. A camada visual atualizada usa a fonte proporcional original Aceris UI, desenhada em Rust com suavização de cantos e acentos em português; biblioteca, configurações, diálogos e menu durante a partida compartilham painéis arredondados, superfícies azul-petróleo e realce ciano para seleção. As propriedades por jogo são especialmente importantes: uma correção ou ajuste para um título não deve alterar a experiência de todos os outros.
 
 A apresentação da nova interface Qt e seus recursos de configuração por jogo e controle receberam grande atenção em discussões comunitárias. A biblioteca visual também facilita descobrir, organizar e iniciar títulos sem navegar por pastas toda vez.
 

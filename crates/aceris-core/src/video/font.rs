@@ -1,8 +1,8 @@
-//! Tiny built-in 5x7 bitmap font for frontend screens.
+//! Original Aceris proportional UI typeface, rasterized from compact Rust glyph data.
 //!
-//! Covers ASCII letters (with dedicated lowercase), digits, Portuguese
-//! accents and the separators used by the launcher; any other character is
-//! drawn as `?`.
+//! Covers ASCII letters (with dedicated lowercase), digits, Portuguese accents
+//! and launcher separators. Exposed glyph corners are softened during rendering;
+//! no operating-system font or external font asset is used.
 
 /// Glyph cell width in font pixels, without spacing.
 pub const GLYPH_WIDTH: usize = 5;
@@ -274,13 +274,130 @@ fn glyph(ch: char) -> [u8; 7] {
     }
 }
 
-/// Width in pixels of `chars` characters drawn at `scale`.
+/// Width in pixels of `chars` monospaced cells drawn at `scale`.
+///
+/// Kept for callers that know only a character count. Prefer [measure_text]
+/// whenever the actual string is available.
 pub fn text_width(chars: usize, scale: usize) -> usize {
     (chars * ADVANCE).saturating_sub(1) * scale
 }
 
-/// Draws `text` into an RGBA canvas with its top-left corner at (`x`, `y`).
-/// Pixels outside the canvas are clipped.
+/// Measures the proportional width of a string at the supplied integer scale.
+pub fn measure_text(text: &str, scale: usize) -> usize {
+    let scale = scale.max(1);
+    let advances = text.chars().map(character_advance).sum::<usize>();
+    let tracking = if text.is_empty() { 0 } else { 1 };
+    advances.saturating_sub(tracking) * scale
+}
+
+fn glyph_bounds(rows: &[u8; GLYPH_HEIGHT]) -> Option<(usize, usize)> {
+    let mut minimum = GLYPH_WIDTH;
+    let mut maximum = 0usize;
+    for &bits in rows {
+        for column in 0..GLYPH_WIDTH {
+            if bits >> (GLYPH_WIDTH - 1 - column) & 1 != 0 {
+                minimum = minimum.min(column);
+                maximum = maximum.max(column);
+            }
+        }
+    }
+    (minimum < GLYPH_WIDTH).then_some((minimum, maximum))
+}
+
+fn character_advance(ch: char) -> usize {
+    if ch == ' ' {
+        return 4;
+    }
+    glyph_bounds(&glyph(ch))
+        .map(|(_, maximum)| maximum + 2)
+        .unwrap_or(ADVANCE)
+}
+
+fn pixel_is_set(rows: &[u8; GLYPH_HEIGHT], column: i32, row: i32) -> bool {
+    if column < 0 || row < 0 || column >= GLYPH_WIDTH as i32 || row >= GLYPH_HEIGHT as i32 {
+        return false;
+    }
+    rows[row as usize] >> (GLYPH_WIDTH - 1 - column as usize) & 1 != 0
+}
+
+/// Rasterizes one bitmap cell as a softly rounded shape. Only exposed corners
+/// are rounded, so adjacent strokes remain connected. Four-by-four coverage
+/// sampling gives the built-in face smoother edges without an external asset.
+#[allow(clippy::too_many_arguments)]
+fn draw_rounded_cell(
+    canvas: &mut [u8],
+    width: usize,
+    height: usize,
+    left: i32,
+    top: i32,
+    scale: usize,
+    color: [u8; 3],
+    round_top_left: bool,
+    round_top_right: bool,
+    round_bottom_left: bool,
+    round_bottom_right: bool,
+) {
+    const SAMPLES: usize = 4;
+    let radius = scale as f32 * 0.48;
+    let radius_squared = radius * radius;
+
+    for dy in 0..scale {
+        let py = top.saturating_add(dy as i32);
+        if py < 0 || py as usize >= height {
+            continue;
+        }
+        for dx in 0..scale {
+            let px = left.saturating_add(dx as i32);
+            if px < 0 || px as usize >= width {
+                continue;
+            }
+            let mut coverage = 0u32;
+            for sample_y in 0..SAMPLES {
+                let local_y = dy as f32 + (sample_y as f32 + 0.5) / SAMPLES as f32;
+                for sample_x in 0..SAMPLES {
+                    let local_x = dx as f32 + (sample_x as f32 + 0.5) / SAMPLES as f32;
+                    let outside_top_left = round_top_left && local_x < radius && local_y < radius
+                        && (local_x - radius).powi(2) + (local_y - radius).powi(2) > radius_squared;
+                    let outside_top_right = round_top_right
+                        && local_x > scale as f32 - radius && local_y < radius
+                        && (local_x - (scale as f32 - radius)).powi(2)
+                            + (local_y - radius).powi(2) > radius_squared;
+                    let outside_bottom_left = round_bottom_left
+                        && local_x < radius && local_y > scale as f32 - radius
+                        && (local_x - radius).powi(2)
+                            + (local_y - (scale as f32 - radius)).powi(2) > radius_squared;
+                    let outside_bottom_right = round_bottom_right
+                        && local_x > scale as f32 - radius && local_y > scale as f32 - radius
+                        && (local_x - (scale as f32 - radius)).powi(2)
+                            + (local_y - (scale as f32 - radius)).powi(2) > radius_squared;
+                    if !outside_top_left && !outside_top_right
+                        && !outside_bottom_left && !outside_bottom_right
+                    {
+                        coverage += 1;
+                    }
+                }
+            }
+            if coverage == 0 {
+                continue;
+            }
+            let alpha = (coverage * 255 + 8) / 16;
+            let at = (py as usize * width + px as usize) * 4;
+            if alpha == 255 {
+                canvas[at..at + 3].copy_from_slice(&color);
+            } else {
+                let inverse = 255 - alpha;
+                for channel in 0..3 {
+                    canvas[at + channel] = ((u32::from(color[channel]) * alpha
+                        + u32::from(canvas[at + channel]) * inverse + 127) / 255) as u8;
+                }
+            }
+            canvas[at + 3] = 255;
+        }
+    }
+}
+
+/// Draws text in the original Aceris proportional UI face into an RGBA canvas.
+/// Pixels outside the canvas are clipped; no system font or external asset is used.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_text(
     canvas: &mut [u8],
@@ -292,28 +409,47 @@ pub fn draw_text(
     text: &str,
     color: [u8; 3],
 ) {
-    for (index, ch) in text.chars().enumerate() {
+    if scale == 0 || width == 0 || height == 0
+        || canvas.len() != width.saturating_mul(height).saturating_mul(4)
+    {
+        return;
+    }
+
+    let mut cursor = x;
+    for ch in text.chars() {
+        if ch == ' ' {
+            cursor = cursor.saturating_add((character_advance(ch) * scale) as i32);
+            continue;
+        }
         let rows = glyph(ch);
-        let left = x + (index * ADVANCE * scale) as i32;
+        let Some((minimum, maximum)) = glyph_bounds(&rows) else {
+            cursor = cursor.saturating_add((ADVANCE * scale) as i32);
+            continue;
+        };
         for (row, bits) in rows.iter().enumerate() {
-            for col in 0..GLYPH_WIDTH {
-                if bits >> (GLYPH_WIDTH - 1 - col) & 1 == 0 {
+            for column in minimum..=maximum {
+                if bits >> (GLYPH_WIDTH - 1 - column) & 1 == 0 {
                     continue;
                 }
-                for dy in 0..scale {
-                    for dx in 0..scale {
-                        let px = left + (col * scale + dx) as i32;
-                        let py = y + (row * scale + dy) as i32;
-                        if px < 0 || py < 0 || px as usize >= width || py as usize >= height {
-                            continue;
-                        }
-                        let at = (py as usize * width + px as usize) * 4;
-                        canvas[at..at + 3].copy_from_slice(&color);
-                        canvas[at + 3] = 255;
-                    }
-                }
+                let col = column as i32;
+                let row_index = row as i32;
+                draw_rounded_cell(
+                    canvas, width, height,
+                    cursor.saturating_add((column * scale) as i32),
+                    y.saturating_add((row * scale) as i32),
+                    scale, color,
+                    !pixel_is_set(&rows, col - 1, row_index)
+                        && !pixel_is_set(&rows, col, row_index - 1),
+                    !pixel_is_set(&rows, col + 1, row_index)
+                        && !pixel_is_set(&rows, col, row_index - 1),
+                    !pixel_is_set(&rows, col - 1, row_index)
+                        && !pixel_is_set(&rows, col, row_index + 1),
+                    !pixel_is_set(&rows, col + 1, row_index)
+                        && !pixel_is_set(&rows, col, row_index + 1),
+                );
             }
         }
+        cursor = cursor.saturating_add((character_advance(ch) * scale) as i32);
     }
 }
 
@@ -325,8 +461,9 @@ mod tests {
     fn drawing_sets_pixels_and_clips_at_the_edges() {
         let mut canvas = vec![0u8; 8 * 8 * 4];
         draw_text(&mut canvas, 8, 8, 0, 0, 1, "I", [9, 8, 7]);
-        // Top row of "I" is 0b01110: columns 1..=3.
-        assert_eq!(&canvas[4..7], &[9, 8, 7]);
+        // The rounded typeface keeps I's side bearings; outer corner pixels are softened.
+        assert!(canvas[4] > 180 && canvas[4] < 255);
+        assert_eq!(&canvas[7..10], &[9, 8, 7]);
         assert_eq!(&canvas[0..3], &[0, 0, 0]);
         // Far outside and negative origins must not panic.
         draw_text(&mut canvas, 8, 8, -100, 100, 2, "ABC", [1, 1, 1]);
@@ -347,6 +484,23 @@ mod tests {
         for ch in ['|', '&', '–', '—', '·', '→', '%', '#', '[', ']'] {
             assert_ne!(glyph(ch), UNKNOWN, "missing glyph for {ch:?}");
         }
+    }
+
+    #[test]
+    fn proportional_measurement_gives_narrow_glyphs_less_advance() {
+        assert!(measure_text("WWW", 2) > measure_text("III", 2));
+        assert!(measure_text("Aceris UI", 1) > 0);
+        assert_eq!(measure_text("", 2), 0);
+        assert!(measure_text("III", 1) < text_width(3, 1));
+    }
+
+    #[test]
+    fn rounded_glyph_edges_use_partial_pixel_coverage() {
+        let mut canvas = vec![0u8; 8 * 8 * 4];
+        draw_text(&mut canvas, 8, 8, 0, 0, 1, "I", [255, 255, 255]);
+        let at = (0usize * 8 + 1) * 4;
+        assert!(canvas[at] > 180 && canvas[at] < 255);
+        assert_eq!(canvas[at + 3], 255);
     }
 
     #[test]

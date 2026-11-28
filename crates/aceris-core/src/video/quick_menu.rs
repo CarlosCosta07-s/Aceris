@@ -170,7 +170,7 @@ pub fn render_menu_button(frame: &mut [u8], width: u32, height: u32, format: Pix
     if expected != Some(frame.len()) {
         return false;
     }
-    blend_rect(frame, width as usize, button, [45, 30, 62], 220, format);
+    blend_rounded_rect(frame, width as usize, button, [32, 55, 73], 232, 7 * scale, format);
     draw_border(frame, width as usize, button, scale.max(1), format);
     draw_text_for_format(
         frame,
@@ -237,7 +237,7 @@ pub fn render_control_editor_hint(
         width: (width as usize - 116 * scale).min(230 * scale),
         height: 46 * scale,
     };
-    blend_rect(frame, width as usize, panel, [31, 19, 48], 232, format);
+    blend_rounded_rect(frame, width as usize, panel, [17, 29, 44], 238, 9 * scale, format);
     draw_border(frame, width as usize, panel, scale, format);
     draw_text_for_format(
         frame,
@@ -401,13 +401,13 @@ pub fn render_diagnostics_overlay(
         width: panel_width,
         height: panel_height.min(height as usize - margin),
     };
-    blend_rect(frame, width as usize, panel, [12, 10, 22], 226, format);
-    draw_colored_border(frame, width as usize, panel, scale, [86, 59, 103], format);
+    blend_rounded_rect(frame, width as usize, panel, [15, 26, 40], 236, 8 * scale, format);
+    draw_colored_border(frame, width as usize, panel, scale, [55, 94, 118], format);
     let accent = Rect {
         height: (3 * scale).min(panel.height),
         ..panel
     };
-    blend_rect(frame, width as usize, accent, [229, 23, 63], 255, format);
+    blend_rect(frame, width as usize, accent, [54, 193, 220], 255, format);
     draw_text_for_format(
         frame,
         width as usize,
@@ -479,7 +479,7 @@ pub fn render_confirmation_overlay(
         width: width as usize,
         height: height as usize,
     };
-    blend_rect(frame, width as usize, canvas, [7, 5, 16], 176, format);
+    blend_rect(frame, width as usize, canvas, [6, 13, 22], 176, format);
     draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
 
     let title = match action {
@@ -524,16 +524,13 @@ pub fn render_confirmation_overlay(
     let labels = ["CANCELAR", "CONFIRMAR"];
     for (index, row) in geometry.rows.iter().enumerate() {
         let is_selected = index == selected.min(1);
-        blend_rect(
+        blend_rounded_rect(
             frame,
             width as usize,
             *row,
-            if is_selected {
-                [166, 29, 61]
-            } else {
-                [54, 36, 70]
-            },
-            if is_selected { 245 } else { 230 },
+            if is_selected { [22, 91, 122] } else { [31, 46, 62] },
+            if is_selected { 250 } else { 230 },
+            7 * scale,
             format,
         );
         if is_selected {
@@ -546,12 +543,12 @@ pub fn render_confirmation_overlay(
                     width: (3 * scale).min(row.width),
                     height: row.height,
                 },
-                [255, 107, 107],
+                [92, 220, 237],
                 255,
                 format,
             );
         }
-        let label_width = font::text_width(labels[index].chars().count(), text_scale);
+        let label_width = font::measure_text(labels[index], text_scale);
         let text_x = row.x + row.width.saturating_sub(label_width) / 2;
         let text_y = row.y + (row.height.saturating_sub(7 * text_scale)) / 2;
         draw_text_for_format(
@@ -756,7 +753,7 @@ pub fn render_gamepad_mapping_editor(
         width: width as usize,
         height: height as usize,
     };
-    blend_rect(frame, width as usize, canvas, [7, 5, 16], 205, format);
+    blend_rect(frame, width as usize, canvas, [6, 13, 22], 205, format);
     draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
     draw_text_for_format(
         frame,
@@ -773,13 +770,8 @@ pub fn render_gamepad_mapping_editor(
         [245, 238, 248],
         format,
     );
-    blend_rect(
-        frame,
-        width as usize,
-        geometry.scope,
-        [54, 36, 70],
-        245,
-        format,
+    blend_rounded_rect(
+        frame, width as usize, geometry.scope, [34, 58, 76], 248, 6 * scale, format,
     );
     draw_text_for_format(
         frame,
@@ -795,16 +787,13 @@ pub fn render_gamepad_mapping_editor(
 
     for (index, row) in geometry.rows.iter().enumerate() {
         let is_selected = index == selected.min(GamepadControl::COUNT - 1);
-        blend_rect(
+        blend_rounded_rect(
             frame,
             width as usize,
             *row,
-            if is_selected {
-                [105, 28, 62]
-            } else {
-                [38, 29, 52]
-            },
-            if is_selected { 248 } else { 226 },
+            if is_selected { [22, 91, 122] } else { [31, 46, 62] },
+            if is_selected { 250 } else { 232 },
+            6 * scale,
             format,
         );
         if is_selected {
@@ -817,7 +806,7 @@ pub fn render_gamepad_mapping_editor(
                     width: (3 * scale).min(row.width),
                     height: row.height,
                 },
-                [255, 107, 107],
+                [92, 220, 237],
                 255,
                 format,
             );
@@ -832,7 +821,7 @@ pub fn render_gamepad_mapping_editor(
                 width: scale,
                 height: row.height.saturating_sub(4 * scale),
             },
-            [112, 91, 132],
+            [63, 103, 127],
             180,
             format,
         );
@@ -874,8 +863,8 @@ pub fn render_gamepad_mapping_editor(
         (geometry.axes, "EIXOS"),
         (geometry.close, "VOLTAR"),
     ] {
-        blend_rect(frame, width as usize, rect, [54, 36, 70], 245, format);
-        let label_width = font::text_width(label.chars().count(), scale);
+        blend_rounded_rect(frame, width as usize, rect, [34, 58, 76], 248, 6 * scale, format);
+        let label_width = font::measure_text(label, scale);
         draw_text_for_format(
             frame,
             width as usize,
@@ -1061,7 +1050,7 @@ pub fn render_gamepad_axis_editor(
         width: width as usize,
         height: height as usize,
     };
-    blend_rect(frame, width as usize, canvas, [7, 5, 16], 205, format);
+    blend_rect(frame, width as usize, canvas, [6, 13, 22], 205, format);
     draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
     draw_text_for_format(
         frame,
@@ -1074,13 +1063,8 @@ pub fn render_gamepad_axis_editor(
         [245, 238, 248],
         format,
     );
-    blend_rect(
-        frame,
-        width as usize,
-        geometry.scope,
-        [54, 36, 70],
-        245,
-        format,
+    blend_rounded_rect(
+        frame, width as usize, geometry.scope, [34, 58, 76], 248, 6 * scale, format,
     );
     draw_text_for_format(
         frame,
@@ -1095,7 +1079,7 @@ pub fn render_gamepad_axis_editor(
     );
 
     for (index, row) in geometry.rows.iter().enumerate() {
-        blend_rect(frame, width as usize, *row, [38, 29, 52], 226, format);
+        blend_rounded_rect(frame, width as usize, *row, [31, 46, 62], 232, 6 * scale, format);
         let label = match index {
             0 => "INVERTER EIXO X",
             1 => "INVERTER EIXO Y",
@@ -1138,7 +1122,7 @@ pub fn render_gamepad_axis_editor(
                 row.x
                     + row
                         .width
-                        .saturating_sub(font::text_width(value.chars().count(), text_scale))
+                        .saturating_sub(font::measure_text(value, text_scale))
                     - 9 * scale,
                 row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
                 text_scale,
@@ -1151,7 +1135,7 @@ pub fn render_gamepad_axis_editor(
                 frame,
                 width as usize,
                 height as usize,
-                row.x + row.width * 58 / 100 - font::text_width(1, text_scale) / 2,
+                row.x + row.width * 58 / 100 - font::measure_text("-", text_scale) / 2,
                 row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
                 text_scale,
                 "-",
@@ -1167,7 +1151,7 @@ pub fn render_gamepad_axis_editor(
                     .unwrap_or_else(|| format!("AUTO {inherited_deadzone_percent}%"))
             };
             let center_x = row.x + row.width * 77 / 100
-                - font::text_width(center_value.chars().count(), text_scale) / 2;
+                - font::measure_text(&center_value, text_scale) / 2;
             draw_text_for_format(
                 frame,
                 width as usize,
@@ -1183,7 +1167,7 @@ pub fn render_gamepad_axis_editor(
                 frame,
                 width as usize,
                 height as usize,
-                row.x + row.width * 94 / 100 - font::text_width(1, text_scale) / 2,
+                row.x + row.width * 94 / 100 - font::measure_text("+", text_scale) / 2,
                 row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
                 text_scale,
                 "+",
@@ -1194,8 +1178,8 @@ pub fn render_gamepad_axis_editor(
     }
 
     for (rect, label) in [(geometry.reset, "PADRAO"), (geometry.back, "VOLTAR")] {
-        blend_rect(frame, width as usize, rect, [54, 36, 70], 245, format);
-        let label_width = font::text_width(label.chars().count(), scale);
+        blend_rounded_rect(frame, width as usize, rect, [34, 58, 76], 248, 6 * scale, format);
+        let label_width = font::measure_text(label, scale);
         draw_text_for_format(
             frame,
             width as usize,
@@ -1344,7 +1328,7 @@ fn render_overlay_with_action_count(
         width: width as usize,
         height: height as usize,
     };
-    blend_rect(frame, width as usize, canvas, [7, 5, 16], 164, format);
+    blend_rect(frame, width as usize, canvas, [6, 13, 22], 164, format);
     draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
 
     let title_x = geometry.panel.x + 18 * scale;
@@ -1373,16 +1357,13 @@ fn render_overlay_with_action_count(
     );
     for (index, row) in geometry.rows.iter().take(geometry.action_count).enumerate() {
         let is_selected = index == selected.min(action_count - 1);
-        blend_rect(
+        blend_rounded_rect(
             frame,
             width as usize,
             *row,
-            if is_selected {
-                [166, 29, 61]
-            } else {
-                [54, 36, 70]
-            },
-            if is_selected { 245 } else { 230 },
+            if is_selected { [22, 91, 122] } else { [31, 46, 62] },
+            if is_selected { 250 } else { 230 },
+            7 * scale,
             format,
         );
         if is_selected {
@@ -1395,7 +1376,7 @@ fn render_overlay_with_action_count(
                     width: (3 * scale).min(row.width),
                     height: row.height,
                 },
-                [255, 107, 107],
+                [92, 220, 237],
                 255,
                 format,
             );
@@ -1431,21 +1412,20 @@ fn menu_row_text_scale(
     control_reset_label: &str,
     control_scope_label: &str,
 ) -> usize {
-    let longest_label_chars = (0..action_count)
+    let widest_label = (0..action_count)
         .map(|index| match index {
             6 => control_reset_label,
             7 => control_scope_label,
             8 if action_count == DESKTOP_ACTION_COUNT => "MAPEAR CONTROLE",
             _ => labels[index],
         })
-        .map(|label| label.chars().count())
-        .max()
-        .unwrap_or(1);
+        .max_by_key(|label| font::measure_text(label, 1))
+        .unwrap_or("MENU");
 
     let row_height = geometry.rows[0].height;
     let vertical_scale = (row_height / 7).max(1);
     let available_width = geometry.rows[0].width.saturating_sub(24 * base_scale);
-    let glyph_width = font::text_width(longest_label_chars, 1).max(1);
+    let glyph_width = font::measure_text(widest_label, 1).max(1);
     let horizontal_scale = (available_width / glyph_width).max(1);
     (base_scale * 2)
         .min(vertical_scale)
@@ -1465,28 +1445,78 @@ fn draw_panel_chrome(
         y: panel.y.saturating_add(4 * scale),
         ..panel
     };
-    blend_rect(frame, width, shadow, [0, 0, 0], 112, format);
+    blend_rounded_rect(frame, width, shadow, [0, 0, 0], 112, 10 * scale, format);
     let near_shadow = Rect {
         x: panel.x.saturating_add(scale),
         y: panel.y.saturating_add(2 * scale),
         ..panel
     };
-    blend_rect(frame, width, near_shadow, [7, 5, 16], 150, format);
-    blend_rect(frame, width, panel, [26, 11, 46], 250, format);
-    draw_colored_border(frame, width, panel, scale.max(1), [86, 59, 103], format);
-
-    let accent = Rect {
-        height: (3 * scale).min(panel.height),
-        ..panel
-    };
-    blend_rect(frame, width, accent, [229, 23, 63], 255, format);
-    let highlight = Rect {
+    blend_rounded_rect(frame, width, near_shadow, [6, 13, 22], 150, 9 * scale, format);
+    blend_rounded_rect(frame, width, panel, [55, 94, 118], 255, 9 * scale, format);
+    let inner = Rect {
         x: panel.x.saturating_add(scale),
         y: panel.y.saturating_add(scale),
         width: panel.width.saturating_sub(2 * scale),
-        height: scale.min(panel.height.saturating_sub(scale)),
+        height: panel.height.saturating_sub(2 * scale),
     };
-    blend_rect(frame, width, highlight, [255, 107, 107], 130, format);
+    blend_rounded_rect(frame, width, inner, [17, 29, 44], 250, 8 * scale, format);
+    let accent = Rect {
+        x: panel.x.saturating_add(9 * scale),
+        y: panel.y.saturating_add(scale),
+        width: panel.width.saturating_sub(18 * scale),
+        height: (3 * scale).min(panel.height),
+    };
+    blend_rounded_rect(frame, width, accent, [54, 193, 220], 255, 2 * scale, format);
+}
+
+/// Blends a rounded rectangle by drawing clipped row spans. The hit-test
+/// geometry remains rectangular, so touch and pointer targets do not change.
+fn blend_rounded_rect(
+    frame: &mut [u8],
+    width: usize,
+    rect: Rect,
+    color: [u8; 3],
+    alpha: u8,
+    radius: usize,
+    format: PixelFormat,
+) {
+    if width == 0 || frame.len() % width.saturating_mul(4) != 0 {
+        return;
+    }
+    let height = frame.len() / 4 / width;
+    let left = rect.x.min(width);
+    let right = rect.x.saturating_add(rect.width).min(width);
+    let top = rect.y.min(height);
+    let bottom = rect.y.saturating_add(rect.height).min(height);
+    if left >= right || top >= bottom {
+        return;
+    }
+    let corner = radius.min((right - left) / 2).min((bottom - top) / 2);
+    let rect_height = (bottom - top) as f32;
+    for row in top..bottom {
+        let local_y = (row - top) as f32 + 0.5;
+        let distance = if local_y < corner as f32 {
+            corner as f32 - local_y
+        } else if local_y > rect_height - corner as f32 {
+            local_y - (rect_height - corner as f32)
+        } else {
+            0.0
+        };
+        let inset = if distance > 0.0 && corner > 0 {
+            (corner as f32
+                - (corner as f32 * corner as f32 - distance * distance).max(0.0).sqrt())
+                .ceil() as usize
+        } else {
+            0
+        };
+        let row_rect = Rect {
+            x: left.saturating_add(inset).min(right),
+            y: row,
+            width: (right - left).saturating_sub(inset.saturating_mul(2)),
+            height: 1,
+        };
+        blend_rect(frame, width, row_rect, color, alpha, format);
+    }
 }
 
 fn draw_colored_border(
@@ -1546,7 +1576,7 @@ fn draw_colored_border(
 }
 
 fn draw_border(frame: &mut [u8], width: usize, rect: Rect, thickness: usize, format: PixelFormat) {
-    draw_colored_border(frame, width, rect, thickness, [211, 52, 85], format);
+    draw_colored_border(frame, width, rect, thickness, [67, 137, 162], format);
 }
 
 fn blend_rect(
@@ -2034,14 +2064,14 @@ mod tests {
         let layout = geometry(width, height, ACTION_COUNT).unwrap();
         let top_center =
             ((layout.panel.y * width as usize) + layout.panel.x + layout.panel.width / 2) * 4;
-        assert_eq!(&frame[top_center..top_center + 3], &[229, 23, 63]);
+        assert_eq!(&frame[top_center..top_center + 3], &[54, 193, 220]);
 
         let selected = layout.rows[0];
         let marker = ((selected.y + selected.height / 2) * width as usize + selected.x) * 4;
-        assert_eq!(&frame[marker..marker + 3], &[255, 107, 107]);
+        assert_eq!(&frame[marker..marker + 3], &[92, 220, 237]);
 
         let border = ((layout.panel.y + 12 * layout.scale) * width as usize + layout.panel.x) * 4;
-        assert_eq!(&frame[border..border + 3], &[86, 59, 103]);
+        assert_eq!(&frame[border..border + 3], &[55, 94, 118]);
     }
 
     #[test]
