@@ -122,17 +122,17 @@ Projeto da fronteira de leitura e seleção de pastas: [FILE_SOURCE_ARCHITECTURE
 - [ ] Separar dispositivo físico de mapeamento lógico; um perfil pode mapear vários dispositivos.
 - [ ] Persistir perfis globais, por dispositivo e por jogo com herança explícita.
 - [ ] Tratar conexão, desconexão, reconexão e troca de dispositivo.
-- [ ] Implementar teste visual de botões/eixos, deadzone, sensibilidade, curva de resposta e inversão; apresentar claramente o dispositivo ativo.
+- [~] Deadzone global versionada e persistida já existe (8/12/16/20/24%, padrão 16%) e é aplicada nos leitores desktop/Android. [ ] Implementar teste visual de botões/eixos, curvas de sensibilidade, inversão configurável e identificação clara do dispositivo ativo.
 - [ ] Detectar conflitos de atalhos e permitir redefinir o padrão.
 
 **M3.2 — Desktop**
-- [ ] Enumerar gamepads e apresentar nomes dos dispositivos detectados.
-- [ ] Mapeamento automático somente para layouts conhecidos e confirmados; manter remapeamento manual.
-- [ ] Permitir mapear teclado, mouse quando aplicável, botões, gatilhos e eixos; persistir mapeamentos por dispositivo e testar desconexão/reconexão.
+- [~] Backend GilRs integrado para Windows/Linux/macOS: lê o primeiro controle conectado, atualiza estado após eventos de conexão/desconexão e combina gamepad com teclado; mapeia A/B/X/Y, D-pad, L/R, Start/Select e stick esquerdo. Usa a deadzone global configurável. [ ] Enumerar dispositivos e apresentar seletor/nome do controle ativo.
+- [ ] Mapeamento automático somente para layouts conhecidos e confirmados; manter remapeamento manual. A implementação atual usa o layout padronizado do backend e não oferece reconfiguração de botões.
+- [~] Entrada física básica está ligada ao loop guest e mantém teclado + controle combinados. [ ] Permitir remapear teclado, mouse quando aplicável, botões, gatilhos e eixos; persistir mapeamentos por dispositivo e testar desconexão/reconexão.
 - [ ] Atalhos globais configuráveis para pausar, retomar, menu, screenshot, troca de telas e ações de progresso quando existirem.
 
 **M3.3 — Android**
-- [~] Android recebe botões digitais por eventos de tecla e o eixo primário X/Y de joystick USB/Bluetooth pelo NativeActivity; aplica deadzone padrão de 16%, normalização para Circle Pad ±156 e inversão de Y. D-pad, A/B/X/Y, L1/R1 e Start/Select têm mapeamentos-base. L2/R2 aguardam o caminho adicional `ir:rst` do New 3DS. Ainda faltam remapeamento, seleção/perfis de dispositivo, ajustes de deadzone/sensibilidade, gatilhos analógicos/eixos adicionais e validação em aparelho físico.
+- [~] Android recebe botões digitais por eventos de tecla e o eixo primário X/Y de joystick USB/Bluetooth pelo NativeActivity; normaliza para Circle Pad ±156 e inverte Y. Deadzone global ajustável em 8/12/16/20/24% (padrão 16%) é persistida e aplicada também no desktop. D-pad, A/B/X/Y, L1/R1 e Start/Select têm mapeamentos-base. L2/R2 aguardam o caminho adicional `ir:rst` do New 3DS. Ainda faltam remapeamento, seleção/perfis de dispositivo, gatilhos/eixos adicionais e validação em aparelho físico.
 - [x] Editor Android de controles virtuais: mover, redimensionar, ocultar, ajustar opacidade, escala, presets e posições individuais; layouts separados por orientação e overrides por Title ID com herança/restauração já existem. Falta validação física abrangente.
 - [x] Presets padrão, compacto, canhoto e destro; o modo personalizado é composto pelas posições e tamanhos editados pelo usuário.
 - [x] Persistir layouts de controles separados para retrato e paisagem. [ ] Validar rotação e composição em Android físico.
@@ -220,7 +220,7 @@ Antes de implementar a interface, demonstrar que o estado serializado inclui tod
 - [ ] Expor VSync, limitador, resolução interna, filtros e antialiasing somente quando cada recurso tiver efeito real e validação.
 - [ ] Diferenciar resolução interna de ampliação/escala do framebuffer LCD.
 - [ ] Não exibir filtros ou multiplicadores de resolução que só ampliem a imagem final.
-- [ ] Criar overlay de diagnóstico opcional com FPS apresentado, frametime e tempos de CPU/render/composição/apresentação; identificar essas medições como host-side.
+- [~] Overlay de diagnóstico opcional durante a partida já exibe PC ARM11, requisições IPC não tratadas e resumo de FPS apresentado/tempos do host quando a coleta está ativa. [ ] Expandir medições por subsistema e obter velocidade guest real; sempre identificar métricas host-side.
 - [ ] Medir velocidade guest separadamente do FPS apresentado; nunca inferir velocidade da emulação a partir do ritmo de apresentação. Manter telemetria local e desativada por padrão, sem upload automático.
 - [ ] Resolver e validar a inicialização/saída real do áudio antes de apresentar controles de áudio como prontos.
 - [ ] Adicionar volume, mute, dispositivo e latência somente quando controlarem de fato o caminho de áudio.
