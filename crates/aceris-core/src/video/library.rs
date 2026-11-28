@@ -2271,22 +2271,37 @@ impl Library {
             return;
         }
         let direction = delta.signum();
-        let next = if portrait {
-            match (self.home_focus, direction) {
-                (HomeFocus::Actions, 1) => HomeFocus::Games,
-                (HomeFocus::Games, -1) => HomeFocus::Actions,
-                (HomeFocus::Games, 1) => HomeFocus::Navigation,
-                (HomeFocus::Navigation, -1) => HomeFocus::Games,
-                _ => self.home_focus,
+        if !portrait {
+            match self.home_focus {
+                HomeFocus::Navigation => {
+                    self.home_navigation_selected = (self.home_navigation_selected as i64
+                        + i64::from(direction))
+                    .clamp(0, ui::home::SIDEBAR_ITEM_COUNT as i64 - 1) as usize;
+                }
+                HomeFocus::Games if direction < 0 => {
+                    self.home_focus = HomeFocus::Navigation;
+                    self.home_navigation_selected = 0;
+                }
+                HomeFocus::Games if direction > 0 => {
+                    self.home_focus = HomeFocus::Actions;
+                    self.home_action_selected = 0;
+                }
+                HomeFocus::Actions if direction < 0 => {
+                    self.home_focus = HomeFocus::Games;
+                }
+                HomeFocus::Actions => {}
+                HomeFocus::Games => {}
             }
-        } else {
-            match (self.home_focus, direction) {
-                (HomeFocus::Actions, 1) => HomeFocus::Games,
-                (HomeFocus::Games, -1) => HomeFocus::Actions,
-                (HomeFocus::Games, 1) => HomeFocus::Navigation,
-                (HomeFocus::Navigation, -1) => HomeFocus::Games,
-                _ => self.home_focus,
-            }
+            self.status = None;
+            return;
+        }
+
+        let next = match (self.home_focus, direction) {
+            (HomeFocus::Actions, 1) => HomeFocus::Games,
+            (HomeFocus::Games, -1) => HomeFocus::Actions,
+            (HomeFocus::Games, 1) => HomeFocus::Navigation,
+            (HomeFocus::Navigation, -1) => HomeFocus::Games,
+            _ => self.home_focus,
         };
         if next != self.home_focus {
             self.home_focus = next;
@@ -2327,11 +2342,11 @@ impl Library {
                     ClickResult::Ignored
                 }
                 2 => {
-                    self.request_folder_picker();
+                    self.select_page(LibraryPage::Settings);
                     ClickResult::Ignored
                 }
                 3 => {
-                    self.reload();
+                    self.select_page(LibraryPage::Games);
                     ClickResult::Ignored
                 }
                 _ => ClickResult::Ignored,
@@ -2356,16 +2371,15 @@ impl Library {
                 _ => ClickResult::Ignored,
             },
             HomeFocus::Navigation => {
-                let page = match self.home_navigation_selected {
-                    0 => Some(LibraryPage::Recent),
-                    1 => Some(LibraryPage::Games),
-                    2 => Some(LibraryPage::Favorites),
-                    3 => Some(LibraryPage::Homebrew),
-                    4 => Some(LibraryPage::Settings),
-                    _ => None,
-                };
-                if let Some(page) = page {
-                    self.select_page(page);
+                match self.home_navigation_selected {
+                    0 => self.select_page(LibraryPage::Home),
+                    1 => self.select_page(LibraryPage::Games),
+                    2 => self.request_folder_picker(),
+                    3 => self.select_page(LibraryPage::Favorites),
+                    4 => self.select_page(LibraryPage::Recent),
+                    5 => self.select_page(LibraryPage::Homebrew),
+                    6 => self.select_page(LibraryPage::Settings),
+                    _ => {}
                 }
                 ClickResult::Ignored
             }
@@ -2469,10 +2483,13 @@ impl Library {
                     .clamp(0, count - 1) as usize;
                 }
                 HomeFocus::Navigation => {
-                    let count = if portrait { 4 } else { 5 };
-                    self.home_navigation_selected =
-                        (self.home_navigation_selected as i64 + i64::from(delta.signum()))
-                            .clamp(0, count - 1) as usize;
+                    if !portrait && delta > 0 {
+                        self.home_focus = HomeFocus::Games;
+                    } else if portrait {
+                        self.home_navigation_selected =
+                            (self.home_navigation_selected as i64 + i64::from(delta.signum()))
+                                .clamp(0, 3) as usize;
+                    }
                 }
             }
             return;
@@ -2484,6 +2501,84 @@ impl Library {
             let visible_rows = landscape_grid_visible_rows(logical_height);
             self.move_grid_selection(delta, visible_rows * ui::library::GRID_COLUMNS);
         }
+    }
+
+    /// Handles the rail, shelf and command strip of the console-style Home.
+    fn click_console_home(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: u32,
+        height: u32,
+        logical_height: f32,
+    ) -> ClickResult {
+        if x < ui::home::SIDEBAR_WIDTH {
+            if let Some(slot) = (0..ui::home::SIDEBAR_ITEM_COUNT).find(|slot| {
+                let center_y = ui::home::sidebar_item_center_y(*slot, logical_height);
+                (center_y - 24.0..center_y + 24.0).contains(&y)
+            }) {
+                self.home_focus = HomeFocus::Navigation;
+                self.home_navigation_selected = slot;
+                return self.activate_home_selection(width, height);
+            }
+            return ClickResult::Ignored;
+        }
+
+        let command_y = ui::home::command_bar_top(logical_height);
+        if y >= command_y {
+            let action = if (212.0..332.0).contains(&x) {
+                Some(0)
+            } else if (397.0..535.0).contains(&x) {
+                Some(1)
+            } else if (587.0..715.0).contains(&x) {
+                Some(2)
+            } else if (767.0..939.0).contains(&x) {
+                Some(3)
+            } else {
+                None
+            };
+            if let Some(action) = action {
+                self.home_focus = HomeFocus::Actions;
+                self.home_action_selected = action;
+                return self.activate_home_selection(width, height);
+            }
+            return ClickResult::Ignored;
+        }
+
+        let carousel_top = ui::home::carousel_top(logical_height);
+        let card_height = ui::home::game_card_height(logical_height);
+        if (carousel_top..carousel_top + card_height).contains(&y) && x >= ui::home::CAROUSEL_X {
+            let home_entries = self.home_entries();
+            if home_entries.is_empty() {
+                self.request_folder_picker();
+                return ClickResult::Ignored;
+            }
+            let offset = x - ui::home::CAROUSEL_X;
+            let slot = (offset / ui::home::GAME_CARD_STEP).floor().max(0.0) as usize;
+            let card_x = ui::home::CAROUSEL_X + slot as f32 * ui::home::GAME_CARD_STEP;
+            if slot < ui::home::VISIBLE_GAME_CARDS
+                && x < card_x + ui::home::GAME_CARD_WIDTH
+            {
+                let index = self.home_first_visible(ui::home::VISIBLE_GAME_CARDS) + slot;
+                if index < home_entries.len() {
+                    self.home_focus = HomeFocus::Games;
+                    if index == self.selected {
+                        return ClickResult::Activated;
+                    }
+                    self.selected = index;
+                    self.status = None;
+                    return ClickResult::Selected;
+                }
+            }
+            return ClickResult::Ignored;
+        }
+
+        // The centered title is also an activation target for the selected game.
+        if y < carousel_top && self.selected_entry().is_some() {
+            self.home_focus = HomeFocus::Games;
+            return ClickResult::Activated;
+        }
+        ClickResult::Ignored
     }
 
     /// Handles navigation, refresh and game selection in the responsive launcher.
@@ -2499,6 +2594,10 @@ impl Library {
                 return ClickResult::Ignored;
             }
             self.finish_search();
+        }
+
+        if !portrait && self.page == LibraryPage::Home {
+            return self.click_console_home(x, y, width, height, logical_height);
         }
 
         if !portrait
