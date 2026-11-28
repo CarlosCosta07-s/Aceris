@@ -6644,15 +6644,22 @@ fn responsive_text(
     let Some((_, ui_scale, _, _)) = responsive_metrics(width, height) else {
         return;
     };
-    draw_text(
+    let text_scale = text_scale.max(1);
+    let weight = if text_scale >= 2 {
+        font::TextWeight::Semibold
+    } else {
+        font::TextWeight::Regular
+    };
+    font::draw_text_with_weight(
         frame,
         width as usize,
         height as usize,
         (x * ui_scale).round() as i32,
         (y * ui_scale).round() as i32,
-        text_scale.max(1),
+        text_scale,
         text,
-        [(color >> 16) as u8, (color >> 8) as u8, color as u8],
+        brand::rgb(color),
+        weight,
     );
 }
 
@@ -6671,7 +6678,13 @@ fn responsive_text_centered(
     let Some((_, ui_scale, logical_width, _)) = responsive_metrics(width, height) else {
         return;
     };
-    let glyph_width = font::measure_text(text, text_scale.max(1)) as f32;
+    let text_scale = text_scale.max(1);
+    let weight = if text_scale >= 2 {
+        font::TextWeight::Semibold
+    } else {
+        font::TextWeight::Regular
+    };
+    let glyph_width = font::measure_text_with_weight(text, text_scale, weight) as f32;
     let logical_text_width = glyph_width / ui_scale;
     let x = (center_x - logical_text_width * 0.5).clamp(0.0, logical_width);
     responsive_text(frame, width, height, x, y, text_scale, text, color);
