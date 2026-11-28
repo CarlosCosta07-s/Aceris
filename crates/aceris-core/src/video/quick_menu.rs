@@ -1,8 +1,8 @@
 //! Shared, host-independent rendering and hit testing for the in-game quick menu.
 
 use super::font;
-use aceris_common::brand;
 use crate::input_mapping::{GamepadAxisSettings, GamepadControl, GamepadMapping, PadButton};
+use aceris_common::brand;
 
 pub const ACTION_COUNT: usize = 12;
 /// Stable index for the Android-only virtual control editor action.
@@ -427,12 +427,26 @@ pub fn render_diagnostics_overlay(
         8 * scale,
         format,
     );
-    draw_colored_border(frame, width as usize, panel, scale, brand::rgb(brand::BORDER), format);
+    draw_colored_border(
+        frame,
+        width as usize,
+        panel,
+        scale,
+        brand::rgb(brand::BORDER),
+        format,
+    );
     let accent = Rect {
         height: (3 * scale).min(panel.height),
         ..panel
     };
-    blend_rect(frame, width as usize, accent, brand::rgb(brand::ACCENT_RED), 255, format);
+    blend_rect(
+        frame,
+        width as usize,
+        accent,
+        brand::rgb(brand::ACCENT_RED),
+        255,
+        format,
+    );
     draw_text_for_format(
         frame,
         width as usize,
@@ -504,7 +518,14 @@ pub fn render_confirmation_overlay(
         width: width as usize,
         height: height as usize,
     };
-    blend_rect(frame, width as usize, canvas, brand::rgb(brand::SURFACE_BASE), 176, format);
+    blend_rect(
+        frame,
+        width as usize,
+        canvas,
+        brand::rgb(brand::SURFACE_BASE),
+        176,
+        format,
+    );
     draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
 
     let title = match action {
@@ -782,7 +803,14 @@ pub fn render_gamepad_mapping_editor(
         width: width as usize,
         height: height as usize,
     };
-    blend_rect(frame, width as usize, canvas, brand::rgb(brand::SURFACE_BASE), 205, format);
+    blend_rect(
+        frame,
+        width as usize,
+        canvas,
+        brand::rgb(brand::SURFACE_BASE),
+        205,
+        format,
+    );
     draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
     draw_text_for_format(
         frame,
@@ -1097,7 +1125,14 @@ pub fn render_gamepad_axis_editor(
         width: width as usize,
         height: height as usize,
     };
-    blend_rect(frame, width as usize, canvas, brand::rgb(brand::SURFACE_BASE), 205, format);
+    blend_rect(
+        frame,
+        width as usize,
+        canvas,
+        brand::rgb(brand::SURFACE_BASE),
+        205,
+        format,
+    );
     draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
     draw_text_for_format(
         frame,
@@ -1397,7 +1432,14 @@ fn render_overlay_with_action_count(
         width: width as usize,
         height: height as usize,
     };
-    blend_rect(frame, width as usize, canvas, brand::rgb(brand::SURFACE_BASE), 164, format);
+    blend_rect(
+        frame,
+        width as usize,
+        canvas,
+        brand::rgb(brand::SURFACE_BASE),
+        164,
+        format,
+    );
     draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
 
     let title_x = geometry.panel.x + 18 * scale;
@@ -1498,7 +1540,8 @@ fn menu_row_text_scale(
     let row_height = geometry.rows[0].height;
     let vertical_scale = (row_height / 7).max(1);
     let available_width = geometry.rows[0].width.saturating_sub(24 * base_scale);
-    let glyph_width = font::measure_text_with_weight(widest_label, 1, font::TextWeight::Semibold).max(1);
+    let glyph_width =
+        font::measure_text_with_weight(widest_label, 1, font::TextWeight::Semibold).max(1);
     let horizontal_scale = (available_width / glyph_width).max(1);
     (base_scale * 2)
         .min(vertical_scale)
@@ -1533,21 +1576,45 @@ fn draw_panel_chrome(
         9 * scale,
         format,
     );
-    blend_rounded_rect(frame, width, panel, brand::rgb(brand::BORDER), 255, 9 * scale, format);
+    blend_rounded_rect(
+        frame,
+        width,
+        panel,
+        brand::rgb(brand::BORDER),
+        255,
+        9 * scale,
+        format,
+    );
     let inner = Rect {
         x: panel.x.saturating_add(scale),
         y: panel.y.saturating_add(scale),
         width: panel.width.saturating_sub(2 * scale),
         height: panel.height.saturating_sub(2 * scale),
     };
-    blend_rounded_rect(frame, width, inner, brand::rgb(brand::SURFACE_PANEL), 250, 8 * scale, format);
+    blend_rounded_rect(
+        frame,
+        width,
+        inner,
+        brand::rgb(brand::SURFACE_PANEL),
+        250,
+        8 * scale,
+        format,
+    );
     let accent = Rect {
         x: panel.x.saturating_add(9 * scale),
         y: panel.y.saturating_add(scale),
         width: panel.width.saturating_sub(18 * scale),
         height: (3 * scale).min(panel.height),
     };
-    blend_rounded_rect(frame, width, accent, brand::rgb(brand::ACCENT_RED), 255, 2 * scale, format);
+    blend_rounded_rect(
+        frame,
+        width,
+        accent,
+        brand::rgb(brand::ACCENT_RED),
+        255,
+        2 * scale,
+        format,
+    );
 }
 
 /// Blends a rounded rectangle by drawing clipped row spans. The hit-test
@@ -1659,7 +1726,14 @@ fn draw_colored_border(
 }
 
 fn draw_border(frame: &mut [u8], width: usize, rect: Rect, thickness: usize, format: PixelFormat) {
-    draw_colored_border(frame, width, rect, thickness, brand::rgb(brand::BORDER), format);
+    draw_colored_border(
+        frame,
+        width,
+        rect,
+        thickness,
+        brand::rgb(brand::BORDER),
+        format,
+    );
 }
 
 fn blend_rect(
@@ -2154,11 +2228,17 @@ mod tests {
             + layout.panel.x
             + layout.panel.width / 2)
             * 4;
-        assert_eq!(&frame[accent_center..accent_center + 3], &brand::rgb(brand::ACCENT_RED));
+        assert_eq!(
+            &frame[accent_center..accent_center + 3],
+            &brand::rgb(brand::ACCENT_RED)
+        );
 
         let selected = layout.rows[0];
         let marker = ((selected.y + selected.height / 2) * width as usize + selected.x) * 4;
-        assert_eq!(&frame[marker..marker + 3], &brand::rgb(brand::ACCENT_RED_LIGHT));
+        assert_eq!(
+            &frame[marker..marker + 3],
+            &brand::rgb(brand::ACCENT_RED_LIGHT)
+        );
 
         let border = ((layout.panel.y + 12 * layout.scale) * width as usize + layout.panel.x) * 4;
         assert_eq!(&frame[border..border + 3], &brand::rgb(brand::BORDER));
