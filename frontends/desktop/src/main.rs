@@ -990,8 +990,7 @@ fn choose_library_folder() -> Result<Option<PathBuf>, String> {
         }
         let selector = |name: &'static [u8]| sel_registerName(name.as_ptr().cast());
         let message_send = objc_msgSend as *const ();
-        let send_id: unsafe extern "C" fn(Id, Selector) -> Id =
-            std::mem::transmute(message_send);
+        let send_id: unsafe extern "C" fn(Id, Selector) -> Id = std::mem::transmute(message_send);
         let _application = send_id(application_class, selector(b"sharedApplication\0"));
         let class = objc_getClass(b"NSOpenPanel\0".as_ptr().cast());
         if class.is_null() {
