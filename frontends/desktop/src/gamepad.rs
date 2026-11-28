@@ -114,7 +114,15 @@ impl GamepadManager {
                         .map(|(id, _)| id)
                 });
             let current = active
-                .map(|id| library_navigation_mask(|button| gilrs.gamepad(id).is_pressed(button)))
+                .map(|id| {
+                    let gamepad = gilrs.gamepad(id);
+                    let buttons = library_navigation_mask(|button| gamepad.is_pressed(button));
+                    let stick = library_stick_navigation_mask(
+                        gamepad.value(Axis::LeftStickX),
+                        -gamepad.value(Axis::LeftStickY),
+                    );
+                    buttons | stick
+                })
                 .unwrap_or(0);
             (active, current)
         };
@@ -391,6 +399,46 @@ fn newly_pressed_navigation(current: u8, previous: u8) -> u8 {
     current & !previous
 }
 
+/// Maps the left stick to one launcher direction. The vertical input is positive up.
+fn library_stick_navigation_mask(horizontal: f32, vertical: f32) -> u8 {
+    const THRESHOLD: f32 = 0.60;
+
+    let horizontal = if horizontal.is_finite() {
+        horizontal.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+    let vertical = if vertical.is_finite() {
+        vertical.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+    let horizontal_magnitude = horizontal.abs();
+    let vertical_magnitude = vertical.abs();
+
+    if horizontal_magnitude < THRESHOLD && vertical_magnitude < THRESHOLD {
+        return 0;
+    }
+
+    if horizontal_magnitude > vertical_magnitude {
+        if horizontal < 0.0 {
+            LIBRARY_NAV_LEFT
+        } else {
+            LIBRARY_NAV_RIGHT
+        }
+    } else if vertical_magnitude >= THRESHOLD {
+        if vertical > 0.0 {
+            LIBRARY_NAV_UP
+        } else {
+            LIBRARY_NAV_DOWN
+        }
+    } else if horizontal < 0.0 {
+        LIBRARY_NAV_LEFT
+    } else {
+        LIBRARY_NAV_RIGHT
+    }
+}
+
 fn library_navigation_mask(mut is_pressed: impl FnMut(Button) -> bool) -> u8 {
     let controls = [
         (Button::DPadUp, LIBRARY_NAV_UP),
@@ -466,6 +514,39 @@ mod tests {
             library_navigation_mask(|button| button == Button::Start),
             LIBRARY_NAV_CONFIRM
         );
+    }
+
+    #[test]
+    fn launcher_navigation_accepts_the_left_stick_with_a_deadzone() {
+        assert_eq!(library_stick_navigation_mask(0.59, 0.0), 0);
+        assert_eq!(
+            library_stick_navigation_mask(-0.60, 0.0),
+            LIBRARY_NAV_LEFT
+        );
+        assert_eq!(
+            library_stick_navigation_mask(0.65, 0.0),
+            LIBRARY_NAV_RIGHT
+        );
+        assert_eq!(
+            library_stick_navigation_mask(0.0, 0.61),
+            LIBRARY_NAV_UP
+        );
+        assert_eq!(
+            library_stick_navigation_mask(0.0, -0.61),
+            LIBRARY_NAV_DOWN
+        );
+
+        // Diagonal input follows its dominant axis instead of moving two
+        // focus groups at once.
+        assert_eq!(
+            library_stick_navigation_mask(0.8, 0.7),
+            LIBRARY_NAV_RIGHT
+        );
+        assert_eq!(
+            library_stick_navigation_mask(0.7, 0.8),
+            LIBRARY_NAV_UP
+        );
+        assert_eq!(library_stick_navigation_mask(f32::NAN, 0.0), 0);
     }
 
     #[test]
