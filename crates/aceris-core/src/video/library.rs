@@ -211,6 +211,8 @@ pub struct Library {
     status: Option<String>,
     page: LibraryPage,
     settings_section: SettingsSection,
+    settings_controls_focused: bool,
+    settings_control_selected: usize,
     home_focus: HomeFocus,
     home_action_selected: usize,
     home_navigation_selected: usize,
@@ -966,6 +968,8 @@ impl Library {
             status: None,
             page: LibraryPage::Home,
             settings_section: SettingsSection::Library,
+            settings_controls_focused: false,
+            settings_control_selected: 0,
             home_focus: HomeFocus::Games,
             home_action_selected: 0,
             home_navigation_selected: 0,
@@ -1967,6 +1971,135 @@ impl Library {
             self.settings_section = section;
             self.status = None;
         }
+        self.settings_controls_focused = false;
+        self.settings_control_selected = 0;
+    }
+
+    /// Returns focus to the Settings category row when a controller presses Back.
+    pub fn return_settings_focus_to_tabs(&mut self) -> bool {
+        if self.page == LibraryPage::Settings && self.settings_controls_focused {
+            self.settings_controls_focused = false;
+            return true;
+        }
+        false
+    }
+
+    fn settings_control_last_index(&self) -> usize {
+        match self.settings_section {
+            SettingsSection::Library => 3,
+            SettingsSection::Performance => 1,
+            SettingsSection::Controls if self.touch_keyboard_enabled => 3,
+            SettingsSection::Controls => 0,
+        }
+    }
+
+    fn move_settings_control_vertical(&mut self, delta: i32) {
+        if delta == 0 {
+            return;
+        }
+        if !self.settings_controls_focused {
+            if delta > 0 {
+                self.settings_controls_focused = true;
+                self.settings_control_selected = 0;
+            }
+            return;
+        }
+
+        match self.settings_section {
+            SettingsSection::Library => {
+                if delta > 0 {
+                    let next = self.settings_control_selected.saturating_add(2);
+                    if next <= self.settings_control_last_index() {
+                        self.settings_control_selected = next;
+                    }
+                } else if self.settings_control_selected >= 2 {
+                    self.settings_control_selected -= 2;
+                } else {
+                    self.settings_controls_focused = false;
+                }
+            }
+            SettingsSection::Performance => {
+                if delta < 0 {
+                    self.settings_controls_focused = false;
+                }
+            }
+            SettingsSection::Controls => {
+                if delta < 0 {
+                    if self.settings_control_selected == 0 {
+                        self.settings_controls_focused = false;
+                    } else {
+                        self.settings_control_selected = 0;
+                    }
+                } else if self.settings_control_selected == 0 && self.touch_keyboard_enabled {
+                    self.settings_control_selected = 1;
+                }
+            }
+        }
+    }
+
+    fn move_settings_control_horizontal(&mut self, delta: i32) {
+        if delta == 0 {
+            return;
+        }
+        match self.settings_section {
+            SettingsSection::Library => {
+                let row_start = self.settings_control_selected / 2 * 2;
+                let column = self.settings_control_selected % 2;
+                self.settings_control_selected = row_start
+                    + (column as i32 + delta.signum()).clamp(0, 1) as usize;
+            }
+            SettingsSection::Performance => {
+                self.settings_control_selected =
+                    (self.settings_control_selected as i32 + delta.signum()).clamp(0, 1) as usize;
+            }
+            SettingsSection::Controls if self.settings_control_selected > 0 => {
+                self.settings_control_selected = (self.settings_control_selected as i32
+                    + delta.signum())
+                .clamp(1, self.settings_control_last_index() as i32)
+                    as usize;
+            }
+            SettingsSection::Controls => {}
+        }
+    }
+
+    /// Activates the focused Settings category or its currently focused option.
+    pub fn activate_settings_selection(&mut self, _width: u32, _height: u32) -> ClickResult {
+        if self.page != LibraryPage::Settings {
+            return ClickResult::Ignored;
+        }
+        if !self.settings_controls_focused {
+            self.settings_controls_focused = true;
+            self.settings_control_selected = 0;
+            return ClickResult::Ignored;
+        }
+
+        match (self.settings_section, self.settings_control_selected) {
+            (SettingsSection::Library, 0) => self.request_folder_picker(),
+            (SettingsSection::Library, 1) => self.toggle_recursive_from_settings(),
+            (SettingsSection::Library, 2) => self.toggle_view_mode(),
+            (SettingsSection::Library, 3) => self.toggle_sort_order(),
+            (SettingsSection::Performance, 0) => self.toggle_performance_mode_from_settings(),
+            (SettingsSection::Performance, 1) => self.cycle_gamepad_deadzone_from_settings(),
+            (SettingsSection::Controls, 0) if self.touch_keyboard_enabled => {
+                self.toggle_virtual_controls_from_settings()
+            }
+            (SettingsSection::Controls, 1) if self.touch_keyboard_enabled => {
+                self.cycle_virtual_controls_opacity_from_settings()
+            }
+            (SettingsSection::Controls, 2) if self.touch_keyboard_enabled => {
+                self.cycle_virtual_controls_size_from_settings()
+            }
+            (SettingsSection::Controls, 3) if self.touch_keyboard_enabled => {
+                self.cycle_virtual_controls_preset_from_settings()
+            }
+            _ => {}
+        }
+        ClickResult::Ignored
+    }
+
+    fn focus_settings_control(&mut self, index: usize) {
+        self.settings_controls_focused = true;
+        self.settings_control_selected = index.min(self.settings_control_last_index());
     }
 
     /// Changes the library section and resets its independent selection.
@@ -1978,6 +2111,10 @@ impl Library {
             self.page = page;
             self.selected = 0;
             self.first_visible = 0;
+            if page == LibraryPage::Settings {
+                self.settings_controls_focused = false;
+                self.settings_control_selected = 0;
+            }
             self.home_focus = HomeFocus::Games;
             self.home_action_selected = 0;
             self.home_navigation_selected = 0;
@@ -2110,6 +2247,10 @@ impl Library {
         };
         if self.page == LibraryPage::Home {
             self.move_home_focus_vertical(delta, portrait);
+            return;
+        }
+        if self.page == LibraryPage::Settings {
+            self.move_settings_control_vertical(delta);
             return;
         }
         if portrait {
@@ -2309,7 +2450,11 @@ impl Library {
             return;
         };
         if self.page == LibraryPage::Settings {
-            self.select_settings_section(self.settings_section.move_by(delta));
+            if self.settings_controls_focused {
+                self.move_settings_control_horizontal(delta);
+            } else {
+                self.select_settings_section(self.settings_section.move_by(delta));
+            }
             return;
         }
         if self.page == LibraryPage::Home {
@@ -2732,14 +2877,18 @@ impl Library {
                         }
                         if (344.0..388.0).contains(&y) {
                             if (44.0..366.0).contains(&x) {
+                                self.focus_settings_control(0);
                                 self.request_folder_picker();
                             } else if (382.0..704.0).contains(&x) {
+                                self.focus_settings_control(1);
                                 self.toggle_recursive_from_settings();
                             }
                         } else if (420.0..464.0).contains(&y) {
                             if (44.0..366.0).contains(&x) {
+                                self.focus_settings_control(2);
                                 self.toggle_view_mode();
                             } else if (382.0..704.0).contains(&x) {
+                                self.focus_settings_control(3);
                                 self.toggle_sort_order();
                             }
                         }
@@ -2747,8 +2896,10 @@ impl Library {
                     SettingsSection::Performance => {
                         if (242.0..350.0).contains(&y) {
                             if (48.0..354.0).contains(&x) {
+                                self.focus_settings_control(0);
                                 self.toggle_performance_mode_from_settings();
                             } else if (390.0..696.0).contains(&x) {
+                                self.focus_settings_control(1);
                                 self.cycle_gamepad_deadzone_from_settings();
                             }
                         }
@@ -2758,13 +2909,17 @@ impl Library {
                             && (246.0..324.0).contains(&y)
                             && (48.0..696.0).contains(&x)
                         {
+                            self.focus_settings_control(0);
                             self.toggle_virtual_controls_from_settings();
                         } else if self.touch_keyboard_enabled && (338.0..430.0).contains(&y) {
                             if (48.0..258.0).contains(&x) {
+                                self.focus_settings_control(1);
                                 self.cycle_virtual_controls_opacity_from_settings();
                             } else if (270.0..480.0).contains(&x) {
+                                self.focus_settings_control(2);
                                 self.cycle_virtual_controls_size_from_settings();
                             } else if (492.0..704.0).contains(&x) {
+                                self.focus_settings_control(3);
                                 self.cycle_virtual_controls_preset_from_settings();
                             }
                         }
@@ -3513,11 +3668,23 @@ impl Library {
                         324.0,
                         44.0,
                         scale,
-                        if self.scan_config.options.recursive {
+                        if self.settings_controls_focused && self.settings_control_selected == 1 {
+                            brand::SURFACE_SELECTED
+                        } else if self.scan_config.options.recursive {
                             brand::SUCCESS_SURFACE
                         } else {
                             brand::SURFACE_CARD
                         },
+                    );
+                    responsive_settings_focus_marker(
+                        frame,
+                        width,
+                        height,
+                        382.0,
+                        344.0,
+                        322.0,
+                        scale,
+                        self.settings_controls_focused && self.settings_control_selected == 1,
                     );
                     responsive_text_centered(
                         frame,
@@ -3745,11 +3912,23 @@ impl Library {
                             324.0,
                             56.0,
                             scale,
-                            if self.virtual_controls_visible {
+                            if self.settings_controls_focused && self.settings_control_selected == 0 {
+                                brand::SURFACE_SELECTED
+                            } else if self.virtual_controls_visible {
                                 brand::SUCCESS_SURFACE
                             } else {
                                 brand::SURFACE_CARD
                             },
+                        );
+                        responsive_settings_focus_marker(
+                            frame,
+                            width,
+                            height,
+                            48.0,
+                            244.0,
+                            644.0,
+                            scale,
+                            self.settings_controls_focused && self.settings_control_selected == 0,
                         );
                         responsive_text_centered(
                             frame,
@@ -5061,7 +5240,21 @@ impl Library {
                         322.0,
                         44.0,
                         scale,
-                        brand::SURFACE_CARD,
+                        if self.settings_controls_focused && self.settings_control_selected == 0 {
+                            brand::SURFACE_SELECTED
+                        } else {
+                            brand::SURFACE_CARD
+                        },
+                    );
+                    responsive_settings_focus_marker(
+                        frame,
+                        width,
+                        height,
+                        44.0,
+                        344.0,
+                        322.0,
+                        scale,
+                        self.settings_controls_focused && self.settings_control_selected == 0,
                     );
                     responsive_text_centered(
                         frame,
@@ -5143,7 +5336,21 @@ impl Library {
                             322.0,
                             42.0,
                             scale,
-                            brand::SURFACE_CARD,
+                            if self.settings_controls_focused && self.settings_control_selected == 2 {
+                                brand::SURFACE_SELECTED
+                            } else {
+                                brand::SURFACE_CARD
+                            },
+                        );
+                        responsive_settings_focus_marker(
+                            frame,
+                            width,
+                            height,
+                            44.0,
+                            420.0,
+                            322.0,
+                            scale,
+                            self.settings_controls_focused && self.settings_control_selected == 2,
                         );
                         responsive_text_centered(
                             frame,
@@ -5168,7 +5375,21 @@ impl Library {
                             322.0,
                             42.0,
                             scale,
-                            brand::SURFACE_CARD,
+                            if self.settings_controls_focused && self.settings_control_selected == 3 {
+                                brand::SURFACE_SELECTED
+                            } else {
+                                brand::SURFACE_CARD
+                            },
+                        );
+                        responsive_settings_focus_marker(
+                            frame,
+                            width,
+                            height,
+                            382.0,
+                            420.0,
+                            322.0,
+                            scale,
+                            self.settings_controls_focused && self.settings_control_selected == 3,
                         );
                         responsive_text_centered(
                             frame,
@@ -5206,11 +5427,23 @@ impl Library {
                         306.0,
                         118.0,
                         scale,
-                        if self.performance_mode {
+                        if self.settings_controls_focused && self.settings_control_selected == 0 {
+                            brand::SURFACE_SELECTED
+                        } else if self.performance_mode {
                             brand::SUCCESS_SURFACE
                         } else {
                             brand::SURFACE_CARD
                         },
+                    );
+                    responsive_settings_focus_marker(
+                        frame,
+                        width,
+                        height,
+                        48.0,
+                        244.0,
+                        306.0,
+                        scale,
+                        self.settings_controls_focused && self.settings_control_selected == 0,
                     );
                     responsive_text_centered(
                         frame,
@@ -5255,7 +5488,21 @@ impl Library {
                         306.0,
                         118.0,
                         scale,
-                        brand::SURFACE_CARD,
+                        if self.settings_controls_focused && self.settings_control_selected == 1 {
+                            brand::SURFACE_SELECTED
+                        } else {
+                            brand::SURFACE_CARD
+                        },
+                    );
+                    responsive_settings_focus_marker(
+                        frame,
+                        width,
+                        height,
+                        390.0,
+                        244.0,
+                        306.0,
+                        scale,
+                        self.settings_controls_focused && self.settings_control_selected == 1,
                     );
                     responsive_text_centered(
                         frame,
@@ -5346,7 +5593,10 @@ impl Library {
                                 self.virtual_controls_preset.label().to_string(),
                             ),
                         ];
-                        for (x, label, value) in control_options {
+                        for (slot, (x, label, value)) in
+                            control_options.into_iter().enumerate()
+                        {
+                            let control_index = slot + 1;
                             responsive_panel(
                                 frame,
                                 width,
@@ -5356,7 +5606,24 @@ impl Library {
                                 210.0,
                                 92.0,
                                 scale,
-                                brand::SURFACE_CARD,
+                                if self.settings_controls_focused
+                                    && self.settings_control_selected == control_index
+                                {
+                                    brand::SURFACE_SELECTED
+                                } else {
+                                    brand::SURFACE_CARD
+                                },
+                            );
+                            responsive_settings_focus_marker(
+                                frame,
+                                width,
+                                height,
+                                x,
+                                338.0,
+                                210.0,
+                                scale,
+                                self.settings_controls_focused
+                                    && self.settings_control_selected == control_index,
                             );
                             responsive_text_centered(
                                 frame,
@@ -5389,7 +5656,21 @@ impl Library {
                             644.0,
                             112.0,
                             scale,
-                            brand::SURFACE_CARD,
+                            if self.settings_controls_focused && self.settings_control_selected == 0 {
+                                brand::SURFACE_SELECTED
+                            } else {
+                                brand::SURFACE_CARD
+                            },
+                        );
+                        responsive_settings_focus_marker(
+                            frame,
+                            width,
+                            height,
+                            48.0,
+                            244.0,
+                            644.0,
+                            scale,
+                            self.settings_controls_focused && self.settings_control_selected == 0,
                         );
                         responsive_text_centered(
                             frame,
@@ -7311,6 +7592,31 @@ fn responsive_panel(
     );
 }
 
+fn responsive_settings_focus_marker(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    x: f32,
+    y: f32,
+    rect_width: f32,
+    scale: f32,
+    focused: bool,
+) {
+    if focused {
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            x + 8.0,
+            y + 2.0,
+            (rect_width - 16.0).max(0.0),
+            2.0,
+            scale,
+            brand::ACCENT_RED_LIGHT,
+        );
+    }
+}
+
 // Text coordinates and scale are explicit so all frontend layouts use the same renderer.
 #[allow(clippy::too_many_arguments)]
 fn responsive_text(
@@ -7978,6 +8284,63 @@ mod tests {
             ClickResult::Selected
         );
         assert_eq!(library.selected_entry().unwrap().title, "Game 1");
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn settings_controller_focus_navigates_and_activates_options() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-settings-focus-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mut library = Library::new(Vec::new(), dir.display().to_string());
+        library.select_page(LibraryPage::Settings);
+
+        // Enter Library settings, move across the first row, then down to sorting.
+        library.move_selection_responsive(1, 1000, 600);
+        assert!(library.settings_controls_focused);
+        library.move_selection_horizontal_responsive(1, 1000, 600);
+        assert_eq!(library.settings_control_selected, 1);
+        library.activate_settings_selection(1000, 600);
+        assert!(library.scan_config.options.recursive);
+
+        library.move_selection_responsive(1, 1000, 600);
+        assert_eq!(library.settings_control_selected, 3);
+        library.move_selection_horizontal_responsive(-1, 1000, 600);
+        assert_eq!(library.settings_control_selected, 2);
+        library.activate_settings_selection(1000, 600);
+        assert_eq!(library.view_mode, LibraryViewMode::List);
+
+        // Return to the category row, enter Performance and activate the
+        // physical-controller deadzone option.
+        assert!(library.return_settings_focus_to_tabs());
+        library.move_selection_horizontal_responsive(1, 1000, 600);
+        assert_eq!(library.settings_section, SettingsSection::Performance);
+        library.move_selection_responsive(1, 1000, 600);
+        library.move_selection_horizontal_responsive(1, 1000, 600);
+        let previous_deadzone = library.gamepad_deadzone_percent;
+        library.activate_settings_selection(1000, 600);
+        assert_ne!(library.gamepad_deadzone_percent, previous_deadzone);
+
+        // Controls settings expose the main toggle and a second row of options.
+        assert!(library.return_settings_focus_to_tabs());
+        library.move_selection_horizontal_responsive(1, 1000, 600);
+        assert_eq!(library.settings_section, SettingsSection::Controls);
+        library.touch_keyboard_enabled = true;
+        library.move_selection_responsive(1, 1000, 600);
+        let previous_visible = library.virtual_controls_visible;
+        library.activate_settings_selection(1000, 600);
+        assert_ne!(library.virtual_controls_visible, previous_visible);
+        library.move_selection_responsive(1, 1000, 600);
+        assert_eq!(library.settings_control_selected, 1);
+        library.move_selection_horizontal_responsive(1, 1000, 600);
+        assert_eq!(library.settings_control_selected, 2);
+        let previous_size = library.virtual_controls_size_percent;
+        library.activate_settings_selection(1000, 600);
+        assert_ne!(library.virtual_controls_size_percent, previous_size);
 
         fs::remove_dir_all(dir).unwrap();
     }

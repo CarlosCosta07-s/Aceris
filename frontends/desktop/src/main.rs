@@ -613,7 +613,9 @@ fn browse_library(
                 window::WindowEvent::CloseRequested => return Ok(None),
                 window::WindowEvent::Redraw => {}
                 window::WindowEvent::Key(window::Key::Escape) => {
-                    if library.search_is_focused() {
+                    if library.return_settings_focus_to_tabs() {
+                        // Keep the library open and return focus to the category row.
+                    } else if library.search_is_focused() {
                         library.cancel_text_entry();
                     } else {
                         return Ok(None);
@@ -663,7 +665,10 @@ fn browse_library(
                         if library.search_is_focused() {
                             library.finish_search();
                         } else {
-                            library.reload();
+                            library.activate_settings_selection(
+                                window::CANVAS_WIDTH as u32,
+                                window::CANVAS_HEIGHT as u32,
+                            );
                         }
                     } else {
                         library.finish_search();
@@ -732,6 +737,11 @@ fn browse_library(
                 window::CANVAS_HEIGHT as u32,
             );
         }
+        if navigation & LIBRARY_NAV_CANCEL != 0
+            && library.page() == aceris_core::video::library::LibraryPage::Settings
+        {
+            library.return_settings_focus_to_tabs();
+        }
         if navigation & LIBRARY_NAV_CONFIRM != 0 {
             let activate = match library.page() {
                 aceris_core::video::library::LibraryPage::Home => {
@@ -741,7 +751,10 @@ fn browse_library(
                     ) == ClickResult::Activated
                 }
                 aceris_core::video::library::LibraryPage::Settings => {
-                    library.reload();
+                    library.activate_settings_selection(
+                        window::CANVAS_WIDTH as u32,
+                        window::CANVAS_HEIGHT as u32,
+                    );
                     false
                 }
                 _ => true,

@@ -598,8 +598,8 @@ impl App {
                     self.library
                         .move_selection_horizontal_responsive(1, self.width, self.height)
                 }
-                pad::A | pad::START => {
-                    if self.library.page() == library::LibraryPage::Home {
+                pad::A | pad::START => match self.library.page() {
+                    library::LibraryPage::Home => {
                         if self
                             .library
                             .activate_home_selection(self.width, self.height)
@@ -607,9 +607,15 @@ impl App {
                         {
                             self.launch_selected();
                         }
-                    } else {
-                        self.launch_selected();
                     }
+                    library::LibraryPage::Settings => {
+                        self.library
+                            .activate_settings_selection(self.width, self.height);
+                    }
+                    _ => self.launch_selected(),
+                },
+                pad::B if self.library.page() == library::LibraryPage::Settings => {
+                    self.library.return_settings_focus_to_tabs();
                 }
                 _ => {}
             },
