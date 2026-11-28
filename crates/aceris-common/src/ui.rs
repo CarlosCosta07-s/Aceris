@@ -23,10 +23,6 @@ pub mod shape {
     pub const PANEL_SHADOW_X: f32 = 2.0;
     pub const PANEL_SHADOW_Y: f32 = 3.0;
     pub const PANEL_CONTENT_INSET: f32 = 1.0;
-    pub const PANEL_HIGHLIGHT_INSET_X: f32 = 7.0;
-    pub const PANEL_HIGHLIGHT_Y: f32 = 2.0;
-    pub const PANEL_HIGHLIGHT_HEIGHT: f32 = 1.0;
-    pub const PANEL_BOTTOM_INSET: f32 = 2.0;
 }
 
 /// Semantic text roles. Factors preserve the current readable size hierarchy
