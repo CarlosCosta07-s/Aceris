@@ -829,28 +829,34 @@ fn emulate(
                     gamepad_mapping_selected = gamepad_mapping_selected.saturating_sub(1);
                 }
                 window::WindowEvent::Key(window::Key::Down) if gamepad_mapping_editor_open => {
-                    gamepad_mapping_selected =
-                        (gamepad_mapping_selected + 1).min(aceris_core::input_mapping::GamepadControl::COUNT - 1);
+                    gamepad_mapping_selected = (gamepad_mapping_selected + 1)
+                        .min(aceris_core::input_mapping::GamepadControl::COUNT - 1);
                 }
                 window::WindowEvent::Key(window::Key::Left) if gamepad_mapping_editor_open => {
                     let mut mapping = *gamepad.mapping();
-                    let control = aceris_core::input_mapping::GamepadControl::ALL[gamepad_mapping_selected];
+                    let control =
+                        aceris_core::input_mapping::GamepadControl::ALL[gamepad_mapping_selected];
                     mapping.cycle_target(control, -1);
-                    if let Err(error) = gamepad.save_mapping_for_editor(mapping, gamepad_mapping_game_scope) {
+                    if let Err(error) =
+                        gamepad.save_mapping_for_editor(mapping, gamepad_mapping_game_scope)
+                    {
                         eprintln!("could not save gamepad mapping: {error}");
                     }
                 }
                 window::WindowEvent::Key(window::Key::Right) if gamepad_mapping_editor_open => {
                     let mut mapping = *gamepad.mapping();
-                    let control = aceris_core::input_mapping::GamepadControl::ALL[gamepad_mapping_selected];
+                    let control =
+                        aceris_core::input_mapping::GamepadControl::ALL[gamepad_mapping_selected];
                     mapping.cycle_target(control, 1);
-                    if let Err(error) = gamepad.save_mapping_for_editor(mapping, gamepad_mapping_game_scope) {
+                    if let Err(error) =
+                        gamepad.save_mapping_for_editor(mapping, gamepad_mapping_game_scope)
+                    {
                         eprintln!("could not save gamepad mapping: {error}");
                     }
                 }
                 window::WindowEvent::Key(window::Key::Enter) if gamepad_mapping_editor_open => {
-                    gamepad_mapping_game_scope = !gamepad_mapping_game_scope
-                        && system.game_identity().is_some();
+                    gamepad_mapping_game_scope =
+                        !gamepad_mapping_game_scope && system.game_identity().is_some();
                     let mapping = if gamepad_mapping_game_scope {
                         gamepad.load_game_mapping_for_editor()
                     } else {
@@ -888,96 +894,104 @@ fn emulate(
                 window::WindowEvent::Key(window::Key::Down) if menu_open => {
                     menu_selected = (menu_selected + 1).min(quick_menu::DESKTOP_ACTION_COUNT - 1);
                 }
-                window::WindowEvent::Key(window::Key::Enter) if menu_open && !gamepad_mapping_editor_open => match menu_selected {
-                    0 => {
-                        menu_open = false;
-                        keyboard.reset(system.input_mut());
-                        if let Some(performance) = performance.as_mut() {
-                            performance.reset_after_pause();
+                window::WindowEvent::Key(window::Key::Enter)
+                    if menu_open && !gamepad_mapping_editor_open =>
+                {
+                    match menu_selected {
+                        0 => {
+                            menu_open = false;
+                            keyboard.reset(system.input_mut());
+                            if let Some(performance) = performance.as_mut() {
+                                performance.reset_after_pause();
+                            }
                         }
-                    }
-                    1 => {
-                        pending_confirmation = Some(quick_menu::ConfirmationAction::Restart);
-                        confirmation_selected = 0;
-                    }
-                    2 => {
-                        pending_confirmation = Some(quick_menu::ConfirmationAction::BackToLibrary);
-                        confirmation_selected = 0;
-                    }
-                    3 => {
-                        layout_profile.mode = layout_profile.mode.next();
-                        let (width, height) = screen_layout_canvas_size(layout_profile.mode);
-                        window
-                            .resize(width as usize * scale, height as usize * scale)
-                            .map_err(|error| {
-                                format!("could not resize the gameplay layout: {error}")
-                            })?;
-                        layout_preferences.set_profile_for_game(
-                            system.game_identity(),
-                            window::GAME_CANVAS_WIDTH as u32,
-                            window::GAME_CANVAS_HEIGHT as u32,
-                            layout_profile,
-                        );
-                        if let Err(error) = layout_preferences.save(settings_directory) {
-                            eprintln!("could not save screen layout preferences: {error}");
+                        1 => {
+                            pending_confirmation = Some(quick_menu::ConfirmationAction::Restart);
+                            confirmation_selected = 0;
                         }
-                    }
-                    4 => {
-                        layout_profile.swap_screens = !layout_profile.swap_screens;
-                        layout_preferences.set_profile_for_game(
-                            system.game_identity(),
-                            window::GAME_CANVAS_WIDTH as u32,
-                            window::GAME_CANVAS_HEIGHT as u32,
-                            layout_profile,
-                        );
-                        if let Err(error) = layout_preferences.save(settings_directory) {
-                            eprintln!("could not save screen layout preferences: {error}");
+                        2 => {
+                            pending_confirmation =
+                                Some(quick_menu::ConfirmationAction::BackToLibrary);
+                            confirmation_selected = 0;
                         }
-                    }
-                    5 => {
-                        if let Some(identity) = system.game_identity() {
-                            if layout_preferences.reset_game_overrides(identity) {
-                                layout_profile = layout_preferences.profile_for_surface(
-                                    window::GAME_CANVAS_WIDTH as u32,
-                                    window::GAME_CANVAS_HEIGHT as u32,
-                                );
-                                let (width, height) =
-                                    screen_layout_canvas_size(layout_profile.mode);
-                                window
-                                    .resize(width as usize * scale, height as usize * scale)
-                                    .map_err(|error| {
-                                        format!(
-                                            "could not restore the global gameplay layout: {error}"
-                                        )
-                                    })?;
-                                if let Err(error) = layout_preferences.save(settings_directory) {
-                                    eprintln!("could not save screen layout preferences: {error}");
+                        3 => {
+                            layout_profile.mode = layout_profile.mode.next();
+                            let (width, height) = screen_layout_canvas_size(layout_profile.mode);
+                            window
+                                .resize(width as usize * scale, height as usize * scale)
+                                .map_err(|error| {
+                                    format!("could not resize the gameplay layout: {error}")
+                                })?;
+                            layout_preferences.set_profile_for_game(
+                                system.game_identity(),
+                                window::GAME_CANVAS_WIDTH as u32,
+                                window::GAME_CANVAS_HEIGHT as u32,
+                                layout_profile,
+                            );
+                            if let Err(error) = layout_preferences.save(settings_directory) {
+                                eprintln!("could not save screen layout preferences: {error}");
+                            }
+                        }
+                        4 => {
+                            layout_profile.swap_screens = !layout_profile.swap_screens;
+                            layout_preferences.set_profile_for_game(
+                                system.game_identity(),
+                                window::GAME_CANVAS_WIDTH as u32,
+                                window::GAME_CANVAS_HEIGHT as u32,
+                                layout_profile,
+                            );
+                            if let Err(error) = layout_preferences.save(settings_directory) {
+                                eprintln!("could not save screen layout preferences: {error}");
+                            }
+                        }
+                        5 => {
+                            if let Some(identity) = system.game_identity() {
+                                if layout_preferences.reset_game_overrides(identity) {
+                                    layout_profile = layout_preferences.profile_for_surface(
+                                        window::GAME_CANVAS_WIDTH as u32,
+                                        window::GAME_CANVAS_HEIGHT as u32,
+                                    );
+                                    let (width, height) =
+                                        screen_layout_canvas_size(layout_profile.mode);
+                                    window
+                                        .resize(width as usize * scale, height as usize * scale)
+                                        .map_err(|error| {
+                                            format!(
+                                                "could not restore the global gameplay layout: {error}"
+                                            )
+                                        })?;
+                                    if let Err(error) = layout_preferences.save(settings_directory)
+                                    {
+                                        eprintln!(
+                                            "could not save screen layout preferences: {error}"
+                                        );
+                                    }
                                 }
                             }
                         }
-                    }
-                    6 => capture_screenshot = true,
-                    7 => {
-                        diagnostics_visible = !diagnostics_visible;
-                        menu_open = false;
-                        keyboard.reset(system.input_mut());
-                        if let Some(performance) = performance.as_mut() {
-                            performance.reset_after_pause();
+                        6 => capture_screenshot = true,
+                        7 => {
+                            diagnostics_visible = !diagnostics_visible;
+                            menu_open = false;
+                            keyboard.reset(system.input_mut());
+                            if let Some(performance) = performance.as_mut() {
+                                performance.reset_after_pause();
+                            }
                         }
+                        8 => {
+                            gamepad_mapping_editor_open = true;
+                            gamepad_mapping_selected = 0;
+                            gamepad_mapping_game_scope = system.game_identity().is_some();
+                            let mapping = if gamepad_mapping_game_scope {
+                                gamepad.load_game_mapping_for_editor()
+                            } else {
+                                gamepad.load_global_mapping_for_editor()
+                            };
+                            gamepad.set_mapping_for_editor(mapping);
+                        }
+                        _ => {}
                     }
-                    8 => {
-                        gamepad_mapping_editor_open = true;
-                        gamepad_mapping_selected = 0;
-                        gamepad_mapping_game_scope = system.game_identity().is_some();
-                        let mapping = if gamepad_mapping_game_scope {
-                            gamepad.load_game_mapping_for_editor()
-                        } else {
-                            gamepad.load_global_mapping_for_editor()
-                        };
-                        gamepad.set_mapping_for_editor(mapping);
-                    }
-                    _ => {}
-                },
+                }
                 window::WindowEvent::Click { x, y } if pending_confirmation.is_some() => {
                     let (canvas_width, canvas_height) =
                         screen_layout_canvas_size(layout_profile.mode);
@@ -1000,9 +1014,7 @@ fn emulate(
                         }
                     }
                 }
-                window::WindowEvent::Click { x, y }
-                    if menu_open && gamepad_mapping_editor_open =>
-                {
+                window::WindowEvent::Click { x, y } if menu_open && gamepad_mapping_editor_open => {
                     let (canvas_width, canvas_height) =
                         screen_layout_canvas_size(layout_profile.mode);
                     match quick_menu::hit_test_gamepad_mapping_editor(
@@ -1012,8 +1024,8 @@ fn emulate(
                         y,
                     ) {
                         Some(quick_menu::GamepadMappingEditorHit::Scope) => {
-                            gamepad_mapping_game_scope = !gamepad_mapping_game_scope
-                                && system.game_identity().is_some();
+                            gamepad_mapping_game_scope =
+                                !gamepad_mapping_game_scope && system.game_identity().is_some();
                             let mapping = if gamepad_mapping_game_scope {
                                 gamepad.load_game_mapping_for_editor()
                             } else {
@@ -1261,21 +1273,19 @@ fn emulate(
                     action,
                     confirmation_selected,
                 ),
-                None if gamepad_mapping_editor_open => {
-                    quick_menu::render_gamepad_mapping_editor(
-                        &mut frame,
-                        frame_width as u32,
-                        frame_height as u32,
-                        MenuPixelFormat::Bgrx8,
-                        gamepad.mapping(),
-                        gamepad_mapping_selected,
-                        if gamepad_mapping_game_scope {
-                            "ESCOPO: JOGO"
-                        } else {
-                            "ESCOPO: GLOBAL"
-                        },
-                    )
-                }
+                None if gamepad_mapping_editor_open => quick_menu::render_gamepad_mapping_editor(
+                    &mut frame,
+                    frame_width as u32,
+                    frame_height as u32,
+                    MenuPixelFormat::Bgrx8,
+                    gamepad.mapping(),
+                    gamepad_mapping_selected,
+                    if gamepad_mapping_game_scope {
+                        "ESCOPO: JOGO"
+                    } else {
+                        "ESCOPO: GLOBAL"
+                    },
+                ),
                 None => quick_menu::render_desktop_overlay_with_profile(
                     &mut frame,
                     frame_width as u32,

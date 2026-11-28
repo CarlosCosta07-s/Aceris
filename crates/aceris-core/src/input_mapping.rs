@@ -117,9 +117,20 @@ pub enum PadButton {
 
 impl PadButton {
     pub const ALL: [Self; 14] = [
-        Self::A, Self::B, Self::X, Self::Y, Self::Select, Self::Start,
-        Self::Right, Self::Left, Self::Up, Self::Down, Self::R, Self::L,
-        Self::ZL, Self::ZR,
+        Self::A,
+        Self::B,
+        Self::X,
+        Self::Y,
+        Self::Select,
+        Self::Start,
+        Self::Right,
+        Self::Left,
+        Self::Up,
+        Self::Down,
+        Self::R,
+        Self::L,
+        Self::ZL,
+        Self::ZR,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -245,13 +256,20 @@ impl GamepadMapping {
         }
         let current = self
             .target(control)
-            .and_then(|target| PadButton::ALL.iter().position(|candidate| *candidate == target))
+            .and_then(|target| {
+                PadButton::ALL
+                    .iter()
+                    .position(|candidate| *candidate == target)
+            })
             .map(|index| index + 1)
             .unwrap_or(0);
         let count = PadButton::ALL.len() + 1;
-        let next = (current as isize + isize::from(direction.signum()))
-            .rem_euclid(count as isize) as usize;
-        self.set_target(control, next.checked_sub(1).map(|index| PadButton::ALL[index]));
+        let next = (current as isize + isize::from(direction.signum())).rem_euclid(count as isize)
+            as usize;
+        self.set_target(
+            control,
+            next.checked_sub(1).map(|index| PadButton::ALL[index]),
+        );
     }
 
     pub fn mask_for_held_controls(&self, held_controls: u16) -> u32 {
@@ -335,10 +353,7 @@ impl GamepadMapping {
     }
 
     /// Loads a title-specific profile, falling back to the global profile.
-    pub fn load_for_game_or_global(
-        settings_directory: &Path,
-        identity: GameIdentity,
-    ) -> Self {
+    pub fn load_for_game_or_global(settings_directory: &Path, identity: GameIdentity) -> Self {
         load_profile(&game_profile_path(settings_directory, identity))
             .unwrap_or_else(|| Self::load_global(settings_directory))
     }

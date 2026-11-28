@@ -569,7 +569,6 @@ pub fn render_confirmation_overlay(
     true
 }
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GamepadMappingEditorHit {
     Scope,
@@ -627,7 +626,10 @@ fn gamepad_mapping_editor_geometry(
     });
     let header_button_width = (160 * scale).min(panel.width / 2);
     let scope = Rect {
-        x: panel.x + panel.width.saturating_sub(header_button_width + horizontal_padding),
+        x: panel.x
+            + panel
+                .width
+                .saturating_sub(header_button_width + horizontal_padding),
         y: panel.y + 7 * scale,
         width: header_button_width,
         height: 20 * scale,
@@ -641,7 +643,10 @@ fn gamepad_mapping_editor_geometry(
         height: footer_button_height,
     };
     let close = Rect {
-        x: panel.x + panel.width.saturating_sub(horizontal_padding + footer_button_width),
+        x: panel.x
+            + panel
+                .width
+                .saturating_sub(horizontal_padding + footer_button_width),
         y: footer_y + 2 * scale,
         width: footer_button_width,
         height: footer_button_height,
@@ -735,7 +740,14 @@ pub fn render_gamepad_mapping_editor(
         [245, 238, 248],
         format,
     );
-    blend_rect(frame, width as usize, geometry.scope, [54, 36, 70], 245, format);
+    blend_rect(
+        frame,
+        width as usize,
+        geometry.scope,
+        [54, 36, 70],
+        245,
+        format,
+    );
     draw_text_for_format(
         frame,
         width as usize,
@@ -754,7 +766,11 @@ pub fn render_gamepad_mapping_editor(
             frame,
             width as usize,
             *row,
-            if is_selected { [105, 28, 62] } else { [38, 29, 52] },
+            if is_selected {
+                [105, 28, 62]
+            } else {
+                [38, 29, 52]
+            },
             if is_selected { 248 } else { 226 },
             format,
         );
@@ -1027,6 +1043,7 @@ fn render_overlay_with_action_count(
         let label = match index {
             6 => control_reset_label,
             7 => control_scope_label,
+            8 if action_count == DESKTOP_ACTION_COUNT => "MAPEAR CONTROLE",
             _ => labels[index],
         };
         draw_text_for_format(
@@ -1057,6 +1074,7 @@ fn menu_row_text_scale(
         .map(|index| match index {
             6 => control_reset_label,
             7 => control_scope_label,
+            8 if action_count == DESKTOP_ACTION_COUNT => "MAPEAR CONTROLE",
             _ => labels[index],
         })
         .map(|label| label.chars().count())
@@ -1241,6 +1259,69 @@ mod tests {
                 assert!(row.y + row.height <= height as usize);
             }
             assert_eq!(hit_test(width, height, 0, 0), None);
+        }
+    }
+
+    #[test]
+    fn mapping_editor_hit_testing_matches_rendered_rows_and_footer_actions() {
+        for (width, height) in [(736u32, 240u32), (400, 800), (240, 320)] {
+            let geometry = gamepad_mapping_editor_geometry(width, height).unwrap();
+            let mut frame = vec![0; width as usize * height as usize * 4];
+            assert!(render_gamepad_mapping_editor(
+                &mut frame,
+                width,
+                height,
+                PixelFormat::Rgba8,
+                &GamepadMapping::default(),
+                0,
+                "ESCOPO: GLOBAL",
+            ));
+            let first = geometry.rows[0];
+            assert_eq!(
+                hit_test_gamepad_mapping_editor(
+                    width,
+                    height,
+                    (first.x + 2) as i32,
+                    (first.y + first.height / 2) as i32,
+                ),
+                Some(GamepadMappingEditorHit::Control(0))
+            );
+            assert_eq!(
+                hit_test_gamepad_mapping_editor(
+                    width,
+                    height,
+                    (first.x + first.width * 3 / 4) as i32,
+                    (first.y + first.height / 2) as i32,
+                ),
+                Some(GamepadMappingEditorHit::Target(0))
+            );
+            assert_eq!(
+                hit_test_gamepad_mapping_editor(
+                    width,
+                    height,
+                    (geometry.scope.x + 1) as i32,
+                    (geometry.scope.y + 1) as i32,
+                ),
+                Some(GamepadMappingEditorHit::Scope)
+            );
+            assert_eq!(
+                hit_test_gamepad_mapping_editor(
+                    width,
+                    height,
+                    (geometry.reset.x + 1) as i32,
+                    (geometry.reset.y + 1) as i32,
+                ),
+                Some(GamepadMappingEditorHit::Reset)
+            );
+            assert_eq!(
+                hit_test_gamepad_mapping_editor(
+                    width,
+                    height,
+                    (geometry.close.x + 1) as i32,
+                    (geometry.close.y + 1) as i32,
+                ),
+                Some(GamepadMappingEditorHit::Close)
+            );
         }
     }
 

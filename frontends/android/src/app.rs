@@ -316,25 +316,20 @@ impl App {
         // bits, so convert before comparing against input::pad constants.
         let pad_bit = pad_from_frontend_buttons(bit);
         match self.screen {
-            Screen::Game if self.gamepad_mapping_editor && pressed => {
-                match pad_bit {
-                    pad::UP => {
-                        self.gamepad_mapping_selected =
-                            self.gamepad_mapping_selected.saturating_sub(1);
-                    }
-                    pad::DOWN => {
-                        self.gamepad_mapping_selected =
-                            (self.gamepad_mapping_selected + 1).min(GamepadControl::COUNT - 1);
-                    }
-                    pad::LEFT => self.cycle_gamepad_mapping_target(-1),
-                    pad::RIGHT | pad::A | pad::START => {
-                        self.cycle_gamepad_mapping_target(1)
-                    }
-                    pad::X => self.toggle_gamepad_mapping_scope(),
-                    pad::B => self.finish_gamepad_mapping_editor(),
-                    _ => {}
+            Screen::Game if self.gamepad_mapping_editor && pressed => match pad_bit {
+                pad::UP => {
+                    self.gamepad_mapping_selected = self.gamepad_mapping_selected.saturating_sub(1);
                 }
-            }
+                pad::DOWN => {
+                    self.gamepad_mapping_selected =
+                        (self.gamepad_mapping_selected + 1).min(GamepadControl::COUNT - 1);
+                }
+                pad::LEFT => self.cycle_gamepad_mapping_target(-1),
+                pad::RIGHT | pad::A | pad::START => self.cycle_gamepad_mapping_target(1),
+                pad::X => self.toggle_gamepad_mapping_scope(),
+                pad::B => self.finish_gamepad_mapping_editor(),
+                _ => {}
+            },
             Screen::Game if self.controls_editor && pressed && pad_bit == pad::B => {
                 self.finish_control_editor();
             }
@@ -1011,7 +1006,6 @@ impl App {
         }
     }
 
-
     fn begin_gamepad_mapping_editor(&mut self) {
         self.controls_editor = false;
         self.control_drag = None;
@@ -1057,7 +1051,10 @@ impl App {
             self.system
                 .as_ref()
                 .and_then(System::game_identity)
-                .map(|identity| self.gamepad_mapping.save_for_game(&settings_directory, identity))
+                .map(|identity| {
+                    self.gamepad_mapping
+                        .save_for_game(&settings_directory, identity)
+                })
                 .unwrap_or_else(|| self.gamepad_mapping.save_global(&settings_directory))
         } else {
             self.gamepad_mapping.save_global(&settings_directory)
@@ -1075,7 +1072,10 @@ impl App {
     }
 
     fn cycle_gamepad_mapping_target(&mut self, direction: i8) {
-        let Some(control) = GamepadControl::ALL.get(self.gamepad_mapping_selected).copied() else {
+        let Some(control) = GamepadControl::ALL
+            .get(self.gamepad_mapping_selected)
+            .copied()
+        else {
             return;
         };
         self.gamepad_mapping.cycle_target(control, direction);
@@ -1119,10 +1119,7 @@ impl App {
         }
     }
 
-    fn update_gamepad_mapping_editor_touch(
-        &mut self,
-        previous: &BTreeMap<i32, (f32, f32)>,
-    ) {
+    fn update_gamepad_mapping_editor_touch(&mut self, previous: &BTreeMap<i32, (f32, f32)>) {
         if previous.is_empty() {
             if let Some((&_id, &(x, y))) = self.pointers.iter().next() {
                 self.menu_tap = Some((x.round() as i32, y.round() as i32));
@@ -1533,10 +1530,8 @@ mod screenshot_tests {
 
     #[test]
     fn physical_gamepad_editor_saves_global_mapping_and_restores_effective_mapping() {
-        let directory = std::env::temp_dir().join(format!(
-            "aceris-gamepad-editor-{}",
-            std::process::id()
-        ));
+        let directory =
+            std::env::temp_dir().join(format!("aceris-gamepad-editor-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         let mut app = App::new(&directory);
         app.system = Some(System::new());
@@ -1550,7 +1545,10 @@ mod screenshot_tests {
         app.finish_gamepad_mapping_editor();
         assert!(!app.gamepad_mapping_editor);
         let saved = GamepadMapping::load_global(&directory.join(".aceris"));
-        assert_eq!(saved.target(GamepadControl::South), Some(aceris_core::input_mapping::PadButton::B));
+        assert_eq!(
+            saved.target(GamepadControl::South),
+            Some(aceris_core::input_mapping::PadButton::B)
+        );
         let _ = fs::remove_dir_all(directory);
     }
 
