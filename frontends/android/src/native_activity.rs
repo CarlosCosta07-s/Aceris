@@ -1279,7 +1279,6 @@ unsafe fn copy_frame(frame: &[u8], width: u32, height: u32, buffer: &NativeWindo
     }
 }
 
-
 #[cfg(test)]
 mod gamepad_source_tests {
     use super::*;
