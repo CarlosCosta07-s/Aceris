@@ -3201,8 +3201,7 @@ impl Library {
                     label,
                     brand::TEXT,
                 );
-                if self.home_focus == HomeFocus::Navigation
-                    && self.home_navigation_selected == slot
+                if self.home_focus == HomeFocus::Navigation && self.home_navigation_selected == slot
                 {
                     responsive_fill(
                         frame,
@@ -7353,10 +7352,8 @@ mod tests {
 
     #[test]
     fn home_tiles_distinguish_favorite_and_focused_games() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-home-tile-badges-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aceris-home-tile-badges-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("badge-game.3ds");
