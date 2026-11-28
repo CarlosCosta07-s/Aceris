@@ -2386,24 +2386,6 @@ impl Library {
         }
     }
 
-    fn console_collection_first_visible(&self, visible_items: usize) -> usize {
-        let count = self.filtered_entries().len();
-        if count <= visible_items {
-            return 0;
-        }
-
-        let visible_items = visible_items.max(ui::library::GRID_COLUMNS);
-        let mut first_visible = self.first_visible.min(count - visible_items);
-        if self.selected < first_visible {
-            first_visible = (self.selected / ui::library::GRID_COLUMNS)
-                * ui::library::GRID_COLUMNS;
-        } else if self.selected >= first_visible + visible_items {
-            let needed = self.selected + 1 - visible_items;
-            first_visible = needed.div_ceil(ui::library::GRID_COLUMNS) * ui::library::GRID_COLUMNS;
-        }
-        first_visible.min(count - visible_items)
-    }
-
     fn home_first_visible(&self, visible_cards: usize) -> usize {
         let count = self.home_entries().len();
         if count <= visible_cards {
@@ -2598,6 +2580,9 @@ impl Library {
                     + column as f32 * ui::library::GRID_STEP_X
                     + ui::library::GRID_CARD_WIDTH
                 && y >= ui::library::GRID_TOP
+                && y < ui::library::GRID_TOP
+                    + row as f32 * ui::library::GRID_STEP_Y
+                    + ui::library::GRID_CARD_HEIGHT
                 && y < command_top
             {
                 let visible_rows = ((command_top - ui::library::GRID_TOP
