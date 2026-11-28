@@ -109,39 +109,47 @@ pub mod library {
     }
 }
 
-/// Shared geometry for the console-style landscape Home dashboard.
+/// Geometry for the console-inspired landscape Home, scaled from the 1000-unit canvas.
+/// The rail, featured title and portrait game shelf follow the user-provided concept.
 pub mod home {
-    /// Five square-cover entries fit across the landscape collection shelf.
+    pub const SIDEBAR_WIDTH: f32 = 76.0;
+    pub const SIDEBAR_ICON_SIZE: f32 = 42.0;
+    pub const SIDEBAR_BRAND_CENTER_X: f32 = SIDEBAR_WIDTH * 0.5;
+    pub const SIDEBAR_BRAND_CENTER_Y: f32 = 38.0;
+    pub const SIDEBAR_FIRST_ITEM_Y: f32 = 94.0;
+    pub const SIDEBAR_ITEM_COUNT: usize = 7;
+    pub const SIDEBAR_BOTTOM_MARGIN: f32 = 190.0;
+    pub const SIDEBAR_POWER_BOTTOM: f32 = 34.0;
+
+    pub fn sidebar_item_center_y(index: usize, logical_height: f32) -> f32 {
+        let span = (logical_height - SIDEBAR_BOTTOM_MARGIN).max(240.0);
+        SIDEBAR_FIRST_ITEM_Y
+            + span * index.min(SIDEBAR_ITEM_COUNT - 1) as f32
+                / (SIDEBAR_ITEM_COUNT - 1) as f32
+    }
+
     pub const VISIBLE_GAME_CARDS: usize = 5;
-    pub const CAROUSEL_X: f32 = 28.0;
-    pub const CAROUSEL_TOP: f32 = 316.0;
-    pub const GAME_CARD_WIDTH: f32 = 172.0;
-    pub const GAME_CARD_HEIGHT: f32 = 164.0;
-    pub const GAME_CARD_GAP: f32 = 16.0;
+    pub const CAROUSEL_X: f32 = 96.0;
+    pub const CAROUSEL_TOP: f32 = 206.0;
+    pub const GAME_CARD_WIDTH: f32 = 190.0;
+    pub const GAME_CARD_HEIGHT: f32 = 270.0;
+    pub const GAME_CARD_GAP: f32 = 14.0;
     pub const GAME_CARD_STEP: f32 = GAME_CARD_WIDTH + GAME_CARD_GAP;
-    pub const CAROUSEL_BOTTOM: f32 = CAROUSEL_TOP + GAME_CARD_HEIGHT;
-    pub const SUMMARY_TOP: f32 = 492.0;
-    pub const SUMMARY_HEIGHT: f32 = 64.0;
-    pub const COMPACT_HEIGHT: f32 = 520.0;
 
     pub fn carousel_top(logical_height: f32) -> f32 {
-        if logical_height < COMPACT_HEIGHT {
-            292.0
+        if logical_height < 520.0 {
+            logical_height * 0.40
         } else {
             CAROUSEL_TOP
         }
     }
 
     pub fn game_card_height(logical_height: f32) -> f32 {
-        if logical_height < COMPACT_HEIGHT {
-            144.0
-        } else {
-            GAME_CARD_HEIGHT
-        }
+        (logical_height * 0.48).clamp(180.0, GAME_CARD_HEIGHT)
     }
 
-    pub fn summary_visible(logical_height: f32) -> bool {
-        logical_height >= SUMMARY_TOP + SUMMARY_HEIGHT
+    pub fn command_bar_top(logical_height: f32) -> f32 {
+        (logical_height - 54.0).max(0.0)
     }
 }
 
@@ -322,13 +330,21 @@ mod tests {
     }
 
     #[test]
-    fn landscape_home_fits_five_square_cover_cards_and_summary() {
+    fn landscape_home_uses_a_fixed_icon_rail_and_portrait_game_shelf() {
         assert_eq!(home::VISIBLE_GAME_CARDS, 5);
-        let shelf_width = home::VISIBLE_GAME_CARDS as f32 * home::GAME_CARD_WIDTH
-            + (home::VISIBLE_GAME_CARDS - 1) as f32 * home::GAME_CARD_GAP;
-        assert!(shelf_width <= 944.0);
-        assert!(home::CAROUSEL_BOTTOM < home::SUMMARY_TOP);
-        assert!(home::SUMMARY_TOP + home::SUMMARY_HEIGHT <= 562.5);
+        assert_eq!(home::SIDEBAR_WIDTH, 76.0);
+        assert_eq!(home::SIDEBAR_ITEM_COUNT, 7);
+        assert!(home::GAME_CARD_HEIGHT > home::GAME_CARD_WIDTH);
+
+        let fifth_card_left = home::CAROUSEL_X + 4.0 * home::GAME_CARD_STEP;
+        let visible_content_right = 1000.0;
+        assert!(fifth_card_left < visible_content_right);
+        assert!(fifth_card_left + home::GAME_CARD_WIDTH > visible_content_right);
+
+        let compact_height = 450.0;
+        let card_bottom = home::carousel_top(compact_height) + home::game_card_height(compact_height);
+        assert!(card_bottom <= home::command_bar_top(compact_height));
+        assert!(home::sidebar_item_center_y(6, compact_height) < compact_height - 70.0);
     }
 
     #[test]
