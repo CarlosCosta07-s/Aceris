@@ -4526,7 +4526,11 @@ impl Library {
                     &format!(
                         "NINTENDO 3DS  ·  .{}  ·  {}",
                         extension.to_ascii_uppercase(),
-                        if self.is_favorite(entry) { "FAVORITO" } else { "NA SUA BIBLIOTECA" }
+                        if self.is_favorite(entry) {
+                            "FAVORITO"
+                        } else {
+                            "NA SUA BIBLIOTECA"
+                        }
                     ),
                     brand::TEXT_MUTED,
                 );
@@ -4579,7 +4583,11 @@ impl Library {
                 (
                     220.0,
                     156.0,
-                    if selected_entry.is_some() { play_label } else { "IMPORTAR PASTA" },
+                    if selected_entry.is_some() {
+                        play_label
+                    } else {
+                        "IMPORTAR PASTA"
+                    },
                     if selected_entry.is_some() {
                         brand::ACCENT_RED
                     } else {
