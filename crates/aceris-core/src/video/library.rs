@@ -7367,24 +7367,32 @@ mod tests {
         );
         library.home_focus = HomeFocus::Games;
 
-        for (width, height) in [(1000, 600), (400, 800)] {
-            let standard = library.render_responsive(width, height);
-            let id = library_path_id(&path).unwrap();
-            library.favorites.insert(id);
-            let favorite = library.render_responsive(width, height);
-            assert_ne!(
-                standard, favorite,
-                "favorite games must display a visible marker in both orientations"
-            );
+        let landscape_standard = library.render_responsive(1000, 600);
+        let portrait_standard = library.render_responsive(400, 800);
+        library.favorites.insert(library_path_id(&path).unwrap());
 
-            library.home_focus = HomeFocus::Actions;
-            let unfocused = library.render_responsive(width, height);
-            assert_ne!(
-                favorite, unfocused,
-                "the active game tile must remain visually distinct from the carousel"
-            );
-            library.home_focus = HomeFocus::Games;
-        }
+        let landscape_favorite = library.render_responsive(1000, 600);
+        let portrait_favorite = library.render_responsive(400, 800);
+        assert_ne!(
+            landscape_standard, landscape_favorite,
+            "favorite games must display a visible marker in landscape"
+        );
+        assert_ne!(
+            portrait_standard, portrait_favorite,
+            "favorite games must display a visible marker in portrait"
+        );
+
+        library.home_focus = HomeFocus::Actions;
+        let landscape_unfocused = library.render_responsive(1000, 600);
+        let portrait_unfocused = library.render_responsive(400, 800);
+        assert_ne!(
+            landscape_favorite, landscape_unfocused,
+            "the active landscape game tile must remain visually distinct"
+        );
+        assert_ne!(
+            portrait_favorite, portrait_unfocused,
+            "the active portrait game tile must remain visually distinct"
+        );
 
         fs::remove_dir_all(dir).unwrap();
     }
