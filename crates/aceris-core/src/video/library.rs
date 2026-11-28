@@ -2985,37 +2985,40 @@ impl Library {
 
         // Four compact destinations keep Home reachable on narrow phone screens.
         let tabs = [
-            (10.0, 86.0, LibraryPage::Home, "Início", 30.0),
-            (102.0, 86.0, LibraryPage::Games, "Jogos", 125.0),
-            (194.0, 102.0, LibraryPage::Homebrew, "Homebrew", 202.0),
-            (302.0, 88.0, LibraryPage::Settings, "Config.", 314.0),
+            (10.0, 86.0, LibraryPage::Home, "INÍCIO"),
+            (102.0, 86.0, LibraryPage::Games, "JOGOS"),
+            (194.0, 102.0, LibraryPage::Homebrew, "HOMEBREW"),
+            (302.0, 88.0, LibraryPage::Settings, "CONFIG."),
         ];
-        for (x, tab_width, page, label, text_x) in tabs {
-            responsive_panel(
+        for (x, tab_width, page, label) in tabs {
+            let selected = self.page == page;
+            responsive_text_centered(
                 frame,
                 width,
                 height,
-                x,
-                101.0,
-                tab_width,
-                44.0,
-                scale,
-                if self.page == page {
-                    brand::SURFACE_SELECTED
-                } else {
-                    brand::SURFACE_CARD
-                },
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                text_x,
+                x + tab_width * 0.5,
                 116.0,
                 small_scale,
                 label,
-                brand::TEXT,
+                if selected {
+                    brand::TEXT
+                } else {
+                    brand::TEXT_MUTED
+                },
             );
+            if selected {
+                responsive_fill(
+                    frame,
+                    width as usize,
+                    height as usize,
+                    x + tab_width * 0.2,
+                    140.0,
+                    tab_width * 0.6,
+                    2.0,
+                    scale,
+                    brand::ACCENT_RED,
+                );
+            }
         }
 
         let page_title = match self.page {
@@ -3296,82 +3299,37 @@ impl Library {
                 brand::SURFACE_HEADER,
             );
             let dock_actions = [
-                ("R", "REC."),
-                ("F", "FAV."),
-                ("+", "PASTA"),
-                ("A", "ATUALIZAR"),
+                "RECENTES",
+                "FAVORITOS",
+                "IMPORTAR",
+                "ATUALIZAR",
             ];
-            for (slot, (symbol, label)) in dock_actions.into_iter().enumerate() {
+            for (slot, label) in dock_actions.into_iter().enumerate() {
                 let x = 12.0 + slot as f32 * 96.0;
-                if self.home_focus == HomeFocus::Navigation && self.home_navigation_selected == slot
-                {
-                    responsive_panel(
-                        frame,
-                        width,
-                        height,
-                        x - 3.0,
-                        673.0,
-                        94.0,
-                        50.0,
-                        scale,
-                        brand::ACCENT_RED_LIGHT,
-                    );
-                }
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    x,
-                    676.0,
-                    88.0,
-                    44.0,
-                    scale,
-                    brand::SURFACE_CARD,
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    x + 6.0,
-                    685.0,
-                    22.0,
-                    26.0,
-                    scale,
-                    if slot == 2 {
-                        brand::ACCENT_RED
-                    } else {
-                        brand::SURFACE_SELECTED
-                    },
-                );
+                let focused = self.home_focus == HomeFocus::Navigation
+                    && self.home_navigation_selected == slot;
                 responsive_text_centered(
                     frame,
                     width,
                     height,
-                    x + 17.0,
-                    694.0,
-                    small_scale,
-                    symbol,
-                    brand::TEXT,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    x + 57.0,
+                    x + 44.0,
                     694.0,
                     small_scale,
                     label,
-                    brand::TEXT,
+                    if focused {
+                        brand::TEXT
+                    } else {
+                        brand::TEXT_MUTED
+                    },
                 );
-                if self.home_focus == HomeFocus::Navigation && self.home_navigation_selected == slot
-                {
+                if focused {
                     responsive_fill(
                         frame,
                         width as usize,
                         height as usize,
-                        x + 30.0,
+                        x + 14.0,
                         714.0,
-                        58.0,
+                        60.0,
                         2.0,
                         scale,
                         brand::ACCENT_RED_LIGHT,
@@ -3397,21 +3355,6 @@ impl Library {
             ];
             for (x, tab_width, section) in settings_tabs {
                 let selected = self.settings_section == section;
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    x,
-                    232.0,
-                    tab_width,
-                    42.0,
-                    scale,
-                    if selected {
-                        brand::SURFACE_SELECTED
-                    } else {
-                        brand::SURFACE_CARD
-                    },
-                );
                 responsive_text_centered(
                     frame,
                     width,
@@ -3426,6 +3369,19 @@ impl Library {
                         brand::TEXT_MUTED
                     },
                 );
+                if selected {
+                    responsive_fill(
+                        frame,
+                        width as usize,
+                        height as usize,
+                        x + tab_width * 0.2,
+                        270.0,
+                        tab_width * 0.6,
+                        2.0,
+                        scale,
+                        brand::ACCENT_RED,
+                    );
+                }
             }
 
             responsive_panel(
