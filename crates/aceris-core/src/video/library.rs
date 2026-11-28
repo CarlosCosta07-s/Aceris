@@ -6056,69 +6056,69 @@ impl Library {
                     third_value,
                     footer,
                 ) = match self.settings_section {
-                        SettingsSection::Library => (
-                            "PASTAS MONITORADAS",
-                            self.scan_config.directories.len().to_string(),
-                            "JOGOS / HOMEBREW",
-                            format!("{} / {}", game_count, homebrew_count),
-                            "VISUALIZAÇÃO / ORDEM",
-                            format!(
-                                "{} · {}",
-                                if self.view_mode == LibraryViewMode::Grid {
-                                    "GRADE"
-                                } else {
-                                    "LISTA"
-                                },
-                                if self.sort_descending {
-                                    "Z–A"
-                                } else {
-                                    "A–Z"
-                                }
-                            ),
-                            "PASTAS E JOGOS LOCAIS",
-                        ),
-                        SettingsSection::Performance => (
-                            "MODO DE DESEMPENHO",
-                            if self.performance_mode {
-                                "ATIVO"
+                    SettingsSection::Library => (
+                        "PASTAS MONITORADAS",
+                        self.scan_config.directories.len().to_string(),
+                        "JOGOS / HOMEBREW",
+                        format!("{} / {}", game_count, homebrew_count),
+                        "VISUALIZAÇÃO / ORDEM",
+                        format!(
+                            "{} · {}",
+                            if self.view_mode == LibraryViewMode::Grid {
+                                "GRADE"
                             } else {
-                                "DESATIVADO"
-                            }
-                            .to_string(),
-                            "ZONA MORTA DO ANALÓGICO",
-                            format!("{}%", self.gamepad_deadzone_percent),
-                            "APLICAÇÃO",
-                            "NO PRÓXIMO JOGO".to_string(),
-                            "PERFIL DE EXECUÇÃO PERSISTENTE",
-                        ),
-                        SettingsSection::Controls if self.touch_keyboard_enabled => (
-                            "CONTROLES DE TOQUE",
-                            if self.virtual_controls_visible {
-                                "ATIVOS"
+                                "LISTA"
+                            },
+                            if self.sort_descending {
+                                "Z–A"
                             } else {
-                                "OCULTOS"
+                                "A–Z"
                             }
-                            .to_string(),
-                            "OPACIDADE / TAMANHO",
-                            format!(
-                                "{}% / {}%",
-                                self.virtual_controls_opacity_percent(),
-                                self.virtual_controls_size_percent()
-                            ),
-                            "LAYOUT ATUAL",
-                            self.virtual_controls_preset.label().to_string(),
-                            "PERSONALIZAÇÃO DE TOQUE",
                         ),
-                        SettingsSection::Controls => (
-                            "SUPORTE A TOQUE",
-                            "NÃO DISPONÍVEL".to_string(),
-                            "PLATAFORMA",
-                            "ANDROID".to_string(),
-                            "CATEGORIA",
-                            "CONTROLES".to_string(),
-                            "OPÇÕES DE TOQUE NO ANDROID",
+                        "PASTAS E JOGOS LOCAIS",
+                    ),
+                    SettingsSection::Performance => (
+                        "MODO DE DESEMPENHO",
+                        if self.performance_mode {
+                            "ATIVO"
+                        } else {
+                            "DESATIVADO"
+                        }
+                        .to_string(),
+                        "ZONA MORTA DO ANALÓGICO",
+                        format!("{}%", self.gamepad_deadzone_percent),
+                        "APLICAÇÃO",
+                        "NO PRÓXIMO JOGO".to_string(),
+                        "PERFIL DE EXECUÇÃO PERSISTENTE",
+                    ),
+                    SettingsSection::Controls if self.touch_keyboard_enabled => (
+                        "CONTROLES DE TOQUE",
+                        if self.virtual_controls_visible {
+                            "ATIVOS"
+                        } else {
+                            "OCULTOS"
+                        }
+                        .to_string(),
+                        "OPACIDADE / TAMANHO",
+                        format!(
+                            "{}% / {}%",
+                            self.virtual_controls_opacity_percent(),
+                            self.virtual_controls_size_percent()
                         ),
-                    };
+                        "LAYOUT ATUAL",
+                        self.virtual_controls_preset.label().to_string(),
+                        "PERSONALIZAÇÃO DE TOQUE",
+                    ),
+                    SettingsSection::Controls => (
+                        "SUPORTE A TOQUE",
+                        "NÃO DISPONÍVEL".to_string(),
+                        "PLATAFORMA",
+                        "ANDROID".to_string(),
+                        "CATEGORIA",
+                        "CONTROLES".to_string(),
+                        "OPÇÕES DE TOQUE NO ANDROID",
+                    ),
+                };
                 let rail_height = (bottom - 160.0).max(250.0);
                 responsive_panel(
                     frame,
