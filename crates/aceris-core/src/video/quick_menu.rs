@@ -2,9 +2,9 @@
 
 use super::font;
 
-pub const ACTION_COUNT: usize = 10;
+pub const ACTION_COUNT: usize = 11;
 /// Desktop exposes the six actions that do not depend on Android touch controls.
-pub const DESKTOP_ACTION_COUNT: usize = 7;
+pub const DESKTOP_ACTION_COUNT: usize = 8;
 
 /// A destructive action that must be confirmed before leaving the game session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -339,6 +339,97 @@ pub fn render_control_editor_guides(
     true
 }
 
+/// Draws a compact developer overlay over a composed RGBA8 or BGRX8 gameplay frame.
+///
+/// FPS and timing data are explicitly supplied by the host monitor. The guest PC
+/// and unhandled IPC count are read from the emulated system and are not inferred
+/// from host presentation timing.
+pub fn render_diagnostics_overlay(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    guest_pc: u32,
+    unhandled_requests: usize,
+    first_unhandled: Option<&str>,
+    host_performance: Option<&str>,
+) -> bool {
+    if width < 160 || height < 100 || width > 4096 || height > 4096 {
+        return false;
+    }
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4));
+    if expected != Some(frame.len()) {
+        return false;
+    }
+
+    let scale = (width.min(height) / 480).clamp(1, 3) as usize;
+    let margin = 8 * scale;
+    let panel_width = (width as usize).saturating_sub(margin * 2).min(480 * scale);
+    let max_chars = panel_width
+        .saturating_sub(20 * scale)
+        .checked_div(6 * scale)
+        .unwrap_or(1)
+        .max(1);
+    let mut lines = Vec::with_capacity(4);
+    lines.push(format!("ARM11 PC: 0x{guest_pc:08X}"));
+    lines.push(format!("IPC PENDENTE: {unhandled_requests}"));
+    if let Some(request) = first_unhandled {
+        lines.push(format!("ULTIMO IPC: {}", truncate_text(request, max_chars)));
+    }
+    lines.push(format!(
+        "HOST: {}",
+        host_performance
+            .map(|summary| truncate_text(summary, max_chars.saturating_sub(6)))
+            .unwrap_or_else(|| "METRICAS DESLIGADAS".to_owned())
+    ));
+
+    let panel_height = (18 + lines.len() * 10) * scale;
+    let panel = Rect {
+        x: margin,
+        y: margin,
+        width: panel_width,
+        height: panel_height.min(height as usize - margin),
+    };
+    blend_rect(frame, width as usize, panel, [12, 10, 22], 226, format);
+    draw_colored_border(frame, width as usize, panel, scale, [86, 59, 103], format);
+    let accent = Rect {
+        height: (3 * scale).min(panel.height),
+        ..panel
+    };
+    blend_rect(frame, width as usize, accent, [229, 23, 63], 255, format);
+    draw_text_for_format(
+        frame,
+        width as usize,
+        height as usize,
+        panel.x + 10 * scale,
+        panel.y + 6 * scale,
+        scale,
+        "ACERIS | DIAGNOSTICO",
+        [245, 238, 248],
+        format,
+    );
+    for (index, line) in lines.iter().enumerate() {
+        draw_text_for_format(
+            frame,
+            width as usize,
+            height as usize,
+            panel.x + 10 * scale,
+            panel.y + (18 + index * 10) * scale,
+            scale,
+            line,
+            [190, 225, 203],
+            format,
+        );
+    }
+    true
+}
+
+fn truncate_text(text: &str, maximum_chars: usize) -> String {
+    text.chars().take(maximum_chars).collect()
+}
+
 /// Returns the confirmation button under a surface-space point.
 pub fn hit_test_confirmation(width: u32, height: u32, x: i32, y: i32) -> Option<usize> {
     let geometry = confirmation_geometry(width, height)?;
@@ -501,7 +592,7 @@ pub fn render_desktop_overlay_with_profile(
         profile_label,
         DESKTOP_ACTION_COUNT,
         "CAPTURAR TELA",
-        "PERFIL GLOBAL",
+        "DIAGNÓSTICO",
     )
 }
 
@@ -585,6 +676,7 @@ fn render_overlay_with_action_count(
         "ESCOPO DOS CONTROLES",
         "EDITAR CONTROLES",
         "CAPTURAR TELA",
+        "DIAGNÓSTICO",
     ];
     let row_text_scale = menu_row_text_scale(
         &geometry,
