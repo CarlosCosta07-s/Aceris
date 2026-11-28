@@ -69,23 +69,43 @@ pub mod library {
     }
 
     pub fn details_art_size(logical_height: f32) -> f32 {
-        if logical_height < 520.0 { 64.0 } else { DETAILS_ART_SIZE }
+        if logical_height < 520.0 {
+            64.0
+        } else {
+            DETAILS_ART_SIZE
+        }
     }
 
     pub fn details_art_top(logical_height: f32) -> f32 {
-        if logical_height < 520.0 { 188.0 } else { DETAILS_ART_TOP }
+        if logical_height < 520.0 {
+            188.0
+        } else {
+            DETAILS_ART_TOP
+        }
     }
 
     pub fn details_title_y(logical_height: f32) -> f32 {
-        if logical_height < 520.0 { 256.0 } else { 292.0 }
+        if logical_height < 520.0 {
+            256.0
+        } else {
+            292.0
+        }
     }
 
     pub fn details_metadata_y(logical_height: f32) -> f32 {
-        if logical_height < 520.0 { 274.0 } else { 310.0 }
+        if logical_height < 520.0 {
+            274.0
+        } else {
+            310.0
+        }
     }
 
     pub fn details_button_height(logical_height: f32) -> f32 {
-        if logical_height < 520.0 { 24.0 } else { DETAILS_BUTTON_HEIGHT }
+        if logical_height < 520.0 {
+            24.0
+        } else {
+            DETAILS_BUTTON_HEIGHT
+        }
     }
 
     pub fn details_button_top(index: usize, logical_height: f32) -> f32 {
@@ -113,11 +133,19 @@ pub mod home {
     pub const COMPACT_HEIGHT: f32 = 520.0;
 
     pub fn carousel_top(logical_height: f32) -> f32 {
-        if logical_height < COMPACT_HEIGHT { 292.0 } else { CAROUSEL_TOP }
+        if logical_height < COMPACT_HEIGHT {
+            292.0
+        } else {
+            CAROUSEL_TOP
+        }
     }
 
     pub fn game_card_height(logical_height: f32) -> f32 {
-        if logical_height < COMPACT_HEIGHT { 144.0 } else { GAME_CARD_HEIGHT }
+        if logical_height < COMPACT_HEIGHT {
+            144.0
+        } else {
+            GAME_CARD_HEIGHT
+        }
     }
 
     pub fn summary_visible(logical_height: f32) -> bool {

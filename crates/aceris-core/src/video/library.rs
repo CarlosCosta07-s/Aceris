@@ -8023,8 +8023,7 @@ mod tests {
         );
         assert_eq!(library.favorite_count(), 1);
         assert!(
-            ui::library::details_button_top(3, 450.0)
-                + ui::library::details_button_height(450.0)
+            ui::library::details_button_top(3, 450.0) + ui::library::details_button_height(450.0)
                 < 450.0
         );
     }
@@ -8572,34 +8571,19 @@ mod tests {
             ClickResult::Activated
         );
         assert_eq!(
-            library.click_responsive(
-                center_x,
-                center_y(1),
-                1000,
-                600
-            ),
+            library.click_responsive(center_x, center_y(1), 1000, 600),
             ClickResult::Ignored
         );
         assert_eq!(library.favorite_count(), 1);
 
         assert_eq!(
-            library.click_responsive(
-                center_x,
-                center_y(2),
-                1000,
-                600
-            ),
+            library.click_responsive(center_x, center_y(2), 1000, 600),
             ClickResult::Ignored
         );
         assert!(library.take_folder_picker_request());
         library.select_page(LibraryPage::Games);
         assert_eq!(
-            library.click_responsive(
-                center_x,
-                center_y(3),
-                1000,
-                600
-            ),
+            library.click_responsive(center_x, center_y(3), 1000, 600),
             ClickResult::Ignored
         );
     }
