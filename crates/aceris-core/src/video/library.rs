@@ -7956,7 +7956,8 @@ mod tests {
         library.select_page(LibraryPage::Settings);
         library.set_touch_keyboard_enabled(true);
 
-        library.click_responsive(136, 301, 1000, 600);
+        // The organized Library category exposes its folder picker in this row.
+        library.click_responsive(200, 365, 1000, 600);
         assert!(library.take_folder_picker_request());
         library.begin_add_folder_path();
         assert!(library.touch_keyboard_is_open());
