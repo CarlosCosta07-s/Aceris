@@ -2860,8 +2860,8 @@ impl Library {
                 if row >= visible_rows || index >= self.visible_entry_count() {
                     return ClickResult::Ignored;
                 }
-                self.selected = index;
                 if x >= card_x + card_width - 30.0 && y <= card_y + 28.0 {
+                    self.selected = index;
                     self.toggle_selected_favorite();
                     return ClickResult::Ignored;
                 }
