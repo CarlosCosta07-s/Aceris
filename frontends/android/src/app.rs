@@ -419,9 +419,7 @@ impl App {
             (false, true) => "TELAS: GLOBAL | CONTROLES: JOGO",
             (false, false) => "TELAS: GLOBAL | CONTROLES: GLOBAL",
         };
-        let profile_label = self
-            .quick_menu_notice
-            .unwrap_or(inherited_profile_label);
+        let profile_label = self.quick_menu_notice.unwrap_or(inherited_profile_label);
         let restore_label =
             if self.library.virtual_control_edit_scope() == VirtualControlEditScope::Game {
                 "RESTAURAR PERFIL"
