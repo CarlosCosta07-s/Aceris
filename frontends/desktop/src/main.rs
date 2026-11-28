@@ -560,6 +560,7 @@ fn run_windowed(
             &settings_directory,
             &mut layout_preferences,
             &mut performance,
+            library.gamepad_deadzone_percent(),
         );
         report_unhandled(system);
         match outcome {
@@ -766,6 +767,7 @@ fn emulate(
     settings_directory: &Path,
     layout_preferences: &mut ScreenLayoutPreferences,
     performance: &mut Option<DesktopPerformanceMonitor>,
+    gamepad_deadzone_percent: u8,
 ) -> Result<Flow, String> {
     let frame_time = Duration::from_micros(16_667);
     let mut keyboard = window::KeyboardInput::default();
@@ -1067,7 +1069,7 @@ fn emulate(
         let mut emulation_elapsed = Duration::ZERO;
         let mut audio_elapsed = Duration::ZERO;
         if !menu_open {
-            gamepad.apply(&keyboard, system.input_mut());
+            gamepad.apply(&keyboard, system.input_mut(), gamepad_deadzone_percent);
             let emulation_started = performance.as_ref().map(|_| Instant::now());
             run_frame_with_diagnostics(system)?;
             emulation_elapsed = emulation_started
