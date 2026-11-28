@@ -44,11 +44,7 @@ pub const SUCCESS_SURFACE: u32 = 0x23432D;
 
 /// Converts an RGB colour token to the channel order used by RGBA renderers.
 pub const fn rgb(color: u32) -> [u8; 3] {
-    [
-        (color >> 16) as u8,
-        (color >> 8) as u8,
-        color as u8,
-    ]
+    [(color >> 16) as u8, (color >> 8) as u8, color as u8]
 }
 
 /// Formats a colour as `#RRGGBB`.
