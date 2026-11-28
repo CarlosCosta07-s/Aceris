@@ -2552,7 +2552,10 @@ impl Library {
                 self.select_page(LibraryPage::Recent);
             } else if (296.0..408.0).contains(&x) {
                 self.select_page(LibraryPage::Homebrew);
-            } else if (420.0..650.0).contains(&x) {
+            } else if (420.0..620.0).contains(&x) {
+                self.focus_search();
+            } else if (620.0..650.0).contains(&x) {
+                self.clear_search();
                 self.focus_search();
             } else if (654.0..766.0).contains(&x) {
                 self.cycle_format_filter();
@@ -5250,7 +5253,7 @@ impl Library {
         let search_label = if self.search_query.is_empty() {
             "BUSCAR JOGO".to_string()
         } else {
-            truncate(&self.search_query, 26)
+            truncate(&self.search_query, 20)
         };
         responsive_text(
             frame,
@@ -5265,6 +5268,27 @@ impl Library {
             } else {
                 brand::TEXT_MUTED
             },
+        );
+        responsive_panel(
+            frame,
+            width,
+            height,
+            620.0,
+            82.0,
+            26.0,
+            26.0,
+            scale,
+            brand::SURFACE_CARD,
+        );
+        responsive_text_centered(
+            frame,
+            width,
+            height,
+            633.0,
+            89.0,
+            label_scale,
+            "X",
+            brand::TEXT_MUTED,
         );
         responsive_panel(
             frame,
