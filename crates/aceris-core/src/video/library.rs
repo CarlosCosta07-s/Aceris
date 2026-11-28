@@ -7747,8 +7747,9 @@ impl Library {
             let destination_left = (96.0 * scale).floor().max(0.0) as usize;
             let source_span = width as usize - source_left.min(width as usize);
             let destination_span = width as usize - destination_left.min(width as usize);
-            let header_bottom =
-                (ui::chrome::HEADER_HEIGHT * scale).ceil().min(height as f32) as usize;
+            let header_bottom = (ui::chrome::HEADER_HEIGHT * scale)
+                .ceil()
+                .min(height as f32) as usize;
             if source_span > 0 && destination_span > 0 {
                 for y in header_bottom..height as usize {
                     for offset in 0..destination_span {
