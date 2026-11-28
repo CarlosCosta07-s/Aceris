@@ -3847,48 +3847,50 @@ impl Library {
             scale,
             0x18232D,
         );
-        responsive_panel(
-            frame,
-            width,
-            height,
-            758.0,
-            82.0,
-            224.0,
-            (bottom - 82.0).max(280.0),
-            scale,
-            0x1D2A35,
-        );
-        responsive_text(
-            frame,
-            width,
-            height,
-            780.0,
-            103.0,
-            title_scale,
-            "ACERIS",
-            brand::TEXT,
-        );
-        responsive_text(
-            frame,
-            width,
-            height,
-            782.0,
-            132.0,
-            small_scale,
-            "BIBLIOTECA DE JOGOS",
-            brand::ACCENT_GREEN_LIGHT,
-        );
-        responsive_fill(
-            frame,
-            width as usize,
-            height as usize,
-            780.0,
-            153.0,
-            180.0,
-            1.0,
-            scale,
-            0x563B67,
-        );
+        if self.page != LibraryPage::Home {
+            responsive_panel(
+                frame,
+                width,
+                height,
+                758.0,
+                82.0,
+                224.0,
+                (bottom - 82.0).max(280.0),
+                scale,
+                0x1D2A35,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                780.0,
+                103.0,
+                title_scale,
+                "ACERIS",
+                brand::TEXT,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                782.0,
+                132.0,
+                small_scale,
+                "BIBLIOTECA DE JOGOS",
+                brand::ACCENT_GREEN_LIGHT,
+            );
+            responsive_fill(
+                frame,
+                width as usize,
+                height as usize,
+                780.0,
+                153.0,
+                180.0,
+                1.0,
+                scale,
+                0x563B67,
+            );
+        }
 
         if self.page == LibraryPage::Home {
             responsive_text(
@@ -6260,10 +6262,10 @@ mod tests {
 
         for (x, expected) in [
             (94, LibraryPage::Recent),
-            (236, LibraryPage::Games),
-            (378, LibraryPage::Favorites),
-            (520, LibraryPage::Homebrew),
-            (662, LibraryPage::Settings),
+            (300, LibraryPage::Games),
+            (480, LibraryPage::Favorites),
+            (660, LibraryPage::Homebrew),
+            (850, LibraryPage::Settings),
         ] {
             library.select_page(LibraryPage::Home);
             assert_eq!(
