@@ -2611,6 +2611,25 @@ mod tests {
     }
 
     #[test]
+    fn home_dpad_focus_activates_favorite_and_import_actions() {
+        let (mut app, dir) = app_with_games(1);
+        app.resize(1000, 600);
+        app.screen = Screen::Library;
+
+        assert!(app.key(20, true), "D-pad Down focuses the home action row");
+        assert!(app.key(22, true), "D-pad Right focuses Add Favorite");
+        assert!(app.key(96, true), "A activates the focused favorite action");
+        assert_eq!(app.library.favorite_count(), 1);
+
+        assert!(app.key(22, true), "D-pad Right focuses Import Folder");
+        assert!(app.key(96, true), "A opens the folder path fallback");
+        assert_eq!(app.library.page(), library::LibraryPage::Settings);
+        assert!(app.library.search_is_focused());
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
     fn focused_library_accepts_android_text_backspace_and_enter() {
         let (mut app, dir) = app_with_games(0);
         app.screen = Screen::Library;
