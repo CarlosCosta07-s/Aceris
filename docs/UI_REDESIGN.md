@@ -4,9 +4,9 @@ Status: approved direction; implementation is incremental and must be validated 
 
 ## Product direction
 
-Rebuild the Aceris application UI from the ground up as a polished console-style library and launcher. The Nintendo Switch is the primary product-design reference for clarity, hierarchy, focus states, game discovery and controller-first navigation. The Aceris must retain its own visual identity and must not reproduce Nintendo artwork, icons, logos, exact screen compositions or proprietary assets.
+Rebuild the Aceris application UI from the ground up as a polished console-style library and launcher. The user-provided, unofficial console concept mockup is the direct composition target for the Home screen. Carlos explicitly authorized a close one-to-one recreation of its arrangement and proportions, changing the navigation glyphs to original Aceris symbols. The image is a conceptual reference, not an official console interface.
 
-The existing Aceris color palette is the visual identity and is preserved. The redesign changes layout, typography, spacing, components, navigation, interaction states and responsive behavior—not the brand colors.
+Keep the existing Aceris color palette. Recreate the composition, hierarchy, spacing, game-cover shelf, side rail and bottom command hints in original Rust drawing code. Do not reuse Nintendo logos, console marks, game artwork, third-party icons or other assets from the reference image.
 
 ## Non-negotiable engineering constraints
 
@@ -37,19 +37,20 @@ Use a consistent spacing scale, predictable alignment, restrained borders, subtl
 
 ### Desktop
 
-- Persistent left navigation rail with Aceris identity and clear destinations: Início, Jogos, Favoritos, Recentes, Homebrew and Configurações.
-- Top content bar for page title, search, import action and contextual controls.
-- Main content area with a large featured/continue-playing region, followed by a horizontal shelf of five square game covers. Selection uses a clear red focus frame and controller navigation moves across the visible covers before scrolling the shelf.
+- A fixed, narrow left rail matching the supplied concept's proportions. Place the Aceris mark at the top and vertically stacked original glyphs for Início, Jogos, Importar, Favoritos, Recentes, Homebrew and Configurações; do not add text labels beside the rail icons.
+- Center the selected game's identity in the upper content area: available game icon/artwork, title and concise metadata.
+- Place one horizontal shelf of tall portrait game covers beneath the featured identity. Show five card slots, with the fifth naturally clipped at the right edge when the viewport cannot fit all five. Selection uses an unmistakable Aceris red focus frame and horizontal navigation scrolls the shelf.
+- Use a compact bottom command strip with controller/action hints. Do not restore the old horizontal Home tab bar, oversized featured panel, four-button row or collection-summary panel.
 - A responsive game-card grid with cover art when available, readable title, subtle format metadata and a clear focus/selected state.
 - A details panel for the selected title with centered square artwork, title, container format, recent/favorite state, and clear Play, Favorite, Import and Refresh actions.
 - Controller and keyboard navigation must mirror pointer navigation; focus must always be visible.
 
 ### Android
 
-- Same information architecture and visual language, adapted to touch. Home remains a landscape dashboard with five large, touch-friendly game covers across its main shelf.
+- Reproduce the same concept composition in landscape: fixed left icon rail, centered selected-game identity, portrait-cover shelf and bottom command hints. Keep the rail glyphs original to Aceris and sized for touch.
 - The Android app is landscape-only; `AndroidManifest.xml` must keep `android:screenOrientation="landscape"`.
-- Compact top bar and a bottom navigation bar for primary destinations.
-- Large touch targets, safe-area awareness, scrollable content and responsive game cards, designed for landscape phones and tablets.
+- Do not replace the side rail with a top or bottom navigation bar on Home.
+- Large touch targets, safe-area awareness, horizontal shelf scrolling and responsive portrait cover cards, designed for landscape phones and tablets.
 - Home and the primary library experience are designed for landscape only. Android is locked to landscape; the legacy portrait renderer is compatibility-only and must never become an Android product mode.
 - Import and folder management must remain discoverable and usable on touch devices.
 
