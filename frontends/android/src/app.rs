@@ -187,10 +187,10 @@ impl App {
     /// Android reports positive Y when the physical stick moves down; the 3DS
     /// host input convention uses positive Y for up.
     pub fn set_gamepad_axes(&mut self, x: f32, y: f32) -> bool {
+        let deadzone_percent = self.library.gamepad_deadzone_percent();
         let Some(system) = self.system.as_mut() else {
             return false;
         };
-        let deadzone_percent = self.library.gamepad_deadzone_percent();
         system.input_mut().set_circle_pad(
             gamepad_axis_to_circle_pad(x, deadzone_percent),
             -gamepad_axis_to_circle_pad(y, deadzone_percent),
