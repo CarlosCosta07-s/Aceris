@@ -128,6 +128,27 @@ classe Java/Kotlin silenciosamente para contornar o limite. Até existir uma
 solução compatível e autorizada, manter a entrada de caminho como fallback e
 não persistir uma URI que a biblioteca ainda não consegue enumerar nem abrir.
 
+#### Acesso ao armazenamento compartilhado (implementado)
+
+Enquanto o seletor SAF não tiver canal de retorno, o app pede acesso amplo ao
+armazenamento, por decisão do mantenedor, usando apenas JNI a partir de Rust:
+
+- Android 11+: `MANAGE_EXTERNAL_STORAGE`. O botão PERMITIR abre a tela do
+  sistema "Acesso a todos os arquivos" para o pacote (com fallback para a lista
+  geral), e o estado é lido com `Environment.isExternalStorageManager()`.
+- Android 6–10: `requestPermissions` com `READ/WRITE_EXTERNAL_STORAGE`, lido
+  com `checkSelfPermission`; `requestLegacyExternalStorage` cobre o Android 10.
+- O resultado não depende de callback: o host relê a permissão quando a
+  Activity volta ao primeiro plano e a cada segundo enquanto o aviso está na
+  tela. O JNI só é anexado depois do primeiro quadro.
+- Fluxo: abertura → aviso ACESSO AOS ARQUIVOS (DEPOIS / PERMITIR). DEPOIS fica
+  salvo em `.aceris/android_storage_access_v1.txt` e o aviso não volta sozinho,
+  mas Importar Pasta pede o acesso de novo antes de abrir a digitação do
+  caminho.
+- Na primeira concessão, `<armazenamento>/Aceris/games` é criada e adicionada
+  à biblioteca uma única vez; se o usuário a remover, ela não volta. A pasta
+  interna do app continua sendo lida.
+
 Esse limite é somente sobre o retorno do seletor. A futura integração SAF
 continua dependendo também do provedor de documentos, da persistência da
 permissão e da preparação de uma origem seekable descrita nesta arquitetura.

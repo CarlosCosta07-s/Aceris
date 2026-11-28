@@ -83,7 +83,23 @@ pub enum Screen {
     GameMenuConfirm {
         action: quick_menu::ConfirmationAction,
     },
+    /// Asks for shared-storage access over the library.
+    StorageAccess,
 }
+
+/// Whether the app may read shared storage, as reported by the Android host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageAccess {
+    /// Not checked yet (the host checks after the first frame).
+    Unknown,
+    Granted,
+    Missing,
+}
+
+/// Persisted answers for the storage prompt (`key=1` lines).
+const STORAGE_ACCESS_FILE: &str = "android_storage_access_v1.txt";
+const STORAGE_PROMPT_DISMISSED_KEY: &str = "prompt_dismissed";
+const SHARED_GAMES_FOLDER_ADDED_KEY: &str = "shared_folder_added";
 
 /// One active touch pointer in surface pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -141,6 +157,17 @@ pub struct App {
     intro_buffer: Vec<u8>,
     /// When the first opening frame was drawn; keeps the animation in real time.
     intro_started: Option<Instant>,
+    /// Shared-storage permission state reported by the host.
+    storage_access: StorageAccess,
+    /// Root of shared storage (`/storage/emulated/0` on most phones).
+    storage_root: Option<PathBuf>,
+    /// Set when the user chose "Permitir"; the host opens the system screen.
+    storage_request_pending: bool,
+    /// The user answered "Depois"; the prompt is not shown automatically.
+    storage_prompt_dismissed: bool,
+    /// Open the folder entry once access is granted (the user asked to import).
+    storage_then_add_folder: bool,
+    storage_prompt_selected: usize,
 }
 
 impl App {
@@ -189,6 +216,12 @@ impl App {
             audio: Vec::new(),
             intro_buffer: Vec::new(),
             intro_started: None,
+            storage_access: StorageAccess::Unknown,
+            storage_root: None,
+            storage_request_pending: false,
+            storage_prompt_dismissed: storage_flag(games_dir, STORAGE_PROMPT_DISMISSED_KEY),
+            storage_then_add_folder: false,
+            storage_prompt_selected: 1,
         }
     }
 
@@ -377,7 +410,7 @@ impl App {
             Screen::Intro { .. } => {
                 // Any touch skips the intro.
                 if !self.pointers.is_empty() && previous.is_empty() {
-                    self.screen = Screen::Library;
+                    self.finish_intro();
                 }
             }
             Screen::Library => self.update_library_touch(&previous),
@@ -386,6 +419,7 @@ impl App {
             Screen::GameMenuConfirm { action } => {
                 self.update_game_menu_confirmation_touch(&previous, action)
             }
+            Screen::StorageAccess => self.update_storage_prompt_touch(&previous),
         }
     }
 
@@ -412,7 +446,8 @@ impl App {
                     Screen::GameMenuConfirm { .. } => self.cancel_game_menu_confirmation(),
                     // Back during the opening skips to the library instead of
                     // letting NativeActivity finish (close) the app.
-                    Screen::Intro { .. } => self.screen = Screen::Library,
+                    Screen::Intro { .. } => self.finish_intro(),
+                    Screen::StorageAccess => self.answer_storage_prompt(false),
                     _ => {}
                 }
             }
@@ -538,13 +573,20 @@ impl App {
                 }
                 _ => {}
             },
-            Screen::Intro { .. } if pressed => self.screen = Screen::Library,
+            Screen::Intro { .. } if pressed => self.finish_intro(),
+            Screen::StorageAccess if pressed => match pad_bit {
+                pad::UP | pad::LEFT => self.storage_prompt_selected = 0,
+                pad::DOWN | pad::RIGHT => self.storage_prompt_selected = 1,
+                pad::A | pad::START => {
+                    self.answer_storage_prompt(self.storage_prompt_selected == 1);
+                }
+                pad::B => self.answer_storage_prompt(false),
+                _ => {}
+            },
             _ => {}
         }
         if matches!(self.screen, Screen::Library) && self.library.take_folder_picker_request() {
-            // SAF does not have a result callback in this Rust-only NativeActivity,
-            // so keep the path-entry fallback available for the import action.
-            self.library.begin_add_folder_path();
+            self.open_folder_entry();
         }
         true
     }
@@ -581,11 +623,11 @@ impl App {
                 let started = *self.intro_started.get_or_insert_with(Instant::now);
                 let elapsed = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
                 let next = (frame + 1).max(intro::frame_for_elapsed_micros(elapsed));
-                self.screen = if next >= intro::FRAME_COUNT {
-                    Screen::Library
+                if next >= intro::FRAME_COUNT {
+                    self.finish_intro();
                 } else {
-                    Screen::Intro { frame: next }
-                };
+                    self.screen = Screen::Intro { frame: next };
+                }
                 // The procedural opening is rendered on a smaller sample grid
                 // with a fixed pixel budget, then scaled to the whole surface.
                 // The budget is split by area (not by a landscape-only box), so
@@ -625,6 +667,21 @@ impl App {
             Screen::GameMenu => self.step_game_menu_into(output),
             Screen::GameMenuConfirm { action } => {
                 self.step_game_menu_confirmation_into(output, action)
+            }
+            Screen::StorageAccess => {
+                let _ = self
+                    .library
+                    .render_responsive_into(self.width, self.height, output);
+                let _ = quick_menu::render_prompt_overlay(
+                    output,
+                    self.width,
+                    self.height,
+                    MenuPixelFormat::Rgba8,
+                    "ACESSO AOS ARQUIVOS",
+                    ["Libere o acesso", "para achar jogos."],
+                    ["DEPOIS", "PERMITIR"],
+                    self.storage_prompt_selected,
+                );
             }
         }
     }
@@ -1775,10 +1832,141 @@ impl App {
             }
         }
         if self.library.take_folder_picker_request() {
-            // The pure-Rust NativeActivity host has no Activity.onActivityResult
-            // bridge for SAF. Keep path entry usable instead of opening a picker
-            // whose selected document URI the host would be unable to retain.
+            self.open_folder_entry();
+        }
+    }
+
+    /// Leaves the opening for the storage prompt or the library.
+    fn finish_intro(&mut self) {
+        self.screen =
+            if self.storage_access == StorageAccess::Missing && !self.storage_prompt_dismissed {
+                Screen::StorageAccess
+            } else {
+                Screen::Library
+            };
+    }
+
+    /// Import Folder: path entry needs shared-storage access to be useful, so
+    /// ask for it first. (SAF is not usable: the pure-Rust NativeActivity host
+    /// has no `onActivityResult` bridge to receive the chosen tree URI.)
+    fn open_folder_entry(&mut self) {
+        if self.storage_access == StorageAccess::Missing {
+            self.storage_then_add_folder = true;
+            self.storage_prompt_selected = 1;
+            self.screen = Screen::StorageAccess;
+        } else {
             self.library.begin_add_folder_path();
+        }
+    }
+
+    fn answer_storage_prompt(&mut self, allow: bool) {
+        if allow {
+            self.storage_request_pending = true;
+            self.library
+                .set_status("ATIVE O ACESSO A TODOS OS ARQUIVOS PARA O ACERIS");
+            return;
+        }
+        self.storage_then_add_folder = false;
+        if !self.storage_prompt_dismissed {
+            self.storage_prompt_dismissed = true;
+            let _ = set_storage_flag(&self.games_dir, STORAGE_PROMPT_DISMISSED_KEY);
+        }
+        self.screen = Screen::Library;
+        self.library
+            .set_status("SEM ACESSO: USANDO SÓ A PASTA DO APLICATIVO");
+    }
+
+    fn update_storage_prompt_touch(&mut self, previous: &BTreeMap<i32, (f32, f32)>) {
+        if previous.is_empty() {
+            if let Some((&_id, &(x, y))) = self.pointers.iter().next() {
+                self.menu_tap = Some((x.round() as i32, y.round() as i32));
+            }
+            return;
+        }
+        if self.pointers.is_empty() {
+            let last = previous.values().next().copied();
+            if let (Some(_start), Some((x, y))) = (self.menu_tap.take(), last)
+                && let Some(index) = quick_menu::hit_test_confirmation(
+                    self.width,
+                    self.height,
+                    x.round() as i32,
+                    y.round() as i32,
+                )
+            {
+                self.storage_prompt_selected = index;
+                self.answer_storage_prompt(index == 1);
+            }
+        }
+    }
+
+    /// Records the host's shared-storage permission check.
+    ///
+    /// On the first grant the public `Aceris/games` folder is created and
+    /// added to the library once; later removals by the user are respected.
+    pub fn set_storage_access(&mut self, granted: bool, root: Option<PathBuf>) {
+        let previous = self.storage_access;
+        if root.is_some() {
+            self.storage_root = root;
+        }
+        self.storage_access = if granted {
+            StorageAccess::Granted
+        } else {
+            StorageAccess::Missing
+        };
+        if granted && previous != StorageAccess::Granted {
+            self.adopt_shared_games_folder();
+            if matches!(self.screen, Screen::StorageAccess) {
+                self.screen = Screen::Library;
+            }
+            if std::mem::take(&mut self.storage_then_add_folder) {
+                self.library.begin_add_folder_path();
+            }
+        } else if !granted
+            && previous == StorageAccess::Unknown
+            && !self.storage_prompt_dismissed
+            && matches!(self.screen, Screen::Library)
+        {
+            self.storage_prompt_selected = 1;
+            self.screen = Screen::StorageAccess;
+        }
+    }
+
+    /// True once after the user chose "Permitir"; the host then opens the
+    /// Android permission screen.
+    pub fn take_storage_access_request(&mut self) -> bool {
+        std::mem::take(&mut self.storage_request_pending)
+    }
+
+    /// The public games folder, `<shared storage>/Aceris/games`.
+    pub fn shared_games_folder(&self) -> Option<PathBuf> {
+        self.storage_root
+            .as_ref()
+            .map(|root| root.join("Aceris").join("games"))
+    }
+
+    fn adopt_shared_games_folder(&mut self) {
+        let Some(folder) = self.shared_games_folder() else {
+            return;
+        };
+        if storage_flag(&self.games_dir, SHARED_GAMES_FOLDER_ADDED_KEY) {
+            // Access may have been regranted; refresh the list from all folders.
+            self.library.reload();
+            return;
+        }
+        if fs::create_dir_all(&folder).is_err() {
+            self.library
+                .set_status("NÃO FOI POSSÍVEL CRIAR A PASTA ACERIS/GAMES");
+            return;
+        }
+        match self.library.add_scan_directory(&folder) {
+            Ok(_) => {
+                let _ = set_storage_flag(&self.games_dir, SHARED_GAMES_FOLDER_ADDED_KEY);
+                self.library
+                    .set_status(format!("JOGOS EM {}", folder.display()));
+            }
+            Err(_) => self
+                .library
+                .set_status("NÃO FOI POSSÍVEL ADICIONAR A PASTA ACERIS/GAMES"),
         }
     }
 
@@ -2166,6 +2354,27 @@ mod gamepad_axis_tests {
     }
 }
 
+fn storage_flag(games_dir: &Path, key: &str) -> bool {
+    fs::read_to_string(games_dir.join(".aceris").join(STORAGE_ACCESS_FILE))
+        .is_ok_and(|text| text.lines().any(|line| line.trim() == format!("{key}=1")))
+}
+
+fn set_storage_flag(games_dir: &Path, key: &str) -> std::io::Result<()> {
+    if storage_flag(games_dir, key) {
+        return Ok(());
+    }
+    let directory = games_dir.join(".aceris");
+    fs::create_dir_all(&directory)?;
+    let path = directory.join(STORAGE_ACCESS_FILE);
+    let mut text = fs::read_to_string(&path).unwrap_or_default();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(key);
+    text.push_str("=1\n");
+    fs::write(path, text)
+}
+
 /// Samples rendered per opening frame before scaling to the surface.
 const INTRO_PIXEL_BUDGET: f32 = 400.0 * 400.0;
 
@@ -2398,6 +2607,112 @@ mod tests {
         let mut app = App::new(&dir);
         app.resize(800, 960);
         (app, dir)
+    }
+
+    fn finish_intro_now(app: &mut App) {
+        app.screen = Screen::Intro { frame: 0 };
+        let mut frame = Vec::new();
+        for _ in 0..intro::FRAME_COUNT {
+            app.step_into(&mut frame);
+        }
+    }
+
+    #[test]
+    fn missing_storage_access_prompts_after_the_opening_and_allow_requests_it() {
+        let (mut app, dir) = app_with_games(0);
+        let root = dir.join("shared");
+        app.set_storage_access(false, Some(root.clone()));
+        finish_intro_now(&mut app);
+        assert_eq!(*app.screen(), Screen::StorageAccess);
+
+        assert!(app.key(96, true), "A chooses the selected Permitir");
+        assert!(app.take_storage_access_request());
+        assert!(!app.take_storage_access_request(), "request is one-shot");
+        assert_eq!(*app.screen(), Screen::StorageAccess);
+
+        app.set_storage_access(true, None);
+        assert_eq!(*app.screen(), Screen::Library);
+        let folder = root.join("Aceris").join("games");
+        assert!(folder.is_dir(), "public games folder is created");
+        assert!(
+            app.library
+                .scan_config()
+                .directories
+                .iter()
+                .any(|path| path.ends_with("Aceris/games"))
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn unknown_storage_state_goes_straight_to_the_library() {
+        let (mut app, dir) = app_with_games(0);
+        finish_intro_now(&mut app);
+        assert_eq!(*app.screen(), Screen::Library);
+        // A late "missing" report still asks once while on the library.
+        app.set_storage_access(false, None);
+        assert_eq!(*app.screen(), Screen::StorageAccess);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn not_now_is_remembered_across_launches() {
+        let (mut app, dir) = app_with_games(0);
+        app.set_storage_access(false, None);
+        app.screen = Screen::StorageAccess;
+        assert!(app.key(AKEYCODE_BACK, true));
+        assert_eq!(*app.screen(), Screen::Library);
+        assert!(!app.take_storage_access_request());
+
+        let mut reopened = App::new(&dir);
+        reopened.resize(800, 960);
+        reopened.set_storage_access(false, None);
+        finish_intro_now(&mut reopened);
+        assert_eq!(*reopened.screen(), Screen::Library);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn shared_folder_is_added_only_on_the_first_grant() {
+        let (mut app, dir) = app_with_games(0);
+        let root = dir.join("shared");
+        app.set_storage_access(true, Some(root.clone()));
+        let folder = root.join("Aceris").join("games");
+        let _ = app.library.remove_scan_directory(&folder);
+        let configured = app.library.scan_config().directories.len();
+
+        let mut reopened = App::new(&dir);
+        reopened.set_storage_access(true, Some(root));
+        assert_eq!(
+            reopened.library.scan_config().directories.len(),
+            configured,
+            "a folder the user removed is not added back"
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn import_folder_without_access_asks_first_then_opens_path_entry() {
+        let (mut app, dir) = app_with_games(0);
+        app.set_storage_access(false, Some(dir.join("shared")));
+        app.screen = Screen::Library;
+        app.storage_prompt_dismissed = true;
+        app.open_folder_entry();
+        assert_eq!(*app.screen(), Screen::StorageAccess);
+        app.set_storage_access(true, None);
+        assert_eq!(*app.screen(), Screen::Library);
+        assert!(app.library.search_is_focused(), "path entry is open");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn storage_prompt_renders_over_the_library() {
+        let (mut app, dir) = app_with_games(0);
+        app.screen = Screen::StorageAccess;
+        let mut frame = Vec::new();
+        app.step_into(&mut frame);
+        assert_eq!(frame.len(), 800 * 960 * 4);
+        fs::remove_dir_all(dir).ok();
     }
 
     fn touch(app: &mut App, x: f32, y: f32) {

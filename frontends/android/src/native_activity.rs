@@ -18,7 +18,7 @@ use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
 use raw_window_handle::{
     AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle,
 };
-use std::ffi::{CStr, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::path::{Path, PathBuf};
 use std::ptr::{self, NonNull};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -260,6 +260,16 @@ type CallIntMethodAFn =
 type CallVoidMethodAFn = unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue);
 type DeleteLocalRefFn = unsafe extern "system" fn(JniEnv, JniObject);
 type ExceptionCheckFn = unsafe extern "system" fn(JniEnv) -> u8;
+type FindClassFn = unsafe extern "system" fn(JniEnv, *const c_char) -> JniObject;
+type GetStaticMethodIdFn = GetMethodIdFn;
+type CallStaticBooleanMethodAFn =
+    unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue) -> u8;
+type CallStaticObjectMethodAFn = CallObjectMethodAFn;
+type NewObjectAFn = CallObjectMethodAFn;
+type NewObjectArrayFn = unsafe extern "system" fn(JniEnv, i32, JniObject, JniObject) -> JniObject;
+type SetObjectArrayElementFn = unsafe extern "system" fn(JniEnv, JniObject, i32, JniObject);
+type GetStringUtfCharsFn = unsafe extern "system" fn(JniEnv, JniObject, *mut u8) -> *const c_char;
+type ReleaseStringUtfCharsFn = unsafe extern "system" fn(JniEnv, JniObject, *const c_char);
 type ExceptionClearFn = unsafe extern "system" fn(JniEnv);
 
 /// Owns a JavaVM attachment on the app thread and polls anonymous playback
@@ -396,6 +406,354 @@ impl AttachedMediaMonitor {
             }
         }
         self.delete_local(activity_class);
+    }
+
+    /// Clears a pending exception and reports whether there was one.
+    fn take_exception(&self) -> bool {
+        let pending = self.exception_pending();
+        if pending {
+            self.clear_exception();
+        }
+        pending
+    }
+
+    fn find_class(&self, name: &'static [u8]) -> Option<JniObject> {
+        let find: FindClassFn = jni_function(self.env, 6)?;
+        // SAFETY: `name` is a NUL-terminated JNI class name of a framework class,
+        // visible to the system class loader used on natively attached threads.
+        let class = unsafe { find(self.env, name.as_ptr().cast()) };
+        if class.is_null() || self.take_exception() {
+            None
+        } else {
+            Some(class)
+        }
+    }
+
+    fn static_method(
+        &self,
+        class: JniObject,
+        name: &'static [u8],
+        signature: &'static [u8],
+    ) -> Option<JniMethod> {
+        let get: GetStaticMethodIdFn = jni_function(self.env, 113)?;
+        // SAFETY: NUL-terminated JNI descriptors; `class` is a live reference.
+        let method = unsafe {
+            get(
+                self.env,
+                class,
+                name.as_ptr().cast(),
+                signature.as_ptr().cast(),
+            )
+        };
+        if method.is_null() || self.take_exception() {
+            None
+        } else {
+            Some(method)
+        }
+    }
+
+    fn new_string(&self, text: &'static [u8]) -> Option<JniObject> {
+        let new_string: NewStringUtfFn = jni_function(self.env, 167)?;
+        // SAFETY: `text` is static NUL-terminated (modified) UTF-8.
+        let string = unsafe { new_string(self.env, text.as_ptr().cast()) };
+        if string.is_null() || self.take_exception() {
+            None
+        } else {
+            Some(string)
+        }
+    }
+
+    fn string_value(&self, string: JniObject) -> Option<String> {
+        let get: GetStringUtfCharsFn = jni_function(self.env, 169)?;
+        let release: ReleaseStringUtfCharsFn = jni_function(self.env, 170)?;
+        // SAFETY: `string` is a java.lang.String reference; the chars are
+        // released before returning.
+        unsafe {
+            let chars = get(self.env, string, ptr::null_mut());
+            if chars.is_null() {
+                self.take_exception();
+                return None;
+            }
+            let text = CStr::from_ptr(chars).to_string_lossy().into_owned();
+            release(self.env, string, chars);
+            Some(text)
+        }
+    }
+
+    /// Whether games in shared storage can be read: "All files access" on
+    /// Android 11+, the runtime read permission on 6-10.
+    fn storage_access_granted(&self, sdk_version: i32) -> Option<bool> {
+        if sdk_version >= 30 {
+            let class = self.find_class(b"android/os/Environment\0")?;
+            let method = self.static_method(class, b"isExternalStorageManager\0", b"()Z\0");
+            let call: Option<CallStaticBooleanMethodAFn> = jni_function(self.env, 119);
+            let result = match (method, call) {
+                // SAFETY: static boolean Environment.isExternalStorageManager().
+                (Some(method), Some(call)) => {
+                    let value = unsafe { call(self.env, class, method, ptr::null()) };
+                    (!self.take_exception()).then_some(value != 0)
+                }
+                _ => None,
+            };
+            self.delete_local(class);
+            return result;
+        }
+        if sdk_version >= 23 {
+            let call_int: CallIntMethodAFn = jni_function(self.env, 51)?;
+            let activity_class = self.class_of(self.activity)?;
+            let method = self.method(
+                activity_class,
+                b"checkSelfPermission\0",
+                b"(Ljava/lang/String;)I\0",
+            );
+            self.delete_local(activity_class);
+            let method = method?;
+            let permission = self.new_string(b"android.permission.READ_EXTERNAL_STORAGE\0")?;
+            let args = [JniValue {
+                object_value: permission,
+            }];
+            // SAFETY: Context.checkSelfPermission(String) on the live Activity.
+            let status = unsafe { call_int(self.env, self.activity, method, args.as_ptr()) };
+            self.delete_local(permission);
+            if self.take_exception() {
+                return None;
+            }
+            return Some(status == 0);
+        }
+        // Before Android 6 storage permissions are granted at install time.
+        Some(true)
+    }
+
+    /// `Environment.getExternalStorageDirectory()` as a path.
+    fn external_storage_root(&self) -> Option<PathBuf> {
+        let call_static: CallStaticObjectMethodAFn = jni_function(self.env, 116)?;
+        let call_object: CallObjectMethodAFn = jni_function(self.env, 36)?;
+        let class = self.find_class(b"android/os/Environment\0")?;
+        let method = self.static_method(
+            class,
+            b"getExternalStorageDirectory\0",
+            b"()Ljava/io/File;\0",
+        );
+        // SAFETY: static Environment.getExternalStorageDirectory().
+        let file = method
+            .map(|method| unsafe { call_static(self.env, class, method, ptr::null()) })
+            .filter(|file| !file.is_null() && !self.take_exception());
+        self.delete_local(class);
+        let file = file?;
+        let path = self.class_of(file).and_then(|file_class| {
+            let method = self.method(file_class, b"getAbsolutePath\0", b"()Ljava/lang/String;\0");
+            self.delete_local(file_class);
+            // SAFETY: File.getAbsolutePath() on a live File.
+            let string = unsafe { call_object(self.env, file, method?, ptr::null()) };
+            if string.is_null() || self.take_exception() {
+                return None;
+            }
+            let text = self.string_value(string);
+            self.delete_local(string);
+            text
+        });
+        self.delete_local(file);
+        path.filter(|text| !text.is_empty()).map(PathBuf::from)
+    }
+
+    /// Opens Android's permission UI for shared storage. The answer is read
+    /// back with [`Self::storage_access_granted`] when the Activity resumes.
+    fn request_storage_access(&self, sdk_version: i32) -> bool {
+        if sdk_version >= 30 {
+            return self.open_all_files_access_settings();
+        }
+        if sdk_version >= 23 {
+            return self.request_legacy_storage_permissions();
+        }
+        false
+    }
+
+    fn open_all_files_access_settings(&self) -> bool {
+        // Prefer the per-app page (`package:<id>`); some devices only ship the
+        // generic list, so fall back to it.
+        if self.start_settings_activity(
+            b"android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION\0",
+            true,
+        ) {
+            return true;
+        }
+        self.start_settings_activity(
+            b"android.settings.MANAGE_ALL_FILES_ACCESS_PERMISSION\0",
+            false,
+        )
+    }
+
+    fn start_settings_activity(&self, action: &'static [u8], with_package: bool) -> bool {
+        let (Some(new_object), Some(call_object), Some(call_static), Some(call_void)) = (
+            jni_function::<NewObjectAFn>(self.env, 30),
+            jni_function::<CallObjectMethodAFn>(self.env, 36),
+            jni_function::<CallStaticObjectMethodAFn>(self.env, 116),
+            jni_function::<CallVoidMethodAFn>(self.env, 63),
+        ) else {
+            return false;
+        };
+        let Some(intent_class) = self.find_class(b"android/content/Intent\0") else {
+            return false;
+        };
+        let Some(action_string) = self.new_string(action) else {
+            self.delete_local(intent_class);
+            return false;
+        };
+        let mut locals = vec![intent_class, action_string];
+        let intent = (|| {
+            if !with_package {
+                let constructor =
+                    self.method(intent_class, b"<init>\0", b"(Ljava/lang/String;)V\0")?;
+                let args = [JniValue {
+                    object_value: action_string,
+                }];
+                // SAFETY: new Intent(String).
+                let intent =
+                    unsafe { new_object(self.env, intent_class, constructor, args.as_ptr()) };
+                return (!intent.is_null() && !self.take_exception()).then_some(intent);
+            }
+            // "package:" + getPackageName()
+            let activity_class = self.class_of(self.activity)?;
+            locals.push(activity_class);
+            let get_package = self.method(
+                activity_class,
+                b"getPackageName\0",
+                b"()Ljava/lang/String;\0",
+            )?;
+            // SAFETY: Context.getPackageName().
+            let package = unsafe { call_object(self.env, self.activity, get_package, ptr::null()) };
+            if package.is_null() || self.take_exception() {
+                return None;
+            }
+            locals.push(package);
+            let package = self.string_value(package)?;
+            let uri_text = CString::new(format!("package:{package}")).ok()?;
+            let new_string: NewStringUtfFn = jni_function(self.env, 167)?;
+            // SAFETY: NUL-terminated UTF-8 built above.
+            let uri_string = unsafe { new_string(self.env, uri_text.as_ptr()) };
+            if uri_string.is_null() || self.take_exception() {
+                return None;
+            }
+            locals.push(uri_string);
+            let uri_class = self.find_class(b"android/net/Uri\0")?;
+            locals.push(uri_class);
+            let parse = self.static_method(
+                uri_class,
+                b"parse\0",
+                b"(Ljava/lang/String;)Landroid/net/Uri;\0",
+            )?;
+            let args = [JniValue {
+                object_value: uri_string,
+            }];
+            // SAFETY: static Uri.parse(String).
+            let uri = unsafe { call_static(self.env, uri_class, parse, args.as_ptr()) };
+            if uri.is_null() || self.take_exception() {
+                return None;
+            }
+            locals.push(uri);
+            let constructor = self.method(
+                intent_class,
+                b"<init>\0",
+                b"(Ljava/lang/String;Landroid/net/Uri;)V\0",
+            )?;
+            let args = [
+                JniValue {
+                    object_value: action_string,
+                },
+                JniValue { object_value: uri },
+            ];
+            // SAFETY: new Intent(String, Uri).
+            let intent = unsafe { new_object(self.env, intent_class, constructor, args.as_ptr()) };
+            (!intent.is_null() && !self.take_exception()).then_some(intent)
+        })();
+        let started = intent.is_some_and(|intent| {
+            locals.push(intent);
+            let Some(activity_class) = self.class_of(self.activity) else {
+                return false;
+            };
+            locals.push(activity_class);
+            let Some(start) = self.method(
+                activity_class,
+                b"startActivity\0",
+                b"(Landroid/content/Intent;)V\0",
+            ) else {
+                return false;
+            };
+            let args = [JniValue {
+                object_value: intent,
+            }];
+            // SAFETY: Activity.startActivity(Intent); a missing settings
+            // screen throws ActivityNotFoundException, which is cleared here.
+            unsafe { call_void(self.env, self.activity, start, args.as_ptr()) };
+            !self.take_exception()
+        });
+        for local in locals {
+            self.delete_local(local);
+        }
+        started
+    }
+
+    fn request_legacy_storage_permissions(&self) -> bool {
+        let (Some(new_array), Some(set_element), Some(call_void)) = (
+            jni_function::<NewObjectArrayFn>(self.env, 172),
+            jni_function::<SetObjectArrayElementFn>(self.env, 174),
+            jni_function::<CallVoidMethodAFn>(self.env, 63),
+        ) else {
+            return false;
+        };
+        let Some(string_class) = self.find_class(b"java/lang/String\0") else {
+            return false;
+        };
+        // SAFETY: a two-element String[] filled below.
+        let array = unsafe { new_array(self.env, 2, string_class, ptr::null_mut()) };
+        self.delete_local(string_class);
+        if array.is_null() || self.take_exception() {
+            return false;
+        }
+        for (index, name) in [
+            &b"android.permission.READ_EXTERNAL_STORAGE\0"[..],
+            &b"android.permission.WRITE_EXTERNAL_STORAGE\0"[..],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let new_string: Option<NewStringUtfFn> = jni_function(self.env, 167);
+            let Some(new_string) = new_string else {
+                self.delete_local(array);
+                return false;
+            };
+            // SAFETY: static NUL-terminated permission names.
+            let value = unsafe { new_string(self.env, name.as_ptr().cast()) };
+            if value.is_null() || self.take_exception() {
+                self.delete_local(array);
+                return false;
+            }
+            // SAFETY: index is within the array created above.
+            unsafe { set_element(self.env, array, index as i32, value) };
+            self.delete_local(value);
+        }
+        let requested = self.class_of(self.activity).is_some_and(|activity_class| {
+            let method = self.method(
+                activity_class,
+                b"requestPermissions\0",
+                b"([Ljava/lang/String;I)V\0",
+            );
+            self.delete_local(activity_class);
+            let Some(method) = method else {
+                return false;
+            };
+            let args = [
+                JniValue {
+                    object_value: array,
+                },
+                JniValue { int_value: 7 },
+            ];
+            // SAFETY: Activity.requestPermissions(String[], int).
+            unsafe { call_void(self.env, self.activity, method, args.as_ptr()) };
+            !self.take_exception()
+        });
+        self.delete_local(array);
+        requested
     }
 
     /// Returns true when an active external playback session has USAGE_MEDIA.
@@ -674,6 +1032,17 @@ unsafe fn games_directory(activity: &NativeActivity) -> PathBuf {
     // Best effort: the library simply shows an empty list if this fails.
     let _ = std::fs::create_dir_all(&games);
     games
+}
+
+fn log_storage_access(granted: bool) {
+    android_log(
+        ANDROID_LOG_INFO,
+        if granted {
+            "Shared storage access: granted"
+        } else {
+            "Shared storage access: missing"
+        },
+    );
 }
 
 /// Enables Android host timing logs when
@@ -1020,6 +1389,11 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
     let mut cpu_geometry_size = (0u32, 0u32);
     let mut next_frame = Instant::now();
     let mut first_frame_logged = false;
+    // Shared-storage permission is rechecked when the Activity comes back to
+    // the foreground (the user answers in a system screen) and periodically
+    // while the prompt is visible.
+    let mut storage_checked_resumed = false;
+    let mut last_storage_check = Instant::now();
 
     loop {
         let (window, queue, resumed, destroyed) = {
@@ -1034,6 +1408,9 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
         if destroyed {
             gpu_presenter.take();
             break;
+        }
+        if !resumed {
+            storage_checked_resumed = false;
         }
 
         // Follow the input queue the UI thread published.
@@ -1132,6 +1509,52 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
             if frame_presented && !first_frame_logged {
                 first_frame_logged = true;
                 android_log(ANDROID_LOG_INFO, "First application frame presented");
+                // JNI is attached only after the first frame so a JNI failure
+                // can never keep the launcher from appearing.
+                if media_monitor.is_none() {
+                    media_monitor = AttachedMediaMonitor::attach(
+                        host.java_vm,
+                        host.activity_global,
+                        host.sdk_version,
+                    );
+                }
+                if let Some(monitor) = media_monitor.as_ref() {
+                    let root = monitor.external_storage_root();
+                    if let Some(granted) = monitor.storage_access_granted(host.sdk_version) {
+                        log_storage_access(granted);
+                        app.set_storage_access(granted, root);
+                    }
+                }
+                storage_checked_resumed = true;
+                last_storage_check = Instant::now();
+            }
+            if first_frame_logged {
+                let prompt_visible = matches!(app.screen(), Screen::StorageAccess);
+                let recheck = !storage_checked_resumed
+                    || (prompt_visible && last_storage_check.elapsed() >= Duration::from_secs(1));
+                if recheck && let Some(monitor) = media_monitor.as_ref() {
+                    if let Some(granted) = monitor.storage_access_granted(host.sdk_version) {
+                        if prompt_visible || granted {
+                            log_storage_access(granted);
+                        }
+                        app.set_storage_access(granted, None);
+                    }
+                    storage_checked_resumed = true;
+                    last_storage_check = Instant::now();
+                }
+                if app.take_storage_access_request() {
+                    let opened = media_monitor
+                        .as_ref()
+                        .is_some_and(|monitor| monitor.request_storage_access(host.sdk_version));
+                    if opened {
+                        android_log(ANDROID_LOG_INFO, "Opened the storage permission screen");
+                    } else {
+                        android_log(
+                            ANDROID_LOG_ERROR,
+                            "Could not open the Android storage permission screen",
+                        );
+                    }
+                }
             }
             if frame_presented
                 && !audio_initialization_attempted
@@ -1145,14 +1568,13 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
                         "Aceris Android: AAudio unavailable; game audio remains disabled, UI/emulation continue"
                     );
                 } else {
-                    eprintln!(
-                        "Aceris Android: attaching optional JNI helpers after audio initialization"
-                    );
-                    media_monitor = AttachedMediaMonitor::attach(
-                        host.java_vm,
-                        host.activity_global,
-                        host.sdk_version,
-                    );
+                    if media_monitor.is_none() {
+                        media_monitor = AttachedMediaMonitor::attach(
+                            host.java_vm,
+                            host.activity_global,
+                            host.sdk_version,
+                        );
+                    }
                     if let Some(monitor) = media_monitor.as_ref() {
                         monitor.set_volume_control_stream();
                     }

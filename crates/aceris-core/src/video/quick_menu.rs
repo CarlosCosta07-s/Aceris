@@ -500,6 +500,36 @@ pub fn render_confirmation_overlay(
     action: ConfirmationAction,
     selected: usize,
 ) -> bool {
+    let title = match action {
+        ConfirmationAction::Restart => "REINICIAR JOGO?",
+        ConfirmationAction::BackToLibrary => "VOLTAR À BIBLIOTECA?",
+    };
+    render_prompt_overlay(
+        frame,
+        width,
+        height,
+        format,
+        title,
+        ["Progresso não salvo", "pode ser perdido."],
+        ["CANCELAR", "CONFIRMAR"],
+        selected,
+    )
+}
+
+/// Draws a two-choice prompt with the confirmation panel's geometry, so
+/// [`hit_test_confirmation`] also maps touches for it (row 0 is the first
+/// label, row 1 the second).
+#[allow(clippy::too_many_arguments)]
+pub fn render_prompt_overlay(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    title: &str,
+    lines: [&str; 2],
+    labels: [&str; 2],
+    selected: usize,
+) -> bool {
     let Some(geometry) = confirmation_geometry(width, height) else {
         return false;
     };
@@ -528,10 +558,6 @@ pub fn render_confirmation_overlay(
     );
     draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
 
-    let title = match action {
-        ConfirmationAction::Restart => "REINICIAR JOGO?",
-        ConfirmationAction::BackToLibrary => "VOLTAR À BIBLIOTECA?",
-    };
     let text_x = geometry.panel.x + 18 * scale;
     draw_text_for_format(
         frame,
@@ -551,7 +577,7 @@ pub fn render_confirmation_overlay(
         text_x,
         geometry.panel.y + 42 * scale,
         text_scale,
-        "Progresso não salvo",
+        lines[0],
         brand::rgb(brand::TEXT),
         format,
     );
@@ -562,12 +588,11 @@ pub fn render_confirmation_overlay(
         text_x,
         geometry.panel.y + 58 * scale,
         text_scale,
-        "pode ser perdido.",
+        lines[1],
         brand::rgb(brand::TEXT),
         format,
     );
 
-    let labels = ["CANCELAR", "CONFIRMAR"];
     for (index, row) in geometry.rows.iter().enumerate() {
         let is_selected = index == selected.min(1);
         blend_rounded_rect(
