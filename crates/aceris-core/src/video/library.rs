@@ -6188,13 +6188,39 @@ fn landscape_grid_visible_rows(logical_height: f32) -> usize {
 }
 
 fn cover_palette(title: &str) -> (u32, u32, u32) {
+    // Placeholder artwork stays inside the Aceris identity instead of
+    // introducing unrelated accent hues into the game library.
     const PALETTES: [(u32, u32, u32); 6] = [
-        (0x51213A, 0xE5173F, 0xF4A6B7),
-        (0x183A54, 0x3E9AB5, 0xA7DDE8),
-        (0x31442C, 0x80D45A, 0xC8ECA9),
-        (0x4B2A68, 0x9A65C7, 0xD9B7F0),
-        (0x514020, 0xD39C39, 0xF0D59A),
-        (0x26334E, 0x667DCC, 0xB8C5F0),
+        (
+            brand::BACKGROUND,
+            brand::ACCENT_RED_DARK,
+            brand::ACCENT_RED_LIGHT,
+        ),
+        (
+            brand::SURFACE_BASE,
+            brand::PURPLE_LIGHT,
+            brand::ACCENT_RED,
+        ),
+        (
+            brand::SURFACE_PANEL,
+            brand::ACCENT_GREEN,
+            brand::ACCENT_GREEN_LIGHT,
+        ),
+        (
+            brand::SURFACE_HEADER,
+            brand::ACCENT_RED,
+            brand::TEXT,
+        ),
+        (
+            brand::PURPLE_DARK,
+            brand::PURPLE_LIGHT,
+            brand::TEXT_MUTED,
+        ),
+        (
+            brand::SURFACE_CARD,
+            brand::ACCENT_GREEN,
+            brand::TEXT,
+        ),
     ];
     let mut hash = 2_166_136_261u32;
     for byte in title.bytes() {
