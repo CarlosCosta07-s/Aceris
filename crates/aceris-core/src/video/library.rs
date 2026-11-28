@@ -2065,10 +2065,14 @@ impl Library {
                         }
                     }
                 } else if (676.0..720.0).contains(&y) {
-                    if (20.0..194.0).contains(&x) {
+                    if (12.0..100.0).contains(&x) {
+                        self.select_page(LibraryPage::Recent);
+                    } else if (108.0..196.0).contains(&x) {
                         self.select_page(LibraryPage::Favorites);
-                    } else if (202.0..380.0).contains(&x) {
-                        self.select_page(LibraryPage::Games);
+                    } else if (204.0..292.0).contains(&x) {
+                        self.request_folder_picker();
+                    } else if (300.0..388.0).contains(&x) {
+                        self.reload();
                     }
                 }
                 return ClickResult::Ignored;
@@ -2250,6 +2254,23 @@ impl Library {
                         self.select_page(LibraryPage::Favorites);
                     } else if (488.0..730.0).contains(&x) {
                         self.select_page(LibraryPage::Homebrew);
+                    }
+                } else if (438.0..502.0).contains(&y) {
+                    let page = if (28.0..160.0).contains(&x) {
+                        Some(LibraryPage::Recent)
+                    } else if (170.0..302.0).contains(&x) {
+                        Some(LibraryPage::Games)
+                    } else if (312.0..444.0).contains(&x) {
+                        Some(LibraryPage::Favorites)
+                    } else if (454.0..586.0).contains(&x) {
+                        Some(LibraryPage::Homebrew)
+                    } else if (596.0..728.0).contains(&x) {
+                        Some(LibraryPage::Settings)
+                    } else {
+                        None
+                    };
+                    if let Some(page) = page {
+                        self.select_page(page);
                     }
                 }
                 ClickResult::Ignored
@@ -2775,32 +2796,68 @@ impl Library {
                     );
                 }
             }
-            responsive_panel(
-                frame, width, height, 20.0, 676.0, 174.0, 44.0, scale, 0x21152F,
-            );
-            responsive_text_centered(
+            responsive_fill(
                 frame,
-                width,
-                height,
-                107.0,
-                690.0,
-                small_scale,
-                "FAVORITOS",
-                brand::TEXT,
+                width as usize,
+                height as usize,
+                0.0,
+                672.0,
+                400.0,
+                54.0,
+                scale,
+                0x141C25,
             );
-            responsive_panel(
-                frame, width, height, 202.0, 676.0, 178.0, 44.0, scale, 0x21152F,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                291.0,
-                690.0,
-                small_scale,
-                "VER BIBLIOTECA",
-                brand::TEXT,
-            );
+            let dock_actions = [
+                ("R", "REC."),
+                ("F", "FAV."),
+                ("+", "PASTA"),
+                ("A", "ATUALIZAR"),
+            ];
+            for (slot, (symbol, label)) in dock_actions.into_iter().enumerate() {
+                let x = 12.0 + slot as f32 * 96.0;
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    x,
+                    676.0,
+                    88.0,
+                    44.0,
+                    scale,
+                    0x202A34,
+                );
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    x + 6.0,
+                    685.0,
+                    22.0,
+                    26.0,
+                    scale,
+                    if slot == 2 { brand::ACCENT_RED } else { 0x17485D },
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    x + 17.0,
+                    694.0,
+                    small_scale,
+                    symbol,
+                    brand::TEXT,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    x + 57.0,
+                    694.0,
+                    small_scale,
+                    label,
+                    brand::TEXT,
+                );
+            }
         } else if self.page == LibraryPage::Settings {
             responsive_text(
                 frame,
@@ -3682,75 +3739,98 @@ impl Library {
             brand::TEXT,
         );
 
-        let tabs = [
-            (120.0, 84.0, LibraryPage::Home, "INÍCIO"),
-            (210.0, 100.0, LibraryPage::Recent, "RECENTES"),
-            (316.0, 94.0, LibraryPage::Games, "JOGOS"),
-            (416.0, 150.0, LibraryPage::Homebrew, "HOMEBREW"),
-            (572.0, 120.0, LibraryPage::Favorites, "FAVORITOS"),
-        ];
-        for (x, tab_width, page, label) in tabs {
-            let selected = self.page == page;
+        if self.page == LibraryPage::Home {
+            responsive_text(
+                frame,
+                width,
+                height,
+                142.0,
+                27.0,
+                text_scale,
+                "SEUS JOGOS",
+                brand::TEXT,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                790.0,
+                27.0,
+                text_scale,
+                &format!("{} JOGOS", game_count),
+                brand::ACCENT_GREEN_LIGHT,
+            );
+        } else {
+            let tabs = [
+                (120.0, 84.0, LibraryPage::Home, "INÍCIO"),
+                (210.0, 100.0, LibraryPage::Recent, "RECENTES"),
+                (316.0, 94.0, LibraryPage::Games, "JOGOS"),
+                (416.0, 150.0, LibraryPage::Homebrew, "HOMEBREW"),
+                (572.0, 120.0, LibraryPage::Favorites, "FAVORITOS"),
+            ];
+            for (x, tab_width, page, label) in tabs {
+                let selected = self.page == page;
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    x,
+                    12.0,
+                    tab_width,
+                    42.0,
+                    scale,
+                    if selected { 0x17485D } else { 0x202A34 },
+                );
+                if selected {
+                    responsive_fill(
+                        frame,
+                        width as usize,
+                        height as usize,
+                        x + 4.0,
+                        52.0,
+                        tab_width - 8.0,
+                        3.0,
+                        scale,
+                        0x55C8E8,
+                    );
+                }
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    x + tab_width * 0.5,
+                    27.0,
+                    text_scale,
+                    label,
+                    if selected { brand::TEXT } else { 0xBBAFC7 },
+                );
+            }
             responsive_panel(
                 frame,
                 width,
                 height,
-                x,
+                875.0,
                 12.0,
-                tab_width,
+                107.0,
                 42.0,
                 scale,
-                if selected { 0x17485D } else { 0x202A34 },
+                if self.page == LibraryPage::Settings {
+                    brand::ACCENT_RED
+                } else {
+                    0x2D1A3B
+                },
             );
-            if selected {
-                responsive_fill(
-                    frame,
-                    width as usize,
-                    height as usize,
-                    x + 4.0,
-                    52.0,
-                    tab_width - 8.0,
-                    3.0,
-                    scale,
-                    0x55C8E8,
-                );
-            }
             responsive_text_centered(
                 frame,
                 width,
                 height,
-                x + tab_width * 0.5,
+                928.0,
                 27.0,
                 text_scale,
-                label,
-                if selected { brand::TEXT } else { 0xBBAFC7 },
+                "AJUSTES",
+                brand::TEXT,
             );
         }
-        responsive_panel(
-            frame,
-            width,
-            height,
-            875.0,
-            12.0,
-            107.0,
-            42.0,
-            scale,
-            if self.page == LibraryPage::Settings {
-                brand::ACCENT_RED
-            } else {
-                0x2D1A3B
-            },
-        );
-        responsive_text_centered(
-            frame,
-            width,
-            height,
-            928.0,
-            27.0,
-            text_scale,
-            "AJUSTES",
-            brand::TEXT,
-        );
 
         // A distinct right-side action panel leaves the main area for the collection.
         responsive_fill(
@@ -3951,16 +4031,70 @@ impl Library {
                     0xB7C5D0,
                 );
             }
-            responsive_text(
+            responsive_fill(
                 frame,
-                width,
-                height,
-                30.0,
-                454.0,
-                small_scale,
-                "A / TOQUE: ABRIR     DIRECIONAL: NAVEGAR",
-                0x91A4B3,
+                width as usize,
+                height as usize,
+                20.0,
+                436.0,
+                718.0,
+                64.0,
+                scale,
+                0x141C25,
             );
+            let dock_items = [
+                (LibraryPage::Recent, "R", "RECENTES"),
+                (LibraryPage::Games, "J", "JOGOS"),
+                (LibraryPage::Favorites, "F", "FAVORITOS"),
+                (LibraryPage::Homebrew, "H", "HOMEBREW"),
+                (LibraryPage::Settings, "A", "AJUSTES"),
+            ];
+            for (slot, (page, symbol, label)) in dock_items.into_iter().enumerate() {
+                let x = 28.0 + slot as f32 * 142.0;
+                let selected = self.page == page;
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    x,
+                    442.0,
+                    132.0,
+                    52.0,
+                    scale,
+                    if selected { 0x17485D } else { 0x202A34 },
+                );
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    x + 8.0,
+                    453.0,
+                    30.0,
+                    30.0,
+                    scale,
+                    if selected { brand::ACCENT_RED } else { 0x2D4150 },
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    x + 23.0,
+                    462.0,
+                    small_scale,
+                    symbol,
+                    brand::TEXT,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    x + 46.0,
+                    464.0,
+                    small_scale,
+                    label,
+                    if selected { brand::TEXT } else { 0xB7C5D0 },
+                );
+            }
         } else if self.page == LibraryPage::Settings {
             responsive_text(
                 frame,
@@ -5065,6 +5199,19 @@ fn render_home_game_tile(
     title_scale: usize,
     small_scale: usize,
 ) {
+    if selected {
+        responsive_panel(
+            frame,
+            width,
+            height,
+            x - 3.0,
+            y - 3.0,
+            card_width + 6.0,
+            card_height + 6.0,
+            scale,
+            0x55C8E8,
+        );
+    }
     responsive_panel(
         frame,
         width,
@@ -5074,7 +5221,7 @@ fn render_home_game_tile(
         card_width,
         card_height,
         scale,
-        if selected { 0x17485D } else { 0x202A34 },
+        if selected { 0x173B4A } else { 0x202A34 },
     );
     responsive_fill(
         frame,
@@ -6072,11 +6219,55 @@ mod tests {
             library.click_responsive(100, 500, 400, 800),
             ClickResult::Activated
         );
-        library.click_responsive(100, 690, 400, 800);
+        library.click_responsive(150, 690, 400, 800);
         assert_eq!(library.page(), LibraryPage::Favorites);
-        library.click_responsive(50, 120, 400, 800);
-        library.click_responsive(290, 690, 400, 800);
+        library.click_responsive(150, 120, 400, 800);
         assert_eq!(library.page(), LibraryPage::Games);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn landscape_home_dock_navigates_to_console_pages() {
+        let dir = std::env::temp_dir().join(format!("aceris-landscape-dock-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let mut library = Library::new(Vec::new(), dir.display().to_string());
+
+        for (x, expected) in [
+            (94, LibraryPage::Recent),
+            (236, LibraryPage::Games),
+            (378, LibraryPage::Favorites),
+            (520, LibraryPage::Homebrew),
+            (662, LibraryPage::Settings),
+        ] {
+            library.select_page(LibraryPage::Home);
+            assert_eq!(
+                library.click_responsive(x, 470, 1000, 600),
+                ClickResult::Ignored
+            );
+            assert_eq!(library.page(), expected);
+        }
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn portrait_home_dock_imports_and_refreshes_without_changing_page() {
+        let dir = std::env::temp_dir().join(format!("aceris-portrait-dock-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let mut library = Library::new(Vec::new(), dir.display().to_string());
+
+        assert_eq!(
+            library.click_responsive(245, 690, 400, 800),
+            ClickResult::Ignored
+        );
+        assert!(library.take_folder_picker_request());
+        library.select_page(LibraryPage::Home);
+        assert_eq!(
+            library.click_responsive(345, 690, 400, 800),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.page(), LibraryPage::Home);
 
         fs::remove_dir_all(dir).unwrap();
     }
