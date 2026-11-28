@@ -1978,9 +1978,13 @@ impl Library {
                 {
                     self.cycle_virtual_controls_preset_from_settings();
                 } else if (594.0 + settings_offset..638.0 + settings_offset).contains(&y)
-                    && (38.0..362.0).contains(&x)
+                    && (38.0..198.0).contains(&x)
                 {
                     self.toggle_performance_mode_from_settings();
+                } else if (594.0 + settings_offset..638.0 + settings_offset).contains(&y)
+                    && (202.0..362.0).contains(&x)
+                {
+                    self.cycle_gamepad_deadzone_from_settings();
                 } else if logical_height >= 740.0 + settings_offset
                     && (648.0 + settings_offset..690.0 + settings_offset).contains(&y)
                     && (38.0..362.0).contains(&x)
@@ -2099,8 +2103,10 @@ impl Library {
                         self.toggle_recursive_from_settings();
                     }
                 }
-                if (296.0..340.0).contains(&y) && (590.0..970.0).contains(&x) {
+                if (296.0..340.0).contains(&y) && (590.0..775.0).contains(&x) {
                     self.toggle_performance_mode_from_settings();
+                } else if (296.0..340.0).contains(&y) && (785.0..970.0).contains(&x) {
+                    self.cycle_gamepad_deadzone_from_settings();
                 } else if self.touch_keyboard_enabled
                     && (426.0..470.0).contains(&y)
                     && (590.0..970.0).contains(&x)
