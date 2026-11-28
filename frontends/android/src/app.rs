@@ -2156,14 +2156,14 @@ mod screenshot_tests {
         assert_eq!(app.library.page(), library::LibraryPage::Home);
 
         let initial = app.library.render_responsive(1000, 600);
-        assert!(app.set_gamepad_axes(0.0, 0.8));
+        assert!(app.set_gamepad_axes(0.0, -0.8));
         let focused_actions = app.library.render_responsive(1000, 600);
         assert_ne!(
             focused_actions, initial,
-            "stick down should focus the home action row"
+            "stick up should focus the featured game actions"
         );
 
-        assert!(app.set_gamepad_axes(0.0, 0.8));
+        assert!(app.set_gamepad_axes(0.0, -0.8));
         let held = app.library.render_responsive(1000, 600);
         assert_eq!(
             held, focused_actions,
@@ -2172,10 +2172,10 @@ mod screenshot_tests {
 
         assert!(app.set_gamepad_axes(0.0, 0.0));
         assert!(app.set_gamepad_axes(0.0, 0.8));
-        let focused_navigation = app.library.render_responsive(1000, 600);
+        let focused_games = app.library.render_responsive(1000, 600);
         assert_ne!(
-            focused_navigation, held,
-            "a new stick press should move to the next focus group"
+            focused_games, held,
+            "a new stick press should return focus to the game collection"
         );
 
         let _ = fs::remove_dir_all(directory);
@@ -3171,7 +3171,7 @@ mod tests {
         app.resize(1000, 600);
         app.screen = Screen::Library;
 
-        assert!(app.key(20, true), "D-pad Down focuses the home action row");
+        assert!(app.key(19, true), "D-pad Up focuses the home action row");
         assert!(app.key(22, true), "D-pad Right focuses Add Favorite");
         assert!(app.key(96, true), "A activates the focused favorite action");
         assert_eq!(app.library.favorite_count(), 1);
