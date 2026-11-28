@@ -148,6 +148,48 @@ impl GamepadManager {
         Ok(())
     }
 
+    pub(crate) fn axis_settings(&self) -> &GamepadAxisSettings {
+        &self.axis_settings
+    }
+
+    pub(crate) fn load_global_axis_settings_for_editor(&self) -> GamepadAxisSettings {
+        GamepadAxisSettings::load_global(&self.settings_directory)
+    }
+
+    pub(crate) fn load_game_axis_settings_for_editor(&self) -> GamepadAxisSettings {
+        self.game_identity
+            .map(|identity| {
+                GamepadAxisSettings::load_for_game_or_global(&self.settings_directory, identity)
+            })
+            .unwrap_or_else(|| self.load_global_axis_settings_for_editor())
+    }
+
+    pub(crate) fn save_axis_settings_for_editor(
+        &mut self,
+        settings: GamepadAxisSettings,
+        game_scope: bool,
+    ) -> std::io::Result<()> {
+        if game_scope {
+            if let Some(identity) = self.game_identity {
+                settings.save_for_game(&self.settings_directory, identity)?;
+            } else {
+                settings.save_global(&self.settings_directory)?;
+            }
+        } else {
+            settings.save_global(&self.settings_directory)?;
+        }
+        self.axis_settings = settings;
+        Ok(())
+    }
+
+    pub(crate) fn reload_effective_axis_settings(&mut self) {
+        self.axis_settings = GamepadAxisSettings::load_for_context(
+            &self.settings_directory,
+            self.active_device_uuid,
+            self.game_identity,
+        );
+    }
+
     pub(crate) fn reload_effective_mapping(&mut self) {
         self.mapping = GamepadMapping::load_for_context(
             &self.settings_directory,

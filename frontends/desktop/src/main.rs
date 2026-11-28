@@ -779,6 +779,7 @@ fn emulate(
     let mut diagnostics_visible = false;
     let mut quick_menu_notice: Option<&'static str> = None;
     let mut gamepad_mapping_editor_open = false;
+    let mut gamepad_axis_editor_open = false;
     let mut gamepad_mapping_selected = 0usize;
     let mut gamepad_mapping_game_scope = false;
     let mut layout_profile = layout_preferences.profile_for_game(
@@ -805,9 +806,12 @@ fn emulate(
                     if gamepad_mapping_editor_open {
                         if gamepad.mapping_capture_active() {
                             gamepad.cancel_mapping_capture();
+                        } else if gamepad_axis_editor_open {
+                            gamepad_axis_editor_open = false;
                         } else {
                             gamepad_mapping_editor_open = false;
                             gamepad.reload_effective_mapping();
+                            gamepad.reload_effective_axis_settings();
                         }
                     } else if pending_confirmation.take().is_some() {
                         confirmation_selected = 0;
@@ -830,18 +834,110 @@ fn emulate(
                     }
                 }
                 window::WindowEvent::Key(window::Key::Up)
-                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() =>
+                    if gamepad_mapping_editor_open
+                        && gamepad_axis_editor_open
+                        && !gamepad.mapping_capture_active() =>
+                {
+                    let mut settings = *gamepad.axis_settings();
+                    settings.set_invert_x(!settings.invert_x());
+                    if let Err(error) =
+                        gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                    {
+                        eprintln!("could not save gamepad axis settings: {error}");
+                    }
+                }
+                window::WindowEvent::Key(window::Key::Down)
+                    if gamepad_mapping_editor_open
+                        && gamepad_axis_editor_open
+                        && !gamepad.mapping_capture_active() =>
+                {
+                    let mut settings = *gamepad.axis_settings();
+                    settings.set_invert_y(!settings.invert_y());
+                    if let Err(error) =
+                        gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                    {
+                        eprintln!("could not save gamepad axis settings: {error}");
+                    }
+                }
+                window::WindowEvent::Key(window::Key::Left)
+                    if gamepad_mapping_editor_open
+                        && gamepad_axis_editor_open
+                        && !gamepad.mapping_capture_active() =>
+                {
+                    let mut settings = *gamepad.axis_settings();
+                    settings.set_sensitivity_percent(
+                        settings.sensitivity_percent().saturating_sub(10),
+                    );
+                    if let Err(error) =
+                        gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                    {
+                        eprintln!("could not save gamepad axis settings: {error}");
+                    }
+                }
+                window::WindowEvent::Key(window::Key::Right)
+                    if gamepad_mapping_editor_open
+                        && gamepad_axis_editor_open
+                        && !gamepad.mapping_capture_active() =>
+                {
+                    let mut settings = *gamepad.axis_settings();
+                    settings.set_sensitivity_percent(
+                        settings.sensitivity_percent().saturating_add(10),
+                    );
+                    if let Err(error) =
+                        gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                    {
+                        eprintln!("could not save gamepad axis settings: {error}");
+                    }
+                }
+                window::WindowEvent::Key(window::Key::Enter)
+                    if gamepad_mapping_editor_open
+                        && gamepad_axis_editor_open
+                        && !gamepad.mapping_capture_active() =>
+                {
+                    gamepad_mapping_game_scope =
+                        !gamepad_mapping_game_scope && system.game_identity().is_some();
+                    let settings = if gamepad_mapping_game_scope {
+                        gamepad.load_game_axis_settings_for_editor()
+                    } else {
+                        gamepad.load_global_axis_settings_for_editor()
+                    };
+                    if let Err(error) =
+                        gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                    {
+                        eprintln!("could not load gamepad axis profile: {error}");
+                    }
+                }
+                window::WindowEvent::Key(window::Key::Backspace)
+                    if gamepad_mapping_editor_open
+                        && gamepad_axis_editor_open
+                        && !gamepad.mapping_capture_active() =>
+                {
+                    if let Err(error) = gamepad.save_axis_settings_for_editor(
+                        aceris_core::input_mapping::GamepadAxisSettings::default(),
+                        gamepad_mapping_game_scope,
+                    ) {
+                        eprintln!("could not reset gamepad axis settings: {error}");
+                    }
+                }
+                window::WindowEvent::Key(window::Key::Up)
+                    if gamepad_mapping_editor_open
+                        && !gamepad_axis_editor_open
+                        && !gamepad.mapping_capture_active() =>
                 {
                     gamepad_mapping_selected = gamepad_mapping_selected.saturating_sub(1);
                 }
                 window::WindowEvent::Key(window::Key::Down)
-                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() =>
+                    if gamepad_mapping_editor_open
+                        && !gamepad_axis_editor_open
+                        && !gamepad.mapping_capture_active() =>
                 {
                     gamepad_mapping_selected = (gamepad_mapping_selected + 1)
                         .min(aceris_core::input_mapping::GamepadControl::COUNT - 1);
                 }
                 window::WindowEvent::Key(window::Key::Left)
-                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() =>
+                    if gamepad_mapping_editor_open
+                        && !gamepad_axis_editor_open
+                        && !gamepad.mapping_capture_active() =>
                 {
                     let mut mapping = *gamepad.mapping();
                     let control =
@@ -854,7 +950,9 @@ fn emulate(
                     }
                 }
                 window::WindowEvent::Key(window::Key::Right)
-                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() =>
+                    if gamepad_mapping_editor_open
+                        && !gamepad_axis_editor_open
+                        && !gamepad.mapping_capture_active() =>
                 {
                     let mut mapping = *gamepad.mapping();
                     let control =
@@ -867,7 +965,9 @@ fn emulate(
                     }
                 }
                 window::WindowEvent::Key(window::Key::Enter)
-                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() =>
+                    if gamepad_mapping_editor_open
+                        && !gamepad_axis_editor_open
+                        && !gamepad.mapping_capture_active() =>
                 {
                     gamepad_mapping_game_scope =
                         !gamepad_mapping_game_scope && system.game_identity().is_some();
@@ -877,9 +977,21 @@ fn emulate(
                         gamepad.load_global_mapping_for_editor()
                     };
                     gamepad.set_mapping_for_editor(mapping);
+                    let settings = if gamepad_mapping_game_scope {
+                        gamepad.load_game_axis_settings_for_editor()
+                    } else {
+                        gamepad.load_global_axis_settings_for_editor()
+                    };
+                    if let Err(error) =
+                        gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                    {
+                        eprintln!("could not load gamepad axis profile: {error}");
+                    }
                 }
                 window::WindowEvent::Key(window::Key::Backspace)
-                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() =>
+                    if gamepad_mapping_editor_open
+                        && !gamepad_axis_editor_open
+                        && !gamepad.mapping_capture_active() =>
                 {
                     if let Err(error) = gamepad.save_mapping_for_editor(
                         aceris_core::input_mapping::GamepadMapping::default(),
@@ -1031,6 +1143,85 @@ fn emulate(
                         }
                     }
                 }
+                window::WindowEvent::Click { x, y }
+                    if menu_open && gamepad_mapping_editor_open && gamepad_axis_editor_open =>
+                {
+                    let (canvas_width, canvas_height) =
+                        screen_layout_canvas_size(layout_profile.mode);
+                    match quick_menu::hit_test_gamepad_axis_editor(
+                        canvas_width * scale as u32,
+                        canvas_height * scale as u32,
+                        x,
+                        y,
+                    ) {
+                        Some(quick_menu::GamepadAxisEditorHit::Scope) => {
+                            gamepad_mapping_game_scope =
+                                !gamepad_mapping_game_scope && system.game_identity().is_some();
+                            let settings = if gamepad_mapping_game_scope {
+                                gamepad.load_game_axis_settings_for_editor()
+                            } else {
+                                gamepad.load_global_axis_settings_for_editor()
+                            };
+                            if let Err(error) =
+                                gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                            {
+                                eprintln!("could not load gamepad axis profile: {error}");
+                            }
+                        }
+                        Some(quick_menu::GamepadAxisEditorHit::InvertX) => {
+                            let mut settings = *gamepad.axis_settings();
+                            settings.set_invert_x(!settings.invert_x());
+                            if let Err(error) =
+                                gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                            {
+                                eprintln!("could not save gamepad axis settings: {error}");
+                            }
+                        }
+                        Some(quick_menu::GamepadAxisEditorHit::InvertY) => {
+                            let mut settings = *gamepad.axis_settings();
+                            settings.set_invert_y(!settings.invert_y());
+                            if let Err(error) =
+                                gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                            {
+                                eprintln!("could not save gamepad axis settings: {error}");
+                            }
+                        }
+                        Some(quick_menu::GamepadAxisEditorHit::SensitivityDown) => {
+                            let mut settings = *gamepad.axis_settings();
+                            settings.set_sensitivity_percent(
+                                settings.sensitivity_percent().saturating_sub(10),
+                            );
+                            if let Err(error) =
+                                gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                            {
+                                eprintln!("could not save gamepad axis settings: {error}");
+                            }
+                        }
+                        Some(quick_menu::GamepadAxisEditorHit::SensitivityUp) => {
+                            let mut settings = *gamepad.axis_settings();
+                            settings.set_sensitivity_percent(
+                                settings.sensitivity_percent().saturating_add(10),
+                            );
+                            if let Err(error) =
+                                gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                            {
+                                eprintln!("could not save gamepad axis settings: {error}");
+                            }
+                        }
+                        Some(quick_menu::GamepadAxisEditorHit::Reset) => {
+                            if let Err(error) = gamepad.save_axis_settings_for_editor(
+                                aceris_core::input_mapping::GamepadAxisSettings::default(),
+                                gamepad_mapping_game_scope,
+                            ) {
+                                eprintln!("could not reset gamepad axis settings: {error}");
+                            }
+                        }
+                        Some(quick_menu::GamepadAxisEditorHit::Back) => {
+                            gamepad_axis_editor_open = false;
+                        }
+                        None => {}
+                    }
+                }
                 window::WindowEvent::Click { x, y } if menu_open && gamepad_mapping_editor_open => {
                     let (canvas_width, canvas_height) =
                         screen_layout_canvas_size(layout_profile.mode);
@@ -1050,6 +1241,16 @@ fn emulate(
                                 gamepad.load_global_mapping_for_editor()
                             };
                             gamepad.set_mapping_for_editor(mapping);
+                            let settings = if gamepad_mapping_game_scope {
+                                gamepad.load_game_axis_settings_for_editor()
+                            } else {
+                                gamepad.load_global_axis_settings_for_editor()
+                            };
+                            if let Err(error) =
+                                gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                            {
+                                eprintln!("could not load gamepad axis profile: {error}");
+                            }
                         }
                         Some(quick_menu::GamepadMappingEditorHit::Control(index)) => {
                             gamepad_mapping_selected = index;
@@ -1063,6 +1264,19 @@ fn emulate(
                                 gamepad.save_mapping_for_editor(mapping, gamepad_mapping_game_scope)
                             {
                                 eprintln!("could not save gamepad mapping: {error}");
+                            }
+                        }
+                        Some(quick_menu::GamepadMappingEditorHit::Axes) => {
+                            gamepad_axis_editor_open = true;
+                            let settings = if gamepad_mapping_game_scope {
+                                gamepad.load_game_axis_settings_for_editor()
+                            } else {
+                                gamepad.load_global_axis_settings_for_editor()
+                            };
+                            if let Err(error) =
+                                gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                            {
+                                eprintln!("could not load gamepad axis profile: {error}");
                             }
                         }
                         Some(quick_menu::GamepadMappingEditorHit::Capture) => {
@@ -1092,6 +1306,7 @@ fn emulate(
                             gamepad.cancel_mapping_capture();
                             gamepad_mapping_editor_open = false;
                             gamepad.reload_effective_mapping();
+                            gamepad.reload_effective_axis_settings();
                         }
                         None => {}
                     }
@@ -1328,6 +1543,20 @@ fn emulate(
                     action,
                     confirmation_selected,
                 ),
+                None if gamepad_mapping_editor_open && gamepad_axis_editor_open => {
+                    quick_menu::render_gamepad_axis_editor(
+                        &mut frame,
+                        frame_width as u32,
+                        frame_height as u32,
+                        MenuPixelFormat::Bgrx8,
+                        gamepad.axis_settings(),
+                        if gamepad_mapping_game_scope {
+                            "ESCOPO: JOGO"
+                        } else {
+                            "ESCOPO: GLOBAL"
+                        },
+                    )
+                }
                 None if gamepad_mapping_editor_open => quick_menu::render_gamepad_mapping_editor(
                     &mut frame,
                     frame_width as u32,

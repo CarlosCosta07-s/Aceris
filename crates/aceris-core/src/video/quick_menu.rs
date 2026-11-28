@@ -1,7 +1,7 @@
 //! Shared, host-independent rendering and hit testing for the in-game quick menu.
 
 use super::font;
-use crate::input_mapping::{GamepadControl, GamepadMapping, PadButton};
+use crate::input_mapping::{GamepadAxisSettings, GamepadControl, GamepadMapping, PadButton};
 
 pub const ACTION_COUNT: usize = 12;
 /// Stable index for the Android-only virtual control editor action.
@@ -576,6 +576,7 @@ pub enum GamepadMappingEditorHit {
     Target(usize),
     Reset,
     Capture,
+    Axes,
     Close,
 }
 
@@ -586,6 +587,7 @@ struct GamepadMappingEditorGeometry {
     scope: Rect,
     reset: Rect,
     capture: Rect,
+    axes: Rect,
     close: Rect,
     scale: usize,
 }
@@ -639,8 +641,8 @@ fn gamepad_mapping_editor_geometry(
     let footer_gap = 3 * scale;
     let footer_available = panel
         .width
-        .saturating_sub(horizontal_padding * 2 + footer_gap * 2);
-    let footer_button_width = (88 * scale).min(footer_available / 3);
+        .saturating_sub(horizontal_padding * 2 + footer_gap * 3);
+    let footer_button_width = (66 * scale).min(footer_available / 4);
     let footer_button_height = (18 * scale).min(panel.height.saturating_sub(2 * scale));
     let reset = Rect {
         x: panel.x + horizontal_padding,
@@ -650,6 +652,12 @@ fn gamepad_mapping_editor_geometry(
     };
     let capture = Rect {
         x: reset.x + footer_button_width + footer_gap,
+        y: footer_y + 2 * scale,
+        width: footer_button_width,
+        height: footer_button_height,
+    };
+    let axes = Rect {
+        x: capture.x + footer_button_width + footer_gap,
         y: footer_y + 2 * scale,
         width: footer_button_width,
         height: footer_button_height,
@@ -669,6 +677,7 @@ fn gamepad_mapping_editor_geometry(
         scope,
         reset,
         capture,
+        axes,
         close,
         scale,
     })
@@ -698,6 +707,9 @@ pub fn hit_test_gamepad_mapping_editor(
     }
     if inside(geometry.capture) {
         return Some(GamepadMappingEditorHit::Capture);
+    }
+    if inside(geometry.axes) {
+        return Some(GamepadMappingEditorHit::Axes);
     }
     if inside(geometry.close) {
         return Some(GamepadMappingEditorHit::Close);
@@ -859,8 +871,290 @@ pub fn render_gamepad_mapping_editor(
             geometry.capture,
             if capturing { "CANCELAR" } else { "CAPTURAR" },
         ),
+        (geometry.axes, "ANALOGICO"),
         (geometry.close, "VOLTAR"),
     ] {
+        blend_rect(frame, width as usize, rect, [54, 36, 70], 245, format);
+        let label_width = font::text_width(label.chars().count(), scale);
+        draw_text_for_format(
+            frame,
+            width as usize,
+            height as usize,
+            rect.x + rect.width.saturating_sub(label_width) / 2,
+            rect.y + (rect.height.saturating_sub(7 * scale)) / 2,
+            scale,
+            label,
+            [255, 255, 255],
+            format,
+        );
+    }
+    true
+}
+
+/// Interactive targets for the physical analog-stick settings screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GamepadAxisEditorHit {
+    Scope,
+    InvertX,
+    InvertY,
+    SensitivityDown,
+    SensitivityUp,
+    Reset,
+    Back,
+}
+
+#[derive(Clone, Copy)]
+struct GamepadAxisEditorGeometry {
+    panel: Rect,
+    rows: [Rect; 3],
+    scope: Rect,
+    reset: Rect,
+    back: Rect,
+    scale: usize,
+}
+
+fn gamepad_axis_editor_geometry(width: u32, height: u32) -> Option<GamepadAxisEditorGeometry> {
+    if width < 220 || height < 180 || width > 4096 || height > 4096 {
+        return None;
+    }
+    let width = width as usize;
+    let height = height as usize;
+    let scale = (width.min(height) / 480).clamp(1, 3);
+    let margin = 6 * scale;
+    let panel = Rect {
+        x: margin,
+        y: margin,
+        width: width.saturating_sub(margin * 2),
+        height: height.saturating_sub(margin * 2),
+    };
+    let horizontal_padding = 12 * scale;
+    let row_top = panel.y + 46 * scale;
+    let footer_y = panel.y + panel.height.saturating_sub(25 * scale);
+    let row_gap = 5 * scale;
+    let available = footer_y.saturating_sub(row_top);
+    let row_height = available
+        .saturating_sub(row_gap * 2)
+        .checked_div(3)?
+        .min(58 * scale);
+    if row_height < 10 * scale {
+        return None;
+    }
+    let rows = std::array::from_fn(|index| Rect {
+        x: panel.x + horizontal_padding,
+        y: row_top + index * (row_height + row_gap),
+        width: panel.width.saturating_sub(horizontal_padding * 2),
+        height: row_height,
+    });
+    let scope_width = (156 * scale).min(panel.width / 2);
+    let scope = Rect {
+        x: panel.x + panel.width.saturating_sub(scope_width + horizontal_padding),
+        y: panel.y + 7 * scale,
+        width: scope_width,
+        height: 20 * scale,
+    };
+    let footer_gap = 8 * scale;
+    let footer_button_width = (104 * scale).min(
+        panel
+            .width
+            .saturating_sub(horizontal_padding * 2 + footer_gap)
+            / 2,
+    );
+    let footer_button_height = (18 * scale).min(panel.height.saturating_sub(2 * scale));
+    let reset = Rect {
+        x: panel.x + horizontal_padding,
+        y: footer_y + 2 * scale,
+        width: footer_button_width,
+        height: footer_button_height,
+    };
+    let back = Rect {
+        x: panel.x
+            + panel
+                .width
+                .saturating_sub(horizontal_padding + footer_button_width),
+        y: footer_y + 2 * scale,
+        width: footer_button_width,
+        height: footer_button_height,
+    };
+    Some(GamepadAxisEditorGeometry {
+        panel,
+        rows,
+        scope,
+        reset,
+        back,
+        scale,
+    })
+}
+
+/// Hit-tests the analog-settings view using the same geometry as its renderer.
+pub fn hit_test_gamepad_axis_editor(
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+) -> Option<GamepadAxisEditorHit> {
+    let geometry = gamepad_axis_editor_geometry(width, height)?;
+    if x < 0 || y < 0 {
+        return None;
+    }
+    let x = x as usize;
+    let y = y as usize;
+    let inside = |rect: Rect| {
+        x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
+    };
+    if inside(geometry.scope) {
+        return Some(GamepadAxisEditorHit::Scope);
+    }
+    if inside(geometry.reset) {
+        return Some(GamepadAxisEditorHit::Reset);
+    }
+    if inside(geometry.back) {
+        return Some(GamepadAxisEditorHit::Back);
+    }
+    geometry.rows.iter().enumerate().find_map(|(index, row)| {
+        if !inside(*row) {
+            return None;
+        }
+        match index {
+            0 => Some(GamepadAxisEditorHit::InvertX),
+            1 => Some(GamepadAxisEditorHit::InvertY),
+            2 if x < row.x + row.width / 2 => Some(GamepadAxisEditorHit::SensitivityDown),
+            2 => Some(GamepadAxisEditorHit::SensitivityUp),
+            _ => None,
+        }
+    })
+}
+
+/// Renders inversion and sensitivity controls for RGBA8 or BGRX8 frames.
+pub fn render_gamepad_axis_editor(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    settings: &GamepadAxisSettings,
+    scope_label: &str,
+) -> bool {
+    let Some(geometry) = gamepad_axis_editor_geometry(width, height) else {
+        return false;
+    };
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4));
+    if expected != Some(frame.len()) {
+        return false;
+    }
+
+    let scale = geometry.scale;
+    let text_scale = if height >= 520 { scale * 2 } else { scale };
+    let canvas = Rect {
+        x: 0,
+        y: 0,
+        width: width as usize,
+        height: height as usize,
+    };
+    blend_rect(frame, width as usize, canvas, [7, 5, 16], 205, format);
+    draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
+    draw_text_for_format(
+        frame,
+        width as usize,
+        height as usize,
+        geometry.panel.x + 12 * scale,
+        geometry.panel.y + 10 * scale,
+        text_scale,
+        "AJUSTES DO ANALOGICO",
+        [245, 238, 248],
+        format,
+    );
+    blend_rect(frame, width as usize, geometry.scope, [54, 36, 70], 245, format);
+    draw_text_for_format(
+        frame,
+        width as usize,
+        height as usize,
+        geometry.scope.x + 6 * scale,
+        geometry.scope.y + (geometry.scope.height.saturating_sub(7 * scale)) / 2,
+        scale,
+        scope_label,
+        [190, 225, 203],
+        format,
+    );
+
+    for (index, row) in geometry.rows.iter().enumerate() {
+        blend_rect(frame, width as usize, *row, [38, 29, 52], 226, format);
+        let label = match index {
+            0 => "INVERTER EIXO X",
+            1 => "INVERTER EIXO Y",
+            _ => "SENSIBILIDADE",
+        };
+        draw_text_for_format(
+            frame,
+            width as usize,
+            height as usize,
+            row.x + 9 * scale,
+            row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
+            text_scale,
+            label,
+            [245, 238, 248],
+            format,
+        );
+        let value = match index {
+            0 => if settings.invert_x() { "SIM" } else { "NAO" },
+            1 => if settings.invert_y() { "SIM" } else { "NAO" },
+            _ => "",
+        };
+        if index < 2 {
+            draw_text_for_format(
+                frame,
+                width as usize,
+                height as usize,
+                row.x + row.width.saturating_sub(font::text_width(value.chars().count(), text_scale))
+                    - 9 * scale,
+                row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
+                text_scale,
+                value,
+                [190, 225, 203],
+                format,
+            );
+        } else {
+            let half = row.width / 2;
+            draw_text_for_format(
+                frame,
+                width as usize,
+                height as usize,
+                row.x + row.width / 4 - font::text_width(1, text_scale) / 2,
+                row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
+                text_scale,
+                "-",
+                [190, 225, 203],
+                format,
+            );
+            let center_value = format!("{}%", settings.sensitivity_percent());
+            let center_x = row.x + half + row.width / 4
+                - font::text_width(center_value.chars().count(), text_scale) / 2;
+            draw_text_for_format(
+                frame,
+                width as usize,
+                height as usize,
+                center_x,
+                row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
+                text_scale,
+                &center_value,
+                [190, 225, 203],
+                format,
+            );
+            draw_text_for_format(
+                frame,
+                width as usize,
+                height as usize,
+                row.x + row.width - row.width / 4 - font::text_width(1, text_scale) / 2,
+                row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
+                text_scale,
+                "+",
+                [190, 225, 203],
+                format,
+            );
+        }
+    }
+
+    for (rect, label) in [(geometry.reset, "PADRAO"), (geometry.back, "VOLTAR")] {
         blend_rect(frame, width as usize, rect, [54, 36, 70], 245, format);
         let label_width = font::text_width(label.chars().count(), scale);
         draw_text_for_format(
