@@ -53,6 +53,19 @@ a estados positivos. Os tokens de texto auxiliar mantêm contraste superior a
 - Não distorcer, recolorir nem alterar o ícone; manter a área segura do ícone adaptativo.
 - Contraste mínimo 4,5:1 para texto (o `#F5EEF8` sobre `#2A1240` cumpre).
 
+## Tipografia
+
+A família **Aceris UI** é desenhada e rasterizada pelo próprio módulo
+`crates/aceris-core/src/video/font.rs`. Ela inclui letras minúsculas próprias,
+acentos do português, pontuação e símbolos usados pela interface. Os pesos
+Regular e Semibold compartilham os mesmos glifos e são rasterizados pelo mesmo
+código; o Semibold dá hierarquia a títulos, navegação e ações prioritárias.
+Desktop, Android e o menu durante a partida usam esse renderer compartilhado.
+
+Nenhuma fonte de terceiros ou fonte do sistema operacional é carregada. Isso
+mantém a aparência consistente entre plataformas e respeita a regra de assets
+originais do projeto.
+
 ## Ícones
 - PC: `assets/icon/aceris.ico` (16–256 px) e PNGs em `assets/icon/png/`.
 - Android: `frontends/android/res/mipmap-*` (ícone adaptativo, fundo `#2A1240`).
