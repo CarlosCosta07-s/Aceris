@@ -4006,15 +4006,7 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    785.0,
-                    296.0,
-                    185.0,
-                    44.0,
-                    scale,
-                    0x2D1A3B,
+                    frame, width, height, 785.0, 296.0, 185.0, 44.0, scale, 0x2D1A3B,
                 );
                 responsive_text_centered(
                     frame,
