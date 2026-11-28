@@ -12,7 +12,7 @@
 //! the window, and renders at ~60 Hz.
 
 use crate::aaudio::AAudioOutput;
-use crate::app::{App, Pointer};
+use crate::app::{App, Pointer, Screen};
 use crate::performance::FramePerformanceMonitor;
 use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
 use raw_window_handle::{
@@ -209,6 +209,13 @@ type DeleteGlobalRefFn = unsafe extern "system" fn(JniEnv, JniObject);
 type AttachCurrentThreadFn =
     unsafe extern "system" fn(*mut c_void, *mut JniEnv, *mut c_void) -> i32;
 type DetachCurrentThreadFn = unsafe extern "system" fn(*mut c_void) -> i32;
+
+#[repr(C)]
+struct JavaVmAttachArgs {
+    version: c_int,
+    name: *const c_char,
+    group: JniObject,
+}
 type GetObjectClassFn = unsafe extern "system" fn(JniEnv, JniObject) -> JniObject;
 type GetMethodIdFn =
     unsafe extern "system" fn(JniEnv, JniObject, *const c_char, *const c_char) -> JniMethod;
@@ -217,7 +224,6 @@ type CallObjectMethodAFn =
     unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue) -> JniObject;
 type CallIntMethodAFn =
     unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue) -> i32;
-type CallVoidMethodAFn = unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue);
 type DeleteLocalRefFn = unsafe extern "system" fn(JniEnv, JniObject);
 type ExceptionCheckFn = unsafe extern "system" fn(JniEnv) -> u8;
 type ExceptionClearFn = unsafe extern "system" fn(JniEnv);
@@ -242,8 +248,23 @@ impl AttachedMediaMonitor {
         let attach: AttachCurrentThreadFn = jni_function(vm, 4)?;
         let detach: DetachCurrentThreadFn = jni_function(vm, 5)?;
         let mut env: JniEnv = ptr::null_mut();
+        let mut attach_args = JavaVmAttachArgs {
+            version: 0x0001_0006,
+            name: b"aceris-android-app\0".as_ptr().cast(),
+            group: ptr::null_mut(),
+        };
+        // Match the named JavaVMAttachArgs pattern used by PPSSPP. This makes
+        // the native worker's JNI lifetime explicit and identifiable in dumps.
         // SAFETY: this worker thread is not attached yet; the VM owns the returned JNIEnv.
-        if unsafe { attach(vm, &mut env, ptr::null_mut()) } != 0 || env.is_null() {
+        if unsafe {
+            attach(
+                vm,
+                &mut env,
+                (&mut attach_args as *mut JavaVmAttachArgs).cast(),
+            )
+        } != 0
+            || env.is_null()
+        {
             return None;
         }
         Some(Self {
@@ -314,6 +335,33 @@ impl AttachedMediaMonitor {
         } else {
             Some(class)
         }
+    }
+
+    /// Associates the physical volume rocker with game output after the first
+    /// game frame, rather than calling into Java during Activity startup.
+    fn set_volume_control_stream(&self) {
+        const STREAM_MUSIC: i32 = 3;
+        let Some(activity_class) = self.class_of(self.activity) else {
+            return;
+        };
+        let Some(method) = self.method(
+            activity_class,
+            b"setVolumeControlStream\0",
+            b"(I)V\0",
+        ) else {
+            self.delete_local(activity_class);
+            return;
+        };
+        let call: Option<CallVoidMethodAFn> = jni_function(self.env, 63);
+        if let Some(call) = call {
+            let args = [JniValue { int_value: STREAM_MUSIC }];
+            // SAFETY: method and argument match Activity.setVolumeControlStream(int).
+            unsafe { call(self.env, self.activity, method, args.as_ptr()) };
+            if self.exception_pending() {
+                self.clear_exception();
+            }
+        }
+        self.delete_local(activity_class);
     }
 
     /// Returns true when an active external playback session has USAGE_MEDIA.
@@ -460,58 +508,6 @@ fn create_activity_global_ref(env: *mut c_void, activity: *mut c_void) -> Raw {
     Raw::new(global)
 }
 
-/// Associates the physical volume rocker with game/media output as required
-/// by AAudio when a stream declares AAUDIO_USAGE_GAME.
-fn set_activity_volume_stream(env: JniEnv, activity: JniObject) {
-    const STREAM_MUSIC: i32 = 3;
-    let get_class: Option<GetObjectClassFn> = jni_function(env, 31);
-    let Some(get_class) = get_class else {
-        return;
-    };
-    // SAFETY: called with NativeActivity's live Activity instance.
-    let class = unsafe { get_class(env, activity) };
-    if class.is_null() {
-        return;
-    }
-
-    let get_method: Option<GetMethodIdFn> = jni_function(env, 33);
-    let method = get_method.and_then(|get_method| {
-        // SAFETY: descriptor and name match Activity.setVolumeControlStream(int).
-        let method = unsafe {
-            get_method(
-                env,
-                class,
-                b"setVolumeControlStream\0".as_ptr().cast(),
-                b"(I)V\0".as_ptr().cast(),
-            )
-        };
-        (!method.is_null()).then_some(method)
-    });
-    if let Some(method) = method {
-        let call: Option<CallVoidMethodAFn> = jni_function(env, 63);
-        if let Some(call) = call {
-            let args = [JniValue {
-                int_value: STREAM_MUSIC,
-            }];
-            // SAFETY: Activity method ID and one-int argument match the JNI descriptor.
-            unsafe { call(env, activity, method, args.as_ptr()) };
-        }
-        let pending: Option<ExceptionCheckFn> = jni_function(env, 228);
-        if pending.is_some_and(|check| unsafe { check(env) != 0 }) {
-            let clear: Option<ExceptionClearFn> = jni_function(env, 17);
-            if let Some(clear) = clear {
-                // SAFETY: this best-effort helper clears only its own pending JNI exception.
-                unsafe { clear(env) };
-            }
-        }
-    }
-    let delete: Option<DeleteLocalRefFn> = jni_function(env, 23);
-    if let Some(delete) = delete {
-        // SAFETY: class is the local reference returned by GetObjectClass.
-        unsafe { delete(env, class) };
-    }
-}
-
 struct Host {
     shared: Mutex<Shared>,
     thread: Mutex<Option<JoinHandle<()>>>,
@@ -566,8 +562,8 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
         callbacks.on_input_queue_created = Some(on_queue_created);
         callbacks.on_input_queue_destroyed = Some(on_queue_destroyed);
 
+        eprintln!("Aceris Android startup: NativeActivity created");
         let games_dir = games_directory(&*activity);
-        set_activity_volume_stream((*activity).env, (*activity).clazz);
         let host = std::sync::Arc::new(Host {
             shared: Mutex::new(Shared::default()),
             thread: Mutex::new(None),
@@ -702,23 +698,97 @@ impl Drop for AndroidGpuPresenter {
     }
 }
 
+/// Chooses an Android GPU backend with a persisted crash-recovery sequence.
+///
+/// PPSSPP selects a platform-appropriate backend and remembers backend startup
+/// failures across process launches. Aceris uses an original Rust implementation
+/// of the same recovery principle: Vulkan -> OpenGL ES -> software presentation.
+fn android_backend_name(backend: GraphicsBackend) -> &'static str {
+    match backend {
+        GraphicsBackend::Auto => "auto",
+        GraphicsBackend::OpenGl => "opengl",
+        GraphicsBackend::Vulkan => "vulkan",
+        GraphicsBackend::Software => "software",
+    }
+}
+
+fn fallback_android_backend_after_failure(failed: &str) -> GraphicsBackend {
+    match failed.trim() {
+        "vulkan" | "auto" => GraphicsBackend::OpenGl,
+        "opengl" => GraphicsBackend::Software,
+        _ => GraphicsBackend::Software,
+    }
+}
+
+fn preferred_android_backend(sdk_version: i32) -> GraphicsBackend {
+    // PPSSPP defaults to Vulkan on Android 8.1+ for 64-bit builds and uses
+    // OpenGL on older/32-bit devices. Aceris APKs currently target ARM64.
+    #[cfg(target_arch = "aarch64")]
+    let vulkan_default = sdk_version >= 27;
+    #[cfg(not(target_arch = "aarch64"))]
+    let vulkan_default = sdk_version >= 30;
+    if vulkan_default {
+        GraphicsBackend::Vulkan
+    } else {
+        GraphicsBackend::OpenGl
+    }
+}
+
+fn select_android_backend(sdk_version: i32, recovery_file: &Path) -> GraphicsBackend {
+    if let Ok(failed) = std::fs::read_to_string(recovery_file) {
+        match failed.trim() {
+            "vulkan" => {
+                let fallback = GraphicsBackend::OpenGl;
+                let _ = std::fs::write(recovery_file, android_backend_name(fallback));
+                eprintln!("Aceris Android startup: previous Vulkan initialization did not complete; retrying with OpenGL ES");
+                return fallback;
+            }
+            "opengl" => {
+                let fallback = GraphicsBackend::Software;
+                let _ = std::fs::write(recovery_file, android_backend_name(fallback));
+                eprintln!("Aceris Android startup: previous OpenGL ES initialization did not complete; using software presentation");
+                return fallback;
+            }
+            "software" => return GraphicsBackend::Software,
+            _ => {
+                let _ = std::fs::remove_file(recovery_file);
+            }
+        }
+    }
+
+    match GraphicsBackend::from_env() {
+        Ok(GraphicsBackend::Auto) => preferred_android_backend(sdk_version),
+        Ok(backend) => backend,
+        Err(error) => {
+            eprintln!("GPU presentation configuration ignored: {error}");
+            preferred_android_backend(sdk_version)
+        }
+    }
+}
+
 /// Attempts a native Vulkan or OpenGL ES presenter for the current ANativeWindow.
 fn create_android_gpu_presenter(
     window: *mut c_void,
     width: u32,
     height: u32,
+    sdk_version: i32,
     cache_directory: &Path,
+    recovery_file: &Path,
 ) -> Option<AndroidGpuPresenter> {
-    let backend = match GraphicsBackend::from_env() {
-        Ok(backend) => backend,
-        Err(error) => {
-            eprintln!("GPU presentation configuration ignored: {error}");
-            return None;
-        }
-    };
+    let backend = select_android_backend(sdk_version, recovery_file);
     if backend == GraphicsBackend::Software {
         return None;
     }
+    if let Some(parent) = recovery_file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    // Written before touching the driver. If the native driver terminates the
+    // process during adapter/device/surface creation, the next launch chooses
+    // the next backend instead of repeating the same crash indefinitely.
+    if let Err(error) = std::fs::write(recovery_file, android_backend_name(backend)) {
+        eprintln!("Could not persist Android GPU recovery state: {error}");
+    }
+    eprintln!("Aceris Android startup: initializing {:?} presentation", backend);
     let window = NonNull::new(window)?;
     // SAFETY: this is called while the shared native-window lock is held.
     unsafe { ANativeWindow_acquire(window.as_ptr()) };
@@ -763,20 +833,25 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
     let looper = unsafe { ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS) };
     lock(&host.shared).looper = Raw::new(looper);
 
+    eprintln!("Aceris Android startup: creating application state");
     let mut app = App::new(&games_dir);
-    let gpu_pipeline_cache_directory = games_dir.join(".aceris").join("gpu_pipeline_cache");
+    eprintln!("Aceris Android startup: application state ready; showing intro/library");
+    let settings_directory = games_dir.join(".aceris");
+    let gpu_pipeline_cache_directory = settings_directory.join("gpu_pipeline_cache");
+    let gpu_backend_recovery_file = settings_directory.join("android_gpu_backend_recovery_v1.txt");
     let mut frame = Vec::new();
     let mut performance_monitor =
         performance_logging_enabled(&games_dir).then(FramePerformanceMonitor::new);
     if performance_monitor.is_some() {
         eprintln!("Aceris Android performance logging enabled (5-second reports)");
     }
-    let mut audio = AAudioOutput::open();
-    let media_monitor =
-        AttachedMediaMonitor::attach(host.java_vm, host.activity_global, host.sdk_version);
-    let media_detection_available =
-        media_monitor.is_some() && audio.as_ref().is_some_and(AAudioOutput::uses_game_usage);
-    app.set_external_media_detection_available(media_detection_available);
+    // Audio is optional and is not needed by the launcher. Open it only after
+    // a game has produced its first presented frame, like PPSSPP's post-graphics
+    // initialization, so audio-device startup cannot block the Aceris interface.
+    let mut audio: Option<AAudioOutput> = None;
+    let mut audio_initialization_attempted = false;
+    let mut media_monitor: Option<AttachedMediaMonitor> = None;
+    app.set_external_media_detection_available(false);
     let mut external_media_playing = false;
     let mut last_media_poll = Instant::now()
         .checked_sub(Duration::from_secs(1))
@@ -840,7 +915,8 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
 
         // Pause also when the Activity is backgrounded, so queued game audio
         // cannot continue playing behind another app or after the screen closes.
-        let audio_should_pause = !resumed || app.is_game_menu_open();
+        let audio_should_pause =
+            !resumed || app.is_game_menu_open() || !matches!(app.screen(), Screen::Game);
         if audio_pause_state != Some(audio_should_pause) {
             if let Some(audio) = audio.as_mut() {
                 match audio.set_paused(audio_should_pause) {
@@ -887,7 +963,7 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
                 // Fell behind (paused or slow frame): do not run catch-up frames.
                 next_frame = Instant::now() + FRAME_INTERVAL;
             }
-            render(
+            let frame_presented = render(
                 host,
                 &mut app,
                 &mut frame,
@@ -898,7 +974,31 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
                 &mut cpu_geometry_size,
                 &mut performance_monitor,
                 &gpu_pipeline_cache_directory,
+                host.sdk_version,
+                &gpu_backend_recovery_file,
             );
+            if frame_presented
+                && !audio_initialization_attempted
+                && matches!(app.screen(), Screen::Game)
+            {
+                audio_initialization_attempted = true;
+                eprintln!("Aceris Android: opening optional AAudio output after first game frame");
+                audio = AAudioOutput::open();
+                if audio.is_none() {
+                    eprintln!("Aceris Android: AAudio unavailable; game audio remains disabled, UI/emulation continue");
+                } else if audio.as_ref().is_some_and(AAudioOutput::uses_game_usage) {
+                    eprintln!("Aceris Android: attaching JNI monitor for optional external-media detection");
+                    media_monitor = AttachedMediaMonitor::attach(
+                        host.java_vm,
+                        host.activity_global,
+                        host.sdk_version,
+                    );
+                    if let Some(monitor) = media_monitor.as_ref() {
+                        monitor.set_volume_control_stream();
+                    }
+                    app.set_external_media_detection_available(media_monitor.is_some());
+                }
+            }
             let samples = app.take_audio();
             if let Some(audio) = audio.as_mut() {
                 audio.feed(&samples);
@@ -1097,7 +1197,9 @@ fn render(
     cpu_geometry_size: &mut (u32, u32),
     performance_monitor: &mut Option<FramePerformanceMonitor>,
     cache_directory: &Path,
-) {
+    sdk_version: i32,
+    recovery_file: &Path,
+) -> bool {
     let frame_started = performance_monitor.as_ref().map(|_| Instant::now());
     // Holding the lock keeps the window alive: `on_window_destroyed` takes it
     // before releasing the reference.
@@ -1109,7 +1211,7 @@ fn render(
         *attempted_gpu_window = Raw::default();
         *size = (0, 0);
         *cpu_geometry_size = (0, 0);
-        return;
+        return false;
     }
     if *gpu_window != window {
         // Rotation, pause/resume, or surface recreation can replace ANativeWindow.
@@ -1126,7 +1228,7 @@ fn render(
         let width = ANativeWindow_getWidth(window.get()).max(0) as u32;
         let height = ANativeWindow_getHeight(window.get()).max(0) as u32;
         if width == 0 || height == 0 {
-            return;
+            return false;
         }
         if (width, height) != *size {
             app.resize(width, height);
@@ -1147,14 +1249,21 @@ fn render(
                 false,
                 false,
             );
-            return;
+            return false;
         }
 
         let presentation_started = performance_monitor.as_ref().map(|_| Instant::now());
         if gpu_presenter.is_none() && *attempted_gpu_window != window {
             *attempted_gpu_window = window;
             *gpu_presenter =
-                create_android_gpu_presenter(window.get(), width, height, cache_directory);
+                create_android_gpu_presenter(
+                    window.get(),
+                    width,
+                    height,
+                    sdk_version,
+                    cache_directory,
+                    recovery_file,
+                );
         }
 
         let gpu_result = gpu_presenter.as_mut().map(|gpu| {
@@ -1165,6 +1274,7 @@ fn render(
         });
         match gpu_result {
             Some(Ok(())) => {
+                let _ = std::fs::remove_file(recovery_file);
                 record_performance_sample(
                     performance_monitor,
                     app,
@@ -1174,7 +1284,7 @@ fn render(
                     true,
                     true,
                 );
-                return;
+                return true;
             }
             Some(Err(error)) => {
                 eprintln!("Android GPU surface lost; switching to CPU presentation: {error}");
@@ -1196,7 +1306,7 @@ fn render(
                     false,
                     false,
                 );
-                return;
+                return false;
             }
             *cpu_geometry_size = (width, height);
         }
@@ -1218,7 +1328,7 @@ fn render(
                 false,
                 false,
             );
-            return;
+            return false;
         }
         copy_frame(frame, width, height, &buffer);
         let presented = ANativeWindow_unlockAndPost(window.get()) == 0;
@@ -1231,6 +1341,7 @@ fn render(
             presented,
             false,
         );
+        presented
     }
 }
 
@@ -1307,6 +1418,18 @@ unsafe fn copy_frame(frame: &[u8], width: u32, height: u32, buffer: &NativeWindo
 #[cfg(test)]
 mod gamepad_source_tests {
     use super::*;
+
+    #[test]
+    fn android_graphics_recovery_advances_from_vulkan_to_gl_then_software() {
+        assert_eq!(
+            fallback_android_backend_after_failure("vulkan"),
+            GraphicsBackend::OpenGl
+        );
+        assert_eq!(
+            fallback_android_backend_after_failure("opengl"),
+            GraphicsBackend::Software
+        );
+    }
 
     #[test]
     fn joystick_source_uses_android_source_class_mask() {
