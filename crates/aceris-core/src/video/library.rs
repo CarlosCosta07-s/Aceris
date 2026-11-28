@@ -1923,8 +1923,8 @@ impl Library {
         }
 
         let visible_cards = visible_cards.max(1);
-        self.selected = (self.selected as i64 + i64::from(delta.signum()))
-            .clamp(0, count as i64 - 1) as usize;
+        self.selected =
+            (self.selected as i64 + i64::from(delta.signum())).clamp(0, count as i64 - 1) as usize;
         if self.selected < self.first_visible {
             self.first_visible = self.selected;
         } else if self.selected >= self.first_visible + visible_cards {
@@ -3835,15 +3835,7 @@ impl Library {
 
             if home_entries.is_empty() {
                 responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    28.0,
-                    142.0,
-                    702.0,
-                    174.0,
-                    scale,
-                    0x202A34,
+                    frame, width, height, 28.0, 142.0, 702.0, 174.0, scale, 0x202A34,
                 );
                 responsive_folder_icon(frame, width, height, 116.0, 232.0, scale);
                 responsive_text(
@@ -3926,15 +3918,7 @@ impl Library {
             ];
             for (x, y, card_width, label, count) in cards {
                 responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    x,
-                    y,
-                    card_width,
-                    82.0,
-                    scale,
-                    0x202A34,
+                    frame, width, height, x, y, card_width, 82.0, scale, 0x202A34,
                 );
                 responsive_text(
                     frame,
@@ -5967,7 +5951,8 @@ mod tests {
 
     #[test]
     fn home_exposes_imported_games_before_first_launch() {
-        let dir = std::env::temp_dir().join(format!("aceris-home-first-launch-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("aceris-home-first-launch-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("ready.3ds");
         fs::write(&path, b"fixture").unwrap();
