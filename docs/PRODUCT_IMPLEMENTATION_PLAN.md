@@ -132,7 +132,7 @@ Projeto da fronteira de leitura e seleção de pastas: [FILE_SOURCE_ARCHITECTURE
 - [ ] Atalhos globais configuráveis para pausar, retomar, menu, screenshot, troca de telas e ações de progresso quando existirem.
 
 **M3.3 — Android**
-- [~] Android recebe botões digitais por eventos de tecla e o eixo primário X/Y de joystick USB/Bluetooth pelo NativeActivity; aplica deadzone padrão de 16%, normalização para Circle Pad ±156 e inversão de Y. D-pad, A/B/X/Y, L1/R1, L2/R2 (mapeados para L/R/ZL/ZR) e Start/Select têm mapeamentos-base. Ainda faltam remapeamento, seleção/perfis de dispositivo, ajustes de deadzone/sensibilidade, gatilhos analógicos/eixos adicionais e validação em aparelho físico.
+- [~] Android recebe botões digitais por eventos de tecla e o eixo primário X/Y de joystick USB/Bluetooth pelo NativeActivity; aplica deadzone padrão de 16%, normalização para Circle Pad ±156 e inversão de Y. D-pad, A/B/X/Y, L1/R1 e Start/Select têm mapeamentos-base. L2/R2 aguardam o caminho adicional `ir:rst` do New 3DS. Ainda faltam remapeamento, seleção/perfis de dispositivo, ajustes de deadzone/sensibilidade, gatilhos analógicos/eixos adicionais e validação em aparelho físico.
 - [x] Editor Android de controles virtuais: mover, redimensionar, ocultar, ajustar opacidade, escala, presets e posições individuais; layouts separados por orientação e overrides por Title ID com herança/restauração já existem. Falta validação física abrangente.
 - [x] Presets padrão, compacto, canhoto e destro; o modo personalizado é composto pelas posições e tamanhos editados pelo usuário.
 - [x] Persistir layouts de controles separados para retrato e paisagem. [ ] Validar rotação e composição em Android físico.
