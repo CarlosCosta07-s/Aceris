@@ -6993,7 +6993,6 @@ fn responsive_panel(
         ui::shape::PANEL_CONTENT_RADIUS,
         color,
     );
-
 }
 
 // Text coordinates and scale are explicit so all frontend layouts use the same renderer.
