@@ -3298,12 +3298,7 @@ impl Library {
                 scale,
                 brand::SURFACE_HEADER,
             );
-            let dock_actions = [
-                "RECENTES",
-                "FAVORITOS",
-                "IMPORTAR",
-                "ATUALIZAR",
-            ];
+            let dock_actions = ["RECENTES", "FAVORITOS", "IMPORTAR", "ATUALIZAR"];
             for (slot, label) in dock_actions.into_iter().enumerate() {
                 let x = 12.0 + slot as f32 * 96.0;
                 let focused = self.home_focus == HomeFocus::Navigation
