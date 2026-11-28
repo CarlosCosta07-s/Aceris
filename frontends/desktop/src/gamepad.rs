@@ -123,7 +123,8 @@ impl GamepadManager {
             self.previous_library_navigation = 0;
         }
         self.active_gamepad = active;
-        let newly_pressed = current & !self.previous_library_navigation;
+        let newly_pressed =
+            newly_pressed_navigation(current, self.previous_library_navigation);
         self.previous_library_navigation = current;
         newly_pressed
     }
@@ -387,6 +388,10 @@ impl GamepadManager {
     }
 }
 
+fn newly_pressed_navigation(current: u8, previous: u8) -> u8 {
+    current & !previous
+}
+
 fn library_navigation_mask(mut is_pressed: impl FnMut(Button) -> bool) -> u8 {
     let controls = [
         (Button::DPadUp, LIBRARY_NAV_UP),
@@ -468,8 +473,11 @@ mod tests {
     fn launcher_navigation_edges_do_not_repeat_while_button_is_held() {
         let current = LIBRARY_NAV_DOWN | LIBRARY_NAV_CONFIRM;
         let previous = LIBRARY_NAV_DOWN;
-        assert_eq!(current & !previous, LIBRARY_NAV_CONFIRM);
-        assert_eq!(current & !current, 0);
+        assert_eq!(
+            newly_pressed_navigation(current, previous),
+            LIBRARY_NAV_CONFIRM
+        );
+        assert_eq!(newly_pressed_navigation(current, current), 0);
     }
 
     #[test]
