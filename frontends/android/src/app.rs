@@ -1366,7 +1366,7 @@ mod gamepad_axis_tests {
     fn android_l2_and_r2_keycodes_map_to_zl_and_zr() {
         assert_eq!(extra_pad_from_android_keycode(AKEYCODE_BUTTON_L2), Some(pad::ZL));
         assert_eq!(extra_pad_from_android_keycode(AKEYCODE_BUTTON_R2), Some(pad::ZR));
-        assert_eq!(extra_pad_from_android_keycode(AKEYCODE_BUTTON_L2 + 1), None);
+        assert_eq!(extra_pad_from_android_keycode(AKEYCODE_BUTTON_R2 + 1), None);
     }
 
     #[test]
