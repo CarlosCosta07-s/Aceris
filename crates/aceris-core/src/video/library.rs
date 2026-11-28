@@ -2569,9 +2569,8 @@ impl Library {
 
         let entries = self.filtered_entries();
         if self.view_mode == LibraryViewMode::Grid {
-            let first_visible = self.console_collection_first_visible(
-                (ui::library::GRID_COLUMNS * 2).max(1),
-            );
+            let first_visible =
+                self.console_collection_first_visible((ui::library::GRID_COLUMNS * 2).max(1));
             let column = ((x - ui::library::GRID_ORIGIN_X) / ui::library::GRID_STEP_X)
                 .floor()
                 .max(0.0) as usize;
@@ -2588,14 +2587,12 @@ impl Library {
                     + ui::library::GRID_CARD_HEIGHT
                 && y < command_top
             {
-                let visible_rows = ((command_top - ui::library::GRID_TOP
-                    + ui::library::GRID_GAP_Y)
+                let visible_rows = ((command_top - ui::library::GRID_TOP + ui::library::GRID_GAP_Y)
                     / ui::library::GRID_STEP_Y)
                     .floor()
                     .max(1.0) as usize;
-                let first_visible = self.console_collection_first_visible(
-                    visible_rows * ui::library::GRID_COLUMNS,
-                );
+                let first_visible =
+                    self.console_collection_first_visible(visible_rows * ui::library::GRID_COLUMNS);
                 let index = first_visible + row * ui::library::GRID_COLUMNS + column;
                 if index < entries.len() {
                     if index == self.selected {
@@ -5112,8 +5109,7 @@ impl Library {
         let visible_items = visible_items.max(ui::library::GRID_COLUMNS);
         let mut first_visible = self.first_visible.min(count - visible_items);
         if self.selected < first_visible {
-            first_visible = (self.selected / ui::library::GRID_COLUMNS)
-                * ui::library::GRID_COLUMNS;
+            first_visible = (self.selected / ui::library::GRID_COLUMNS) * ui::library::GRID_COLUMNS;
         } else if self.selected >= first_visible + visible_items {
             let needed = self.selected + 1 - visible_items;
             first_visible = needed.div_ceil(ui::library::GRID_COLUMNS) * ui::library::GRID_COLUMNS;
@@ -5154,14 +5150,7 @@ impl Library {
             scale,
             brand::SURFACE_BASE,
         );
-        render_console_sidebar(
-            frame,
-            width,
-            height,
-            scale,
-            logical_height,
-            self.page,
-        );
+        render_console_sidebar(frame, width, height, scale, logical_height, self.page);
 
         let (page_title, page_subtitle) = match self.page {
             LibraryPage::Games => ("JOGOS", "Sua coleção completa"),
@@ -5358,7 +5347,11 @@ impl Library {
             925.0,
             90.0,
             label_scale,
-            if self.sort_descending { "Z–A" } else { "A–Z" },
+            if self.sort_descending {
+                "Z–A"
+            } else {
+                "A–Z"
+            },
             brand::TEXT,
         );
 
@@ -5380,10 +5373,9 @@ impl Library {
                     "Ainda não há favoritos",
                     "Use X em um jogo para adicioná-lo aos favoritos.",
                 ),
-                LibraryPage::Recent => (
-                    "Nenhum jogo recente",
-                    "Os jogos iniciados aparecerão aqui.",
-                ),
+                LibraryPage::Recent => {
+                    ("Nenhum jogo recente", "Os jogos iniciados aparecerão aqui.")
+                }
                 LibraryPage::Homebrew => (
                     "Nenhum homebrew encontrado",
                     "Adicione arquivos .3dsx à biblioteca.",
@@ -5428,8 +5420,7 @@ impl Library {
                 let index = first_visible + slot;
                 let column = slot % ui::library::GRID_COLUMNS;
                 let row = slot / ui::library::GRID_COLUMNS;
-                let x = ui::library::GRID_ORIGIN_X
-                    + column as f32 * ui::library::GRID_STEP_X;
+                let x = ui::library::GRID_ORIGIN_X + column as f32 * ui::library::GRID_STEP_X;
                 let y = grid_top + row as f32 * ui::library::GRID_STEP_Y;
                 render_home_game_tile(
                     frame,
@@ -9267,8 +9258,7 @@ fn render_console_sidebar(
     for (slot, destination) in nav_pages.into_iter().enumerate() {
         let center_y = ui::home::sidebar_item_center_y(slot, logical_height);
         let selected = destination == Some(page)
-            || (slot == 1
-                && matches!(page, LibraryPage::Recent | LibraryPage::Homebrew));
+            || (slot == 1 && matches!(page, LibraryPage::Recent | LibraryPage::Homebrew));
         if selected {
             responsive_rounded_fill(
                 frame,
