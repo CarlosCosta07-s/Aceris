@@ -1515,12 +1515,12 @@ impl Library {
         if total <= VISIBLE_SCAN_DIRECTORIES {
             return;
         }
-        self.scan_directory_offset = if self.scan_directory_offset + VISIBLE_SCAN_DIRECTORIES >= total
-        {
-            0
-        } else {
-            self.scan_directory_offset + VISIBLE_SCAN_DIRECTORIES
-        };
+        self.scan_directory_offset =
+            if self.scan_directory_offset + VISIBLE_SCAN_DIRECTORIES >= total {
+                0
+            } else {
+                self.scan_directory_offset + VISIBLE_SCAN_DIRECTORIES
+            };
         let first = self.scan_directory_offset + 1;
         let last = (self.scan_directory_offset + VISIBLE_SCAN_DIRECTORIES).min(total);
         self.status = Some(format!("EXIBINDO PASTAS {first}-{last} DE {total}"));
@@ -3449,13 +3449,13 @@ impl Library {
                         ),
                         brand::ACCENT_GREEN_LIGHT,
                     );
-                    for (index, directory) in
-                        self.scan_config
-                            .directories
-                            .iter()
-                            .skip(self.scan_directory_offset)
-                            .take(VISIBLE_SCAN_DIRECTORIES)
-                            .enumerate()
+                    for (index, directory) in self
+                        .scan_config
+                        .directories
+                        .iter()
+                        .skip(self.scan_directory_offset)
+                        .take(VISIBLE_SCAN_DIRECTORIES)
+                        .enumerate()
                     {
                         let row_y = 332.0 + index as f32 * 32.0;
                         responsive_panel(
@@ -4988,13 +4988,13 @@ impl Library {
                         ),
                         brand::ACCENT_GREEN_LIGHT,
                     );
-                    for (index, directory) in
-                        self.scan_config
-                            .directories
-                            .iter()
-                            .skip(self.scan_directory_offset)
-                            .take(VISIBLE_SCAN_DIRECTORIES)
-                            .enumerate()
+                    for (index, directory) in self
+                        .scan_config
+                        .directories
+                        .iter()
+                        .skip(self.scan_directory_offset)
+                        .take(VISIBLE_SCAN_DIRECTORIES)
+                        .enumerate()
                     {
                         let row_y = 226.0 + index as f32 * 28.0;
                         responsive_panel(
@@ -8906,7 +8906,12 @@ mod tests {
         assert_eq!(library.scan_directory_offset, 3);
         let portrait_removed = folders[4].clone();
         library.click_responsive(352, 378, 400, 800);
-        assert!(!library.scan_config().directories.contains(&portrait_removed));
+        assert!(
+            !library
+                .scan_config()
+                .directories
+                .contains(&portrait_removed)
+        );
         assert_eq!(library.scan_config().directories.len(), 5);
         assert_eq!(library.scan_directory_offset, 3);
 
