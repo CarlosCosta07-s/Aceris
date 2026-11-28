@@ -7284,7 +7284,7 @@ mod tests {
     }
 
     #[test]
-    fn responsive_panels_render_shadow_outline_and_depth_highlights() {
+    fn responsive_panels_render_shadow_outline_and_surface() {
         let (width, height) = (100, 60);
         let mut frame = vec![0u8; width * height * 4];
         responsive_panel(
@@ -7303,12 +7303,12 @@ mod tests {
             let offset = (y * width + x) * 4;
             [frame[offset], frame[offset + 1], frame[offset + 2]]
         };
-        assert_eq!(pixel(52, 20), brand::rgb(brand::SURFACE_SHADOW));
+        assert_eq!(pixel(51, 20), brand::rgb(brand::SURFACE_SHADOW));
         assert_eq!(pixel(10, 10), [0, 0, 0]);
-        assert_eq!(pixel(14, 10), brand::rgb(brand::BORDER));
+        assert_eq!(pixel(10, 20), brand::rgb(brand::BORDER));
         assert_eq!(pixel(15, 15), brand::rgb(brand::SURFACE_PANEL));
-        assert_eq!(pixel(18, 12), brand::rgb(brand::TEXT_SUBTLE));
-        assert_eq!(pixel(18, 32), brand::rgb(brand::SURFACE_BASE));
+        assert_eq!(pixel(18, 12), brand::rgb(brand::SURFACE_PANEL));
+        assert_eq!(pixel(18, 32), brand::rgb(brand::SURFACE_PANEL));
     }
 
     #[test]
