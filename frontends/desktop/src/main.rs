@@ -753,7 +753,7 @@ fn service_folder_picker_request(library: &mut Library) {
         Err(error) => {
             library.begin_add_folder_path();
             library.set_status(format!("{error}. Informe o caminho da pasta manualmente."));
-        },
+        }
     }
 }
 
@@ -840,10 +840,9 @@ fn choose_library_folder() -> Result<Option<PathBuf>, String> {
         }
         let vtable = unsafe { *(object as *mut *const *const c_void) };
         let release = unsafe {
-            std::mem::transmute::<
-                *const c_void,
-                unsafe extern "system" fn(*mut c_void) -> u32,
-            >(*vtable.add(2))
+            std::mem::transmute::<*const c_void, unsafe extern "system" fn(*mut c_void) -> u32>(
+                *vtable.add(2),
+            )
         };
         unsafe {
             release(object);
@@ -856,7 +855,10 @@ fn choose_library_folder() -> Result<Option<PathBuf>, String> {
 
     let init_result = unsafe { CoInitializeEx(ptr::null_mut(), COINIT_APARTMENTTHREADED) };
     if init_result < 0 {
-        return Err(format_hresult("Inicialização do seletor de pastas", init_result));
+        return Err(format_hresult(
+            "Inicialização do seletor de pastas",
+            init_result,
+        ));
     }
 
     let mut dialog = ptr::null_mut();
@@ -892,12 +894,13 @@ fn choose_library_folder() -> Result<Option<PathBuf>, String> {
             let mut options = 0;
             let options_result = get_options(dialog, &mut options);
             if options_result < 0 {
-                Err(format_hresult("Leitura das opções do seletor", options_result))
+                Err(format_hresult(
+                    "Leitura das opções do seletor",
+                    options_result,
+                ))
             } else {
-                let configured = set_options(
-                    dialog,
-                    options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM,
-                );
+                let configured =
+                    set_options(dialog, options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
                 if configured < 0 {
                     Err(format_hresult("Configuração do seletor", configured))
                 } else {
@@ -917,18 +920,11 @@ fn choose_library_folder() -> Result<Option<PathBuf>, String> {
                             let item_vtable = *(item as *mut *const *const c_void);
                             let get_display_name = std::mem::transmute::<
                                 *const c_void,
-                                unsafe extern "system" fn(
-                                    *mut c_void,
-                                    u32,
-                                    *mut *mut u16,
-                                ) -> i32,
+                                unsafe extern "system" fn(*mut c_void, u32, *mut *mut u16) -> i32,
                             >(*item_vtable.add(5));
                             let mut display_name = ptr::null_mut();
-                            let named = get_display_name(
-                                item,
-                                SIGDN_FILESYSPATH,
-                                &mut display_name,
-                            );
+                            let named =
+                                get_display_name(item, SIGDN_FILESYSPATH, &mut display_name);
                             let path_result = if named < 0 || display_name.is_null() {
                                 Err(format_hresult("Leitura do caminho selecionado", named))
                             } else {
@@ -991,15 +987,13 @@ fn choose_library_folder() -> Result<Option<PathBuf>, String> {
             return Err("O aplicativo do macOS não está disponível.".to_string());
         }
         let selector = |name: &'static [u8]| sel_registerName(name.as_ptr().cast());
-        let send_id: unsafe extern "C" fn(Id, Selector) -> Id =
-            std::mem::transmute(objc_msgSend);
+        let send_id: unsafe extern "C" fn(Id, Selector) -> Id = std::mem::transmute(objc_msgSend);
         let _application = send_id(application_class, selector(b"sharedApplication\0"));
         let class = objc_getClass(b"NSOpenPanel\0".as_ptr().cast());
         if class.is_null() {
             return Err("O painel de pastas do macOS não está disponível.".to_string());
         }
-        let send_bool: unsafe extern "C" fn(Id, Selector, i8) =
-            std::mem::transmute(objc_msgSend);
+        let send_bool: unsafe extern "C" fn(Id, Selector, i8) = std::mem::transmute(objc_msgSend);
         let send_integer: unsafe extern "C" fn(Id, Selector) -> isize =
             std::mem::transmute(objc_msgSend);
         let send_count: unsafe extern "C" fn(Id, Selector) -> usize =
@@ -1070,7 +1064,9 @@ fn choose_library_folder() -> Result<Option<PathBuf>, String> {
             Ok(selection) => return Ok(selection),
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => {
-                return Err(format!("NÃO FOI POSSÍVEL ABRIR O SELETOR DE PASTAS: {error}"));
+                return Err(format!(
+                    "NÃO FOI POSSÍVEL ABRIR O SELETOR DE PASTAS: {error}"
+                ));
             }
         }
     }
