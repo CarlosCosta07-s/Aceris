@@ -2811,8 +2811,8 @@ impl Library {
 
                 const COLUMNS: usize = 4;
                 let card_top = 170.0;
-                let card_height = 122.0;
-                let row_step = 132.0;
+                let card_height = 148.0;
+                let row_step = 158.0;
                 let card_width = 168.0;
                 let card_gap = 10.0;
                 if y < card_top || !(28.0..730.0).contains(&x) {
@@ -5646,9 +5646,9 @@ impl Library {
                 const COLUMNS: usize = 4;
                 let card_top = 170.0;
                 let card_width = 168.0;
-                let card_height = 122.0;
+                let card_height = 148.0;
                 let card_gap = 10.0;
-                let row_step = 132.0;
+                let row_step = 158.0;
                 let visible_rows = landscape_grid_visible_rows(logical_height);
                 for (index, entry) in entries
                     .iter()
@@ -6181,8 +6181,8 @@ impl Library {
 
 fn landscape_grid_visible_rows(logical_height: f32) -> usize {
     const TOP: f32 = 170.0;
-    const CARD_HEIGHT: f32 = 122.0;
-    const ROW_STEP: f32 = 132.0;
+    const CARD_HEIGHT: f32 = 148.0;
+    const ROW_STEP: f32 = 158.0;
     let last_content_y = (logical_height - 18.0).max(400.0);
     (((last_content_y - TOP - CARD_HEIGHT) / ROW_STEP).floor() as i32 + 1).max(1) as usize
 }
@@ -6641,19 +6641,39 @@ fn render_library_tile(
         if selected {
             brand::SURFACE_SELECTED
         } else {
-            brand::SURFACE_PANEL
+            brand::SURFACE_CARD
         },
     );
+
+    // A restrained red line communicates focus without making the whole card
+    // glow. Artwork gets most of the card; title and format stay in a stable
+    // footer region so the four-column grid remains easy to scan.
+    if selected {
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            x + 7.0,
+            y + 4.0,
+            card_width - 14.0,
+            2.0,
+            scale,
+            brand::ACCENT_RED_LIGHT,
+        );
+    }
+
+    const COVER_INSET: f32 = 6.0;
+    const COVER_HEIGHT: f32 = 88.0;
     if let Some(icon) = smdh_icon {
         draw_smdh_icon(
             frame,
             width,
             height,
             scale,
-            x + 6.0,
-            y + 6.0,
-            card_width - 12.0,
-            70.0,
+            x + COVER_INSET,
+            y + COVER_INSET,
+            card_width - COVER_INSET * 2.0,
+            COVER_HEIGHT,
             icon,
         );
     } else {
@@ -6662,10 +6682,10 @@ fn render_library_tile(
             frame,
             width as usize,
             height as usize,
-            x + 6.0,
-            y + 6.0,
-            card_width - 12.0,
-            70.0,
+            x + COVER_INSET,
+            y + COVER_INSET,
+            card_width - COVER_INSET * 2.0,
+            COVER_HEIGHT,
             scale,
             base,
         );
@@ -6674,7 +6694,7 @@ fn render_library_tile(
             width as usize,
             height as usize,
             x + 14.0,
-            y + 20.0,
+            y + 21.0,
             card_width - 28.0,
             4.0,
             scale,
@@ -6685,7 +6705,7 @@ fn render_library_tile(
             width as usize,
             height as usize,
             x + 28.0,
-            y + 37.0,
+            y + 43.0,
             card_width - 56.0,
             4.0,
             scale,
@@ -6696,42 +6716,44 @@ fn render_library_tile(
             width,
             height,
             x + card_width * 0.5,
-            y + 53.0,
+            y + 68.0,
             text_scale,
             "3DS",
             brand::TEXT,
         );
     }
+
     if favorite {
         responsive_panel(
             frame,
             width,
             height,
-            x + card_width - 28.0,
+            x + card_width - 47.0,
             y + 8.0,
-            20.0,
-            20.0,
+            38.0,
+            18.0,
             scale,
-            brand::SURFACE_SELECTED,
+            brand::ACCENT_RED,
         );
         responsive_text_centered(
             frame,
             width,
             height,
-            x + card_width - 18.0,
-            y + 13.0,
+            x + card_width - 28.0,
+            y + 12.0,
             small_scale,
-            "F",
-            brand::ACCENT_GREEN_LIGHT,
+            "FAV",
+            brand::TEXT,
         );
     }
+
     responsive_text(
         frame,
         width,
         height,
         x + 10.0,
-        y + 87.0,
-        small_scale,
+        y + 108.0,
+        text_scale,
         &truncate(&entry.title, 25),
         brand::TEXT,
     );
@@ -6745,10 +6767,14 @@ fn render_library_tile(
         width,
         height,
         x + 10.0,
-        y + 108.0,
+        y + 129.0,
         small_scale,
-        &extension.to_ascii_uppercase(),
-        brand::ACCENT_GREEN_LIGHT,
+        &format!("NINTENDO 3DS  ·  .{}", extension.to_ascii_uppercase()),
+        if selected {
+            brand::ACCENT_RED_LIGHT
+        } else {
+            brand::TEXT_MUTED
+        },
     );
 }
 
