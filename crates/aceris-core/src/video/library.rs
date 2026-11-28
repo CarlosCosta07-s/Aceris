@@ -305,7 +305,10 @@ fn load_gamepad_deadzone_percent(settings_directory: &Path) -> u8 {
     if lines.next() != Some(GAMEPAD_SETTINGS_MAGIC) {
         return 16;
     }
-    let Some(value) = lines.next().and_then(|line| line.strip_prefix("deadzone_percent=")) else {
+    let Some(value) = lines
+        .next()
+        .and_then(|line| line.strip_prefix("deadzone_percent="))
+    else {
         return 16;
     };
     if lines.next().is_some() {
