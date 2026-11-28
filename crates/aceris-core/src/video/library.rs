@@ -9626,9 +9626,7 @@ mod tests {
         library.recent.clear();
         // The fifth portrait cover is intentionally clipped by the right edge;
         // its visible portion remains a valid touch target.
-        let fifth_x = (ui::home::CAROUSEL_X
-            + 4.0 * ui::home::GAME_CARD_STEP
-            + 80.0) as i32;
+        let fifth_x = (ui::home::CAROUSEL_X + 4.0 * ui::home::GAME_CARD_STEP + 80.0) as i32;
         let home_y = (ui::home::carousel_top(450.0) + 40.0) as i32;
         assert_eq!(
             library.click_responsive(fifth_x, home_y, 1000, 450),
