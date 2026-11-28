@@ -4516,6 +4516,363 @@ impl Library {
         }
     }
 
+    /// Home dashboard following the supplied console concept: fixed vertical rail,
+    /// centered selected-title identity, portrait covers and a compact command strip.
+    fn render_console_home(
+        &self,
+        frame: &mut [u8],
+        width: u32,
+        height: u32,
+        scale: f32,
+        logical_height: f32,
+    ) {
+        let title_scale = ui::typography_scale(ui::TypographyRole::Display, scale).min(4);
+        let body_scale = ui::typography_scale(ui::TypographyRole::Body, scale);
+        let label_scale = ui::typography_scale(ui::TypographyRole::Caption, scale);
+        let home_entries = self.home_entries();
+        let center_x = (ui::home::SIDEBAR_WIDTH + 1000.0) * 0.5;
+
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            0.0,
+            0.0,
+            1000.0,
+            logical_height,
+            scale,
+            brand::SURFACE_BASE,
+        );
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            0.0,
+            0.0,
+            ui::home::SIDEBAR_WIDTH,
+            logical_height,
+            scale,
+            brand::SURFACE_HEADER,
+        );
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            ui::home::SIDEBAR_WIDTH - 1.0,
+            0.0,
+            1.0,
+            logical_height,
+            scale,
+            brand::BORDER,
+        );
+
+        // Aceris mark at the top of the rail.
+        responsive_rounded_fill(
+            frame,
+            width as usize,
+            height as usize,
+            ui::home::SIDEBAR_BRAND_CENTER_X - 23.0,
+            ui::home::SIDEBAR_BRAND_CENTER_Y - 23.0,
+            46.0,
+            46.0,
+            scale,
+            23.0,
+            brand::ACCENT_RED,
+        );
+        render_console_nav_icon(
+            frame,
+            width,
+            height,
+            scale,
+            ui::home::SIDEBAR_BRAND_CENTER_X,
+            ui::home::SIDEBAR_BRAND_CENTER_Y,
+            8,
+            brand::TEXT,
+        );
+
+        let nav_pages = [
+            Some(LibraryPage::Home),
+            Some(LibraryPage::Games),
+            None,
+            Some(LibraryPage::Favorites),
+            Some(LibraryPage::Recent),
+            Some(LibraryPage::Homebrew),
+            Some(LibraryPage::Settings),
+        ];
+        for (slot, page) in nav_pages.into_iter().enumerate() {
+            let center_y = ui::home::sidebar_item_center_y(slot, logical_height);
+            let selected = page == Some(self.page);
+            let focused = self.home_focus == HomeFocus::Navigation
+                && self.home_navigation_selected == slot;
+            if selected || focused {
+                responsive_rounded_fill(
+                    frame,
+                    width as usize,
+                    height as usize,
+                    ui::home::SIDEBAR_BRAND_CENTER_X - 22.0,
+                    center_y - 22.0,
+                    44.0,
+                    44.0,
+                    scale,
+                    22.0,
+                    if selected {
+                        brand::ACCENT_RED
+                    } else {
+                        brand::SURFACE_SELECTED
+                    },
+                );
+                if focused && !selected {
+                    responsive_rounded_fill(
+                        frame,
+                        width as usize,
+                        height as usize,
+                        ui::home::SIDEBAR_BRAND_CENTER_X - 24.0,
+                        center_y - 24.0,
+                        48.0,
+                        48.0,
+                        scale,
+                        24.0,
+                        brand::ACCENT_RED_LIGHT,
+                    );
+                    responsive_rounded_fill(
+                        frame,
+                        width as usize,
+                        height as usize,
+                        ui::home::SIDEBAR_BRAND_CENTER_X - 21.0,
+                        center_y - 21.0,
+                        42.0,
+                        42.0,
+                        scale,
+                        21.0,
+                        brand::SURFACE_SELECTED,
+                    );
+                }
+            } else {
+                responsive_rounded_fill(
+                    frame,
+                    width as usize,
+                    height as usize,
+                    ui::home::SIDEBAR_BRAND_CENTER_X - 21.0,
+                    center_y - 21.0,
+                    42.0,
+                    42.0,
+                    scale,
+                    21.0,
+                    brand::SURFACE_RAISED,
+                );
+            }
+            render_console_nav_icon(
+                frame,
+                width,
+                height,
+                scale,
+                ui::home::SIDEBAR_BRAND_CENTER_X,
+                center_y,
+                slot,
+                if selected || focused {
+                    brand::TEXT
+                } else {
+                    brand::TEXT_MUTED
+                },
+            );
+        }
+
+        // The power glyph is a host hint, not an invented process action.
+        let power_y = (logical_height - ui::home::SIDEBAR_POWER_BOTTOM).max(0.0);
+        responsive_rounded_fill(
+            frame,
+            width as usize,
+            height as usize,
+            ui::home::SIDEBAR_BRAND_CENTER_X - 21.0,
+            power_y - 21.0,
+            42.0,
+            42.0,
+            scale,
+            21.0,
+            brand::SURFACE_RAISED,
+        );
+        render_console_nav_icon(
+            frame,
+            width,
+            height,
+            scale,
+            ui::home::SIDEBAR_BRAND_CENTER_X,
+            power_y,
+            7,
+            brand::TEXT_MUTED,
+        );
+
+        responsive_text(
+            frame,
+            width,
+            height,
+            850.0,
+            18.0,
+            label_scale,
+            &format!("{} JOGOS", home_entries.len()),
+            brand::TEXT_MUTED,
+        );
+
+        if let Some(entry) = self.selected_entry() {
+            render_cover_art(
+                frame,
+                width,
+                height,
+                scale,
+                center_x - 48.0,
+                12.0,
+                96.0,
+                78.0,
+                entry,
+                self.smdh_icons.get(&entry.path),
+                label_scale,
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                center_x,
+                105.0,
+                title_scale,
+                &truncate(&entry.title, 42),
+                brand::TEXT,
+            );
+            let extension = entry
+                .path
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("3ds");
+            let state = if self.is_recent(entry) {
+                "CONTINUAR JOGANDO"
+            } else if self.is_favorite(entry) {
+                "FAVORITO"
+            } else {
+                "NA BIBLIOTECA"
+            };
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                center_x,
+                137.0,
+                label_scale,
+                &format!(
+                    "NINTENDO 3DS  ·  .{}  ·  {}",
+                    extension.to_ascii_uppercase(),
+                    state
+                ),
+                brand::TEXT_MUTED,
+            );
+        } else {
+            responsive_rounded_fill(
+                frame,
+                width as usize,
+                height as usize,
+                center_x - 28.0,
+                22.0,
+                56.0,
+                56.0,
+                scale,
+                28.0,
+                brand::SURFACE_SELECTED,
+            );
+            render_console_nav_icon(
+                frame,
+                width,
+                height,
+                scale,
+                center_x,
+                50.0,
+                8,
+                brand::TEXT,
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                center_x,
+                105.0,
+                title_scale,
+                "SUA BIBLIOTECA",
+                brand::TEXT,
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                center_x,
+                137.0,
+                body_scale,
+                "Importe uma pasta para começar",
+                brand::TEXT_MUTED,
+            );
+        }
+
+        let carousel_top = ui::home::carousel_top(logical_height);
+        let card_height = ui::home::game_card_height(logical_height);
+        if home_entries.is_empty() {
+            render_console_empty_card(
+                frame,
+                width,
+                height,
+                scale,
+                ui::home::CAROUSEL_X,
+                carousel_top,
+                ui::home::GAME_CARD_WIDTH,
+                card_height,
+                label_scale,
+            );
+        } else {
+            let first_visible = self.home_first_visible(ui::home::VISIBLE_GAME_CARDS);
+            for (slot, entry) in home_entries
+                .iter()
+                .skip(first_visible)
+                .take(ui::home::VISIBLE_GAME_CARDS)
+                .enumerate()
+            {
+                let index = first_visible + slot;
+                let card_x = ui::home::CAROUSEL_X + slot as f32 * ui::home::GAME_CARD_STEP;
+                render_console_game_card(
+                    frame,
+                    width,
+                    height,
+                    scale,
+                    card_x,
+                    carousel_top,
+                    ui::home::GAME_CARD_WIDTH,
+                    card_height,
+                    entry,
+                    self.smdh_icons.get(&entry.path),
+                    index == self.selected && self.home_focus == HomeFocus::Games,
+                    label_scale,
+                );
+            }
+        }
+
+        let command_y = ui::home::command_bar_top(logical_height) + 13.0;
+        let command_items = [
+            (220.0, "A", if home_entries.is_empty() { "IMPORTAR" } else { "JOGAR" }, 0usize, 112.0),
+            (405.0, "X", "FAVORITO", 1usize, 122.0),
+            (595.0, "+", "OPÇÕES", 2usize, 112.0),
+            (775.0, "−", "TODOS OS JOGOS", 3usize, 164.0),
+        ];
+        for (x, key, label, slot, group_width) in command_items {
+            render_console_hint(
+                frame,
+                width,
+                height,
+                scale,
+                x,
+                command_y,
+                key,
+                label,
+                group_width,
+                self.home_focus == HomeFocus::Actions && self.home_action_selected == slot,
+                label_scale,
+            );
+        }
+    }
+
     fn render_landscape(
         &self,
         frame: &mut [u8],
@@ -4542,6 +4899,11 @@ impl Library {
         let game_count = self.entries.len().saturating_sub(homebrew_count);
         let selected_entry = self.selected_entry();
         let home_entries = self.home_entries();
+
+        if self.page == LibraryPage::Home {
+            self.render_console_home(frame, width, height, scale, logical_height);
+            return;
+        }
 
         // Unified console-style top bar. Brand colours are consumed only from
         // aceris-common::brand; active and controller-focused states stay explicit.
@@ -7520,6 +7882,323 @@ fn draw_smdh_icon(
 
 // These low-level draw primitives intentionally accept a full rectangle and target buffer.
 #[allow(clippy::too_many_arguments)]
+/// Draws a line using the same responsive logical coordinate system as the UI.
+#[allow(clippy::too_many_arguments)]
+fn responsive_line(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    thickness: f32,
+    scale: f32,
+    color: u32,
+) {
+    let distance = (x2 - x1).abs().max((y2 - y1).abs());
+    let steps = (distance * scale).ceil().max(1.0) as usize;
+    for step in 0..=steps {
+        let t = step as f32 / steps as f32;
+        let x = x1 + (x2 - x1) * t;
+        let y = y1 + (y2 - y1) * t;
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            x - thickness * 0.5,
+            y - thickness * 0.5,
+            thickness,
+            thickness,
+            scale,
+            color,
+        );
+    }
+}
+
+fn responsive_circle_outline(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    center_x: f32,
+    center_y: f32,
+    radius: f32,
+    thickness: f32,
+    scale: f32,
+    color: u32,
+) {
+    let segments = 40usize;
+    let mut previous = (center_x + radius, center_y);
+    for segment in 1..=segments {
+        let angle = std::f32::consts::TAU * segment as f32 / segments as f32;
+        let next = (
+            center_x + angle.cos() * radius,
+            center_y + angle.sin() * radius,
+        );
+        responsive_line(
+            frame, width, height, previous.0, previous.1, next.0, next.1, thickness, scale, color,
+        );
+        previous = next;
+    }
+}
+
+/// Original geometric Aceris navigation glyphs; no third-party icon assets are used.
+fn render_console_nav_icon(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    scale: f32,
+    center_x: f32,
+    center_y: f32,
+    kind: usize,
+    color: u32,
+) {
+    let line = |frame: &mut [u8], x1, y1, x2, y2| {
+        responsive_line(frame, width, height, x1, y1, x2, y2, 2.4, scale, color);
+    };
+    match kind {
+        // Home.
+        0 => {
+            line(frame, center_x - 13.0, center_y - 1.0, center_x, center_y - 12.0);
+            line(frame, center_x, center_y - 12.0, center_x + 13.0, center_y - 1.0);
+            line(frame, center_x - 9.0, center_y - 3.0, center_x - 9.0, center_y + 12.0);
+            line(frame, center_x + 9.0, center_y - 3.0, center_x + 9.0, center_y + 12.0);
+            line(frame, center_x - 9.0, center_y + 12.0, center_x + 9.0, center_y + 12.0);
+            line(frame, center_x - 2.0, center_y + 12.0, center_x - 2.0, center_y + 3.0);
+            line(frame, center_x + 3.0, center_y + 12.0, center_x + 3.0, center_y + 3.0);
+        }
+        // Game library / cartridge.
+        1 => {
+            line(frame, center_x - 13.0, center_y - 8.0, center_x + 13.0, center_y - 8.0);
+            line(frame, center_x + 13.0, center_y - 8.0, center_x + 13.0, center_y + 8.0);
+            line(frame, center_x + 13.0, center_y + 8.0, center_x - 13.0, center_y + 8.0);
+            line(frame, center_x - 13.0, center_y + 8.0, center_x - 13.0, center_y - 8.0);
+            line(frame, center_x - 8.0, center_y - 2.0, center_x - 8.0, center_y + 4.0);
+            line(frame, center_x - 11.0, center_y + 1.0, center_x - 5.0, center_y + 1.0);
+            responsive_rounded_fill(frame,width as usize,height as usize,center_x + 4.0,center_y - 4.0,4.0,4.0,scale,2.0,color);
+            responsive_rounded_fill(frame,width as usize,height as usize,center_x + 8.0,center_y + 2.0,4.0,4.0,scale,2.0,color);
+        }
+        // Import folder.
+        2 => {
+            line(frame, center_x - 12.0, center_y + 5.0, center_x + 12.0, center_y + 5.0);
+            line(frame, center_x - 12.0, center_y + 5.0, center_x - 12.0, center_y + 10.0);
+            line(frame, center_x + 12.0, center_y + 5.0, center_x + 12.0, center_y + 10.0);
+            line(frame, center_x - 12.0, center_y + 10.0, center_x + 12.0, center_y + 10.0);
+            line(frame, center_x, center_y - 12.0, center_x, center_y + 1.0);
+            line(frame, center_x - 6.0, center_y - 5.0, center_x, center_y + 1.0);
+            line(frame, center_x + 6.0, center_y - 5.0, center_x, center_y + 1.0);
+        }
+        // Favorites.
+        3 => {
+            let mut points = [(0.0f32, 0.0f32); 10];
+            for index in 0..10 {
+                let radius = if index % 2 == 0 { 14.0 } else { 6.5 };
+                let angle = -std::f32::consts::FRAC_PI_2
+                    + index as f32 * std::f32::consts::PI / 5.0;
+                points[index] = (
+                    center_x + angle.cos() * radius,
+                    center_y + angle.sin() * radius,
+                );
+            }
+            for index in 0..10 {
+                let next = (index + 1) % 10;
+                line(frame, points[index].0, points[index].1, points[next].0, points[next].1);
+            }
+        }
+        // Recent activity.
+        4 => {
+            responsive_circle_outline(frame,width,height,center_x,center_y,13.0,2.4,scale,color);
+            line(frame, center_x, center_y, center_x, center_y - 8.0);
+            line(frame, center_x, center_y, center_x + 7.0, center_y + 4.0);
+        }
+        // Homebrew.
+        5 => {
+            line(frame, center_x - 4.0, center_y - 13.0, center_x + 4.0, center_y - 13.0);
+            line(frame, center_x - 2.0, center_y - 13.0, center_x - 2.0, center_y - 5.0);
+            line(frame, center_x + 2.0, center_y - 13.0, center_x + 2.0, center_y - 5.0);
+            line(frame, center_x - 2.0, center_y - 5.0, center_x - 11.0, center_y + 10.0);
+            line(frame, center_x + 2.0, center_y - 5.0, center_x + 11.0, center_y + 10.0);
+            line(frame, center_x - 11.0, center_y + 10.0, center_x + 11.0, center_y + 10.0);
+            line(frame, center_x - 7.0, center_y + 3.0, center_x + 7.0, center_y + 3.0);
+        }
+        // Settings.
+        6 => {
+            responsive_circle_outline(frame,width,height,center_x,center_y,11.0,2.2,scale,color);
+            responsive_circle_outline(frame,width,height,center_x,center_y,4.0,2.2,scale,color);
+            for index in 0..8 {
+                let angle = index as f32 * std::f32::consts::PI / 4.0;
+                line(
+                    frame,
+                    center_x + angle.cos() * 12.0,
+                    center_y + angle.sin() * 12.0,
+                    center_x + angle.cos() * 16.0,
+                    center_y + angle.sin() * 16.0,
+                );
+            }
+        }
+        // Power.
+        7 => {
+            responsive_circle_outline(frame,width,height,center_x,center_y + 2.0,12.0,2.4,scale,color);
+            line(frame, center_x, center_y - 15.0, center_x, center_y - 1.0);
+        }
+        // Aceris fruit mark.
+        _ => {
+            responsive_rounded_fill(frame,width as usize,height as usize,center_x - 10.0,center_y - 4.0,13.0,13.0,scale,6.5,brand::ACCENT_RED_LIGHT);
+            responsive_rounded_fill(frame,width as usize,height as usize,center_x - 1.0,center_y - 3.0,13.0,13.0,scale,6.5,brand::ACCENT_RED);
+            responsive_line(frame,width,height,center_x - 1.0,center_y - 9.0,center_x + 6.0,center_y - 14.0,2.6,scale,brand::ACCENT_GREEN_LIGHT);
+            responsive_line(frame,width,height,center_x + 1.0,center_y - 9.0,center_x + 11.0,center_y - 9.0,2.6,scale,brand::ACCENT_GREEN_LIGHT);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_console_hint(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    scale: f32,
+    x: f32,
+    y: f32,
+    key: &str,
+    label: &str,
+    group_width: f32,
+    focused: bool,
+    text_scale: usize,
+) {
+    if focused {
+        responsive_panel(
+            frame, width, height, x - 8.0, y - 5.0, group_width, 34.0, scale,
+            brand::SURFACE_SELECTED,
+        );
+    }
+    responsive_panel(
+        frame, width, height, x, y, 24.0, 24.0, scale, brand::SURFACE_RAISED,
+    );
+    responsive_text_centered(
+        frame, width, height, x + 12.0, y + 6.0, text_scale, key, brand::TEXT,
+    );
+    responsive_text(
+        frame, width, height, x + 34.0, y + 7.0, text_scale, label, brand::TEXT_MUTED,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_console_game_card(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    scale: f32,
+    x: f32,
+    y: f32,
+    card_width: f32,
+    card_height: f32,
+    entry: &Entry,
+    smdh_icon: Option<&SmdhIcon>,
+    selected: bool,
+    small_scale: usize,
+) {
+    if selected {
+        responsive_panel(
+            frame, width, height, x - 4.0, y - 4.0, card_width + 8.0, card_height + 8.0, scale,
+            brand::ACCENT_RED_LIGHT,
+        );
+    }
+    responsive_panel(
+        frame, width, height, x, y, card_width, card_height, scale,
+        if selected { brand::SURFACE_SELECTED } else { brand::SURFACE_CARD },
+    );
+    render_cover_art(
+        frame,
+        width,
+        height,
+        scale,
+        x + 5.0,
+        y + 5.0,
+        card_width - 10.0,
+        (card_height - 50.0).max(120.0),
+        entry,
+        smdh_icon,
+        small_scale,
+    );
+    responsive_fill(
+        frame,
+        width as usize,
+        height as usize,
+        x + 8.0,
+        y + card_height - 40.0,
+        card_width - 16.0,
+        1.0,
+        scale,
+        brand::BORDER,
+    );
+    responsive_text_centered(
+        frame,
+        width,
+        height,
+        x + card_width * 0.5,
+        y + card_height - 32.0,
+        small_scale.max(1),
+        &truncate(&entry.title, 22),
+        brand::TEXT,
+    );
+    let extension = entry
+        .path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("3ds");
+    responsive_text_centered(
+        frame,
+        width,
+        height,
+        x + card_width * 0.5,
+        y + card_height - 16.0,
+        small_scale,
+        &format!(".{}", extension.to_ascii_uppercase()),
+        if selected { brand::ACCENT_RED_LIGHT } else { brand::TEXT_MUTED },
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_console_empty_card(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    scale: f32,
+    x: f32,
+    y: f32,
+    card_width: f32,
+    card_height: f32,
+    small_scale: usize,
+) {
+    responsive_panel(
+        frame, width, height, x, y, card_width, card_height, scale, brand::SURFACE_CARD,
+    );
+    responsive_circle_outline(
+        frame, width, height, x + card_width * 0.5, y + card_height * 0.38, 22.0, 2.4, scale,
+        brand::ACCENT_GREEN_LIGHT,
+    );
+    responsive_line(
+        frame, width, height,
+        x + card_width * 0.5 - 9.0, y + card_height * 0.38,
+        x + card_width * 0.5 + 9.0, y + card_height * 0.38,
+        2.4, scale, brand::ACCENT_GREEN_LIGHT,
+    );
+    responsive_line(
+        frame, width, height,
+        x + card_width * 0.5, y + card_height * 0.38 - 9.0,
+        x + card_width * 0.5, y + card_height * 0.38 + 9.0,
+        2.4, scale, brand::ACCENT_GREEN_LIGHT,
+    );
+    responsive_text_centered(
+        frame, width, height, x + card_width * 0.5, y + card_height * 0.70, small_scale,
+        "IMPORTAR JOGOS", brand::TEXT,
+    );
+    responsive_text_centered(
+        frame, width, height, x + card_width * 0.5, y + card_height * 0.78, small_scale,
+        "SELECIONAR PASTA", brand::TEXT_MUTED,
+    );
+}
+
 fn responsive_fill(
     frame: &mut [u8],
     width: usize,
