@@ -7810,7 +7810,8 @@ mod tests {
 
         library.select_page(LibraryPage::Home);
         library.move_selection_responsive(-1, 1000, 600);
-        library.move_selection_horizontal_responsive(2, 1000, 600);
+        library.move_selection_horizontal_responsive(1, 1000, 600);
+        library.move_selection_horizontal_responsive(1, 1000, 600);
         assert_eq!(
             library.activate_home_selection(1000, 600),
             ClickResult::Ignored
