@@ -2935,7 +2935,8 @@ impl Library {
         logical_height: f32,
     ) {
         let font_scale = ui::typography_scale(ui::TypographyRole::Display, scale);
-        let small_scale = ui::typography_scale(ui::TypographyRole::Body, scale);
+        let body_scale = ui::typography_scale(ui::TypographyRole::Body, scale);
+        let small_scale = ui::typography_scale(ui::TypographyRole::Caption, scale);
         let home_entries = self.home_entries();
 
         // Brand header.
@@ -3095,8 +3096,8 @@ impl Library {
                     height,
                     150.0,
                     284.0,
-                    small_scale,
-                    &truncate(&entry.title, 27),
+                    body_scale,
+                    &truncate(&entry.title, 18),
                     brand::TEXT,
                 );
                 let extension = entry
@@ -3145,7 +3146,7 @@ impl Library {
                     height,
                     200.0,
                     391.0,
-                    small_scale,
+                    body_scale,
                     if self.recent_count() > 0 {
                         "CONTINUAR JOGANDO"
                     } else {
@@ -3200,7 +3201,7 @@ impl Library {
                     height,
                     200.0,
                     391.0,
-                    small_scale,
+                    body_scale,
                     if self.entries.is_empty() {
                         "IMPORTAR PASTA"
                     } else {
@@ -3889,7 +3890,7 @@ impl Library {
                 height,
                 22.0,
                 212.0,
-                small_scale,
+                body_scale,
                 &count_text,
                 brand::TEXT_MUTED,
             );
