@@ -22,6 +22,30 @@ continuam presentes no SVG do ícone e no fundo do ícone adaptativo.
 | Verde claro | `#86D95F` | realces |
 | Texto | `#F5EEF8` | texto sobre fundo escuro |
 
+## Tokens de interface
+
+A biblioteca, as configurações e os menus durante a partida consomem os mesmos
+tokens semânticos definidos em `crates/aceris-common/src/brand.rs`. O valor
+visual pode evoluir sem espalhar cores literais por cada tela.
+
+| Token | Cor | Aplicação |
+|---|---|---|
+| `SURFACE_BASE` | `#1A0B2E` | fundo principal |
+| `SURFACE_HEADER` | `#211032` | cabeçalhos e barras |
+| `SURFACE_PANEL` | `#2A1240` | painéis e superfícies internas |
+| `SURFACE_CARD` | `#351A4A` | cartões e navegação inativa |
+| `SURFACE_RAISED` | `#402054` | controles elevados |
+| `SURFACE_SELECTED` | `#4A1D5E` | item selecionado |
+| `SURFACE_BUTTON` | `#3A214B` | botões secundários |
+| `BORDER` | `#644078` | contornos discretos |
+| `TEXT_MUTED` | `#C7B8D3` | texto auxiliar |
+| `TEXT_SUBTLE` | `#A998B8` | metadados e dicas |
+| `SUCCESS_SURFACE` | `#23432D` | estados positivos |
+
+O vermelho da acerola identifica ação primária e foco; o verde fica reservado
+a estados positivos. Os tokens de texto auxiliar mantêm contraste superior a
+4,5:1 nas superfícies escuras documentadas.
+
 ## Regras de uso
 - Nome sempre escrito **Aceris** (A maiúscula); título de janela: `Aceris <versão>`.
 - Tema escuro por padrão; texto claro sobre `#2A1240`/`#1A0B2E`.
