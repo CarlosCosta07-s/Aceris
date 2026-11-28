@@ -17,6 +17,7 @@ const AXIS_GLOBAL_FILE: &str = "gamepad_axis_settings_v1.txt";
 const AXIS_DEVICE_DIRECTORY: &str = "gamepad_axis_devices";
 const AXIS_GAME_DIRECTORY: &str = "gamepad_axis_games";
 const AXIS_CONFIG_MAGIC: &str = "ACERIS_GAMEPAD_AXIS_SETTINGS_V1";
+const AXIS_DEADZONE_STEPS: [u8; 5] = [8, 12, 16, 20, 24];
 
 /// A standardized physical gamepad button before it is mapped to 3DS input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -411,6 +412,7 @@ pub struct GamepadAxisSettings {
     invert_x: bool,
     invert_y: bool,
     sensitivity_percent: u8,
+    deadzone_override_percent: Option<u8>,
 }
 
 impl Default for GamepadAxisSettings {
@@ -419,6 +421,7 @@ impl Default for GamepadAxisSettings {
             invert_x: false,
             invert_y: false,
             sensitivity_percent: 100,
+            deadzone_override_percent: None,
         }
     }
 }
@@ -449,6 +452,48 @@ impl GamepadAxisSettings {
         self.sensitivity_percent = percent.clamp(50, 200);
     }
 
+    /// Current per-profile deadzone override. None inherits the existing global setting.
+    pub fn deadzone_override_percent(&self) -> Option<u8> {
+        self.deadzone_override_percent
+    }
+
+    /// Selects one supported per-profile deadzone, or None to inherit the global value.
+    pub fn set_deadzone_override_percent(&mut self, percent: Option<u8>) -> bool {
+        if percent.is_some_and(|value| !AXIS_DEADZONE_STEPS.contains(&value)) {
+            return false;
+        }
+        self.deadzone_override_percent = percent;
+        true
+    }
+
+    /// Moves the override by one supported step relative to the effective global fallback.
+    pub fn adjust_deadzone_override(&mut self, inherited_percent: u8, direction: i8) {
+        if direction == 0 {
+            return;
+        }
+        let inherited = if AXIS_DEADZONE_STEPS.contains(&inherited_percent) {
+            inherited_percent
+        } else {
+            16
+        };
+        let current = self.deadzone_override_percent.unwrap_or(inherited);
+        let index = AXIS_DEADZONE_STEPS
+            .iter()
+            .position(|value| *value == current)
+            .unwrap_or(2);
+        let next = if direction > 0 {
+            (index + 1).min(AXIS_DEADZONE_STEPS.len() - 1)
+        } else {
+            index.saturating_sub(1)
+        };
+        self.deadzone_override_percent = Some(AXIS_DEADZONE_STEPS[next]);
+    }
+
+    /// Effective deadzone, preserving the previous global setting when no override exists.
+    pub fn effective_deadzone_percent(&self, inherited_percent: u8) -> u8 {
+        self.deadzone_override_percent.unwrap_or(inherited_percent)
+    }
+
     /// Applies axis inversion and sensitivity before converting to guest input.
     pub fn apply_to_circle_pad(&self, x: f32, y: f32, deadzone_percent: u8) -> (i16, i16) {
         let x = if self.invert_x { -x } else { x };
@@ -456,17 +501,22 @@ impl GamepadAxisSettings {
         crate::input::gamepad_axes_to_circle_pad_with_sensitivity(
             x,
             y,
-            deadzone_percent,
+            self.effective_deadzone_percent(deadzone_percent),
             self.sensitivity_percent,
         )
     }
 
     pub fn to_config_string(&self) -> String {
+        let deadzone = self
+            .deadzone_override_percent
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "inherit".to_string());
         format!(
-            "{AXIS_CONFIG_MAGIC}\ninvert_x={}\ninvert_y={}\nsensitivity_percent={}\n",
+            "{AXIS_CONFIG_MAGIC}\ninvert_x={}\ninvert_y={}\nsensitivity_percent={}\ndeadzone_percent={}\n",
             u8::from(self.invert_x),
             u8::from(self.invert_y),
-            self.sensitivity_percent
+            self.sensitivity_percent,
+            deadzone
         )
     }
 
@@ -492,6 +542,19 @@ impl GamepadAxisSettings {
             .parse::<u8>()
             .ok()
             .filter(|value| (50..=200).contains(value))?;
+        let deadzone_override_percent = match lines.next() {
+            None | Some("deadzone_percent=inherit") => None,
+            Some(line) => {
+                let percent = line
+                    .strip_prefix("deadzone_percent=")?
+                    .parse::<u8>()
+                    .ok()?;
+                if !AXIS_DEADZONE_STEPS.contains(&percent) {
+                    return None;
+                }
+                Some(percent)
+            }
+        };
         if lines.next().is_some() {
             return None;
         }
@@ -499,6 +562,7 @@ impl GamepadAxisSettings {
             invert_x,
             invert_y,
             sensitivity_percent,
+            deadzone_override_percent,
         })
     }
 
@@ -764,6 +828,14 @@ mod tests {
             "ACERIS_GAMEPAD_AXIS_SETTINGS_V1\ninvert_x=0\ninvert_y=0\nsensitivity_percent=100\nextra=1\n"
         )
         .is_none());
+        assert!(GamepadAxisSettings::from_config_str(
+            "ACERIS_GAMEPAD_AXIS_SETTINGS_V1\ninvert_x=0\ninvert_y=0\nsensitivity_percent=100\ndeadzone_percent=9\n"
+        )
+        .is_none());
+        assert!(GamepadAxisSettings::from_config_str(
+            "ACERIS_GAMEPAD_AXIS_SETTINGS_V1\ninvert_x=0\ninvert_y=0\nsensitivity_percent=100\ndeadzone_percent=inherit\nextra=1\n"
+        )
+        .is_none());
     }
 
     #[test]
@@ -782,6 +854,58 @@ mod tests {
         let higher = normal.apply_to_circle_pad(0.5, 0.0, 16);
         assert!(lower.0 > 0 && lower.0 < baseline.0);
         assert!(higher.0 > baseline.0);
+    }
+
+    #[test]
+    fn axis_deadzone_override_is_optional_backward_compatible_and_step_limited() {
+        let legacy = "ACERIS_GAMEPAD_AXIS_SETTINGS_V1\ninvert_x=0\ninvert_y=0\nsensitivity_percent=100\n";
+        let parsed = GamepadAxisSettings::from_config_str(legacy).unwrap();
+        assert_eq!(parsed.deadzone_override_percent(), None);
+        assert_eq!(parsed.effective_deadzone_percent(20), 20);
+
+        let mut settings = parsed;
+        assert!(settings.set_deadzone_override_percent(Some(24)));
+        assert_eq!(settings.effective_deadzone_percent(8), 24);
+        assert!(!settings.set_deadzone_override_percent(Some(9)));
+        assert_eq!(settings.deadzone_override_percent(), Some(24));
+        assert!(settings.set_deadzone_override_percent(None));
+        assert_eq!(settings.deadzone_override_percent(), None);
+        assert_eq!(GamepadAxisSettings::from_config_str(&settings.to_config_string()), Some(settings));
+    }
+
+    #[test]
+    fn axis_deadzone_adjustment_uses_global_fallback_and_clamps_to_supported_steps() {
+        let mut settings = GamepadAxisSettings::default();
+        settings.adjust_deadzone_override(16, -1);
+        assert_eq!(settings.deadzone_override_percent(), Some(12));
+        settings.adjust_deadzone_override(16, 1);
+        assert_eq!(settings.deadzone_override_percent(), Some(16));
+
+        settings.set_deadzone_override_percent(Some(24));
+        settings.adjust_deadzone_override(16, 1);
+        assert_eq!(settings.deadzone_override_percent(), Some(24));
+        settings.adjust_deadzone_override(16, -1);
+        assert_eq!(settings.deadzone_override_percent(), Some(20));
+
+        settings.set_deadzone_override_percent(None);
+        settings.adjust_deadzone_override(99, -1);
+        assert_eq!(settings.deadzone_override_percent(), Some(12));
+    }
+
+    #[test]
+    fn axis_deadzone_override_changes_circle_pad_processing_only_when_set() {
+        let inherited = GamepadAxisSettings::default();
+        let low_global = inherited.apply_to_circle_pad(0.15, 0.0, 8);
+        let high_global = inherited.apply_to_circle_pad(0.15, 0.0, 20);
+        assert_ne!(low_global, high_global);
+
+        let mut override_settings = GamepadAxisSettings::default();
+        override_settings.set_deadzone_override_percent(Some(20));
+        assert_eq!(override_settings.apply_to_circle_pad(0.15, 0.0, 8), high_global);
+        assert_eq!(
+            override_settings.apply_to_circle_pad(0.15, 0.0, 24),
+            override_settings.apply_to_circle_pad(0.15, 0.0, 20)
+        );
     }
 
     #[test]
