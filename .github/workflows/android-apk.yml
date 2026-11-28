@@ -60,6 +60,19 @@ jobs:
       - name: Build isolated NativeActivity smoke-test library
         run: cargo ndk -t arm64-v8a build --locked -p aceris-android-smoke --release
 
+      - name: Save full Aceris library before building probes
+        run: install -m 0644 target/aarch64-linux-android/release/libaceris_android.so build-full-main.so
+
+      - name: Build worker-only startup probe library
+        run: |
+          cargo ndk -t arm64-v8a build --locked -p aceris-android --release --features startup-probe-no-app
+          install -m 0644 target/aarch64-linux-android/release/libaceris_android.so build-thread-probe.so
+
+      - name: Build App and CPU-frame startup probe library
+        run: |
+          cargo ndk -t arm64-v8a build --locked -p aceris-android --release --features startup-probe-app-frame
+          install -m 0644 target/aarch64-linux-android/release/libaceris_android.so build-app-frame-probe.so
+
       - name: Package and sign development APK
         shell: bash
         run: |
@@ -82,7 +95,7 @@ jobs:
             build/aceris-resources.zip
 
           install -m 0644 \
-            target/aarch64-linux-android/release/libaceris_android.so \
+            build-full-main.so \
             build/native/lib/arm64-v8a/libaceris_android.so
 
           (
@@ -150,7 +163,7 @@ jobs:
             build/aceris-fulltest-resources.zip
 
           install -m 0644 \
-            target/aarch64-linux-android/release/libaceris_android.so \
+            build-full-main.so \
             build/fulltest-native/lib/arm64-v8a/libaceris_android.so
 
           (
@@ -178,6 +191,76 @@ jobs:
         with:
           name: aceris-android-full-startup-test-arm64
           path: build/aceris-full-startup-test.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Package staged startup probe APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+
+          package_probe() {
+            local suffix="$1"
+            local package_id="$2"
+            local label="$3"
+            local library="$4"
+            local version="$5"
+            local root="build/probe-$suffix"
+            local resources="$root/resources"
+            local native="$root/native/lib/arm64-v8a"
+            mkdir -p "$resources" "$native"
+            cp -R frontends/android/res/. "$resources/"
+            sed -i "s#<string name=\"app_name\">Aceris</string>#<string name=\"app_name\">$label</string>#" \
+              "$resources/values/strings.xml"
+            "$BUILD_TOOLS/aapt2" compile --dir "$resources" -o "$root/resources.zip"
+            sed "s#package=\"org.aceris.emulator\"#package=\"$package_id\"#" \
+              frontends/android/AndroidManifest.xml > "$root/AndroidManifest.xml"
+            "$BUILD_TOOLS/aapt2" link \
+              -I "$ANDROID_HOME/platforms/android-35/android.jar" \
+              --manifest "$root/AndroidManifest.xml" \
+              --min-sdk-version 24 --target-sdk-version 34 \
+              --version-code 1 --version-name "$version" \
+              -o "$root/unsigned.apk" "$root/resources.zip"
+            install -m 0644 "$library" "$native/libaceris_android.so"
+            (cd "$root/native" && zip -q -0 "../unsigned.apk" lib/arm64-v8a/libaceris_android.so)
+            "$BUILD_TOOLS/zipalign" -f -p 4 "$root/unsigned.apk" "$root/aligned.apk"
+            "$BUILD_TOOLS/apksigner" sign \
+              --ks build/aceris-ci-debug.keystore \
+              --ks-key-alias androiddebugkey \
+              --ks-pass pass:android --key-pass pass:android \
+              --out "$root/$suffix.apk" "$root/aligned.apk"
+            "$BUILD_TOOLS/apksigner" verify --verbose "$root/$suffix.apk"
+            "$BUILD_TOOLS/aapt" dump badging "$root/$suffix.apk" | grep -F "package: name='$package_id'"
+            unzip -l "$root/$suffix.apk" | grep -F "lib/arm64-v8a/libaceris_android.so"
+            sha256sum "$root/$suffix.apk"
+          }
+
+          package_probe thread \
+            org.aceris.emulator.threadprobe \
+            "Aceris Thread Test" \
+            build-thread-probe.so \
+            "0.0.1-thread-probe"
+
+          package_probe appframe \
+            org.aceris.emulator.appframeprobe \
+            "Aceris App Frame Test" \
+            build-app-frame-probe.so \
+            "0.0.1-app-frame-probe"
+
+      - name: Upload worker-only startup probe APK
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: aceris-android-thread-probe-arm64
+          path: build/probe-thread/thread.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload App and CPU-frame startup probe APK
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: aceris-android-app-frame-probe-arm64
+          path: build/probe-appframe/appframe.apk
           if-no-files-found: error
           retention-days: 14
 
