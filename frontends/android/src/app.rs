@@ -740,9 +740,9 @@ impl App {
         let Some(system) = self.system.as_mut() else {
             return;
         };
-        let physical_mask = self.gamepad_mapping.mask_for_held_controls(
-            self.gamepad_button_mask | self.gamepad_trigger_axis_mask,
-        );
+        let physical_mask = self
+            .gamepad_mapping
+            .mask_for_held_controls(self.gamepad_button_mask | self.gamepad_trigger_axis_mask);
         let input = system.input_mut();
         input.set_buttons(aceris_core::input::pad_from_frontend_buttons(mask) | physical_mask);
         match touch {
@@ -1385,8 +1385,15 @@ fn gamepad_axis_to_circle_pad(value: f32, deadzone_percent: u8) -> i32 {
 
 fn gamepad_trigger_control_mask(left: f32, right: f32) -> u16 {
     let is_pressed = |value: f32| value.is_finite() && value.clamp(0.0, 1.0) >= 0.5;
-    (if is_pressed(left) { GamepadControl::LeftTrigger.bit() } else { 0 })
-        | (if is_pressed(right) { GamepadControl::RightTrigger.bit() } else { 0 })
+    (if is_pressed(left) {
+        GamepadControl::LeftTrigger.bit()
+    } else {
+        0
+    }) | (if is_pressed(right) {
+        GamepadControl::RightTrigger.bit()
+    } else {
+        0
+    })
 }
 
 #[cfg(test)]
@@ -1415,7 +1422,10 @@ mod gamepad_axis_tests {
             gamepad_control_from_android_keycode(AKEYCODE_BUTTON_R2),
             Some(GamepadControl::RightTrigger)
         );
-        assert_eq!(gamepad_control_from_android_keycode(AKEYCODE_BUTTON_R2 + 1), None);
+        assert_eq!(
+            gamepad_control_from_android_keycode(AKEYCODE_BUTTON_R2 + 1),
+            None
+        );
     }
 
     #[test]

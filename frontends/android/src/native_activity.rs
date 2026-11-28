@@ -1001,7 +1001,7 @@ unsafe fn handle_key(event: *mut c_void, app: &mut App) -> bool {
             } else {
                 app.key(code, false)
             }
-        },
+        }
         _ => false,
     }
 }
