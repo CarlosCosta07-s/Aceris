@@ -1021,17 +1021,11 @@ pub fn hit_test_gamepad_axis_editor(
             0 => Some(GamepadAxisEditorHit::InvertX),
             1 => Some(GamepadAxisEditorHit::InvertY),
             2 if x < row.x + row.width * 45 / 100 => None,
-            2 if x < row.x + row.width * 65 / 100 => {
-                Some(GamepadAxisEditorHit::SensitivityDown)
-            }
+            2 if x < row.x + row.width * 65 / 100 => Some(GamepadAxisEditorHit::SensitivityDown),
             2 => None,
             3 if x < row.x + row.width * 45 / 100 => None,
-            3 if x < row.x + row.width * 65 / 100 => {
-                Some(GamepadAxisEditorHit::DeadzoneDown)
-            }
-            3 if x < row.x + row.width * 85 / 100 => {
-                Some(GamepadAxisEditorHit::DeadzoneInherit)
-            }
+            3 if x < row.x + row.width * 65 / 100 => Some(GamepadAxisEditorHit::DeadzoneDown),
+            3 if x < row.x + row.width * 85 / 100 => Some(GamepadAxisEditorHit::DeadzoneInherit),
             3 => Some(GamepadAxisEditorHit::DeadzoneUp),
             _ => None,
         }

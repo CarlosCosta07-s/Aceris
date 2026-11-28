@@ -545,10 +545,7 @@ impl GamepadAxisSettings {
         let deadzone_override_percent = match lines.next() {
             None | Some("deadzone_percent=inherit") => None,
             Some(line) => {
-                let percent = line
-                    .strip_prefix("deadzone_percent=")?
-                    .parse::<u8>()
-                    .ok()?;
+                let percent = line.strip_prefix("deadzone_percent=")?.parse::<u8>().ok()?;
                 if !AXIS_DEADZONE_STEPS.contains(&percent) {
                     return None;
                 }
@@ -858,7 +855,8 @@ mod tests {
 
     #[test]
     fn axis_deadzone_override_is_optional_backward_compatible_and_step_limited() {
-        let legacy = "ACERIS_GAMEPAD_AXIS_SETTINGS_V1\ninvert_x=0\ninvert_y=0\nsensitivity_percent=100\n";
+        let legacy =
+            "ACERIS_GAMEPAD_AXIS_SETTINGS_V1\ninvert_x=0\ninvert_y=0\nsensitivity_percent=100\n";
         let parsed = GamepadAxisSettings::from_config_str(legacy).unwrap();
         assert_eq!(parsed.deadzone_override_percent(), None);
         assert_eq!(parsed.effective_deadzone_percent(20), 20);
@@ -870,7 +868,10 @@ mod tests {
         assert_eq!(settings.deadzone_override_percent(), Some(24));
         assert!(settings.set_deadzone_override_percent(None));
         assert_eq!(settings.deadzone_override_percent(), None);
-        assert_eq!(GamepadAxisSettings::from_config_str(&settings.to_config_string()), Some(settings));
+        assert_eq!(
+            GamepadAxisSettings::from_config_str(&settings.to_config_string()),
+            Some(settings)
+        );
     }
 
     #[test]
@@ -901,7 +902,10 @@ mod tests {
 
         let mut override_settings = GamepadAxisSettings::default();
         override_settings.set_deadzone_override_percent(Some(20));
-        assert_eq!(override_settings.apply_to_circle_pad(0.15, 0.0, 8), high_global);
+        assert_eq!(
+            override_settings.apply_to_circle_pad(0.15, 0.0, 8),
+            high_global
+        );
         assert_eq!(
             override_settings.apply_to_circle_pad(0.15, 0.0, 24),
             override_settings.apply_to_circle_pad(0.15, 0.0, 20)
