@@ -167,12 +167,30 @@ mod tests {
     fn gilrs_controls_cover_the_standard_3ds_button_sources() {
         assert_eq!(gilrs_button(GamepadControl::South), Button::South);
         assert_eq!(gilrs_button(GamepadControl::East), Button::East);
-        assert_eq!(gilrs_button(GamepadControl::LeftShoulder), Button::LeftTrigger);
-        assert_eq!(gilrs_button(GamepadControl::RightShoulder), Button::RightTrigger);
-        assert_eq!(gilrs_button(GamepadControl::LeftTrigger), Button::LeftTrigger2);
-        assert_eq!(gilrs_button(GamepadControl::RightTrigger), Button::RightTrigger2);
-        assert_eq!(GamepadMapping::default().target(GamepadControl::LeftTrigger), Some(PadButton::ZL));
-        assert_eq!(GamepadMapping::default().target(GamepadControl::RightTrigger), Some(PadButton::ZR));
+        assert_eq!(
+            gilrs_button(GamepadControl::LeftShoulder),
+            Button::LeftTrigger
+        );
+        assert_eq!(
+            gilrs_button(GamepadControl::RightShoulder),
+            Button::RightTrigger
+        );
+        assert_eq!(
+            gilrs_button(GamepadControl::LeftTrigger),
+            Button::LeftTrigger2
+        );
+        assert_eq!(
+            gilrs_button(GamepadControl::RightTrigger),
+            Button::RightTrigger2
+        );
+        assert_eq!(
+            GamepadMapping::default().target(GamepadControl::LeftTrigger),
+            Some(PadButton::ZL)
+        );
+        assert_eq!(
+            GamepadMapping::default().target(GamepadControl::RightTrigger),
+            Some(PadButton::ZR)
+        );
     }
 
     #[test]

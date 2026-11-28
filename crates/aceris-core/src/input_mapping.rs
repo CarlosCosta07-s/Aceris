@@ -18,20 +18,44 @@ const GAME_DIRECTORY: &str = "gamepad_games";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum GamepadControl {
-    South = 0, East, North, West, DPadUp, DPadDown, DPadLeft, DPadRight,
-    LeftShoulder, RightShoulder, LeftTrigger, RightTrigger, Start, Select,
+    South = 0,
+    East,
+    North,
+    West,
+    DPadUp,
+    DPadDown,
+    DPadLeft,
+    DPadRight,
+    LeftShoulder,
+    RightShoulder,
+    LeftTrigger,
+    RightTrigger,
+    Start,
+    Select,
 }
 
 impl GamepadControl {
     pub const COUNT: usize = 14;
     pub const ALL: [Self; Self::COUNT] = [
-        Self::South, Self::East, Self::North, Self::West,
-        Self::DPadUp, Self::DPadDown, Self::DPadLeft, Self::DPadRight,
-        Self::LeftShoulder, Self::RightShoulder, Self::LeftTrigger, Self::RightTrigger,
-        Self::Start, Self::Select,
+        Self::South,
+        Self::East,
+        Self::North,
+        Self::West,
+        Self::DPadUp,
+        Self::DPadDown,
+        Self::DPadLeft,
+        Self::DPadRight,
+        Self::LeftShoulder,
+        Self::RightShoulder,
+        Self::LeftTrigger,
+        Self::RightTrigger,
+        Self::Start,
+        Self::Select,
     ];
 
-    pub const fn bit(self) -> u16 { 1u16 << (self as u8) }
+    pub const fn bit(self) -> u16 {
+        1u16 << (self as u8)
+    }
 
     pub const fn config_key(self) -> &'static str {
         match self {
@@ -55,34 +79,78 @@ impl GamepadControl {
 
 /// A hardware-order button that a physical control can produce.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PadButton { A, B, X, Y, Select, Start, Right, Left, Up, Down, R, L, ZL, ZR }
+pub enum PadButton {
+    A,
+    B,
+    X,
+    Y,
+    Select,
+    Start,
+    Right,
+    Left,
+    Up,
+    Down,
+    R,
+    L,
+    ZL,
+    ZR,
+}
 
 impl PadButton {
     pub const fn bit(self) -> u32 {
         match self {
-            Self::A => pad::A, Self::B => pad::B, Self::X => pad::X, Self::Y => pad::Y,
-            Self::Select => pad::SELECT, Self::Start => pad::START,
-            Self::Right => pad::RIGHT, Self::Left => pad::LEFT,
-            Self::Up => pad::UP, Self::Down => pad::DOWN,
-            Self::R => pad::R, Self::L => pad::L, Self::ZL => pad::ZL, Self::ZR => pad::ZR,
+            Self::A => pad::A,
+            Self::B => pad::B,
+            Self::X => pad::X,
+            Self::Y => pad::Y,
+            Self::Select => pad::SELECT,
+            Self::Start => pad::START,
+            Self::Right => pad::RIGHT,
+            Self::Left => pad::LEFT,
+            Self::Up => pad::UP,
+            Self::Down => pad::DOWN,
+            Self::R => pad::R,
+            Self::L => pad::L,
+            Self::ZL => pad::ZL,
+            Self::ZR => pad::ZR,
         }
     }
 
     pub const fn config_value(self) -> &'static str {
         match self {
-            Self::A => "a", Self::B => "b", Self::X => "x", Self::Y => "y",
-            Self::Select => "select", Self::Start => "start",
-            Self::Right => "right", Self::Left => "left", Self::Up => "up", Self::Down => "down",
-            Self::R => "r", Self::L => "l", Self::ZL => "zl", Self::ZR => "zr",
+            Self::A => "a",
+            Self::B => "b",
+            Self::X => "x",
+            Self::Y => "y",
+            Self::Select => "select",
+            Self::Start => "start",
+            Self::Right => "right",
+            Self::Left => "left",
+            Self::Up => "up",
+            Self::Down => "down",
+            Self::R => "r",
+            Self::L => "l",
+            Self::ZL => "zl",
+            Self::ZR => "zr",
         }
     }
 
     pub fn from_config_value(value: &str) -> Option<Self> {
         Some(match value {
-            "a" => Self::A, "b" => Self::B, "x" => Self::X, "y" => Self::Y,
-            "select" => Self::Select, "start" => Self::Start,
-            "right" => Self::Right, "left" => Self::Left, "up" => Self::Up, "down" => Self::Down,
-            "r" => Self::R, "l" => Self::L, "zl" => Self::ZL, "zr" => Self::ZR,
+            "a" => Self::A,
+            "b" => Self::B,
+            "x" => Self::X,
+            "y" => Self::Y,
+            "select" => Self::Select,
+            "start" => Self::Start,
+            "right" => Self::Right,
+            "left" => Self::Left,
+            "up" => Self::Up,
+            "down" => Self::Down,
+            "r" => Self::R,
+            "l" => Self::L,
+            "zl" => Self::ZL,
+            "zr" => Self::ZR,
             _ => return None,
         })
     }
@@ -90,11 +158,15 @@ impl PadButton {
 
 /// Complete mapping from standardized physical controls to 3DS pad buttons.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GamepadMapping { targets: [Option<PadButton>; GamepadControl::COUNT] }
+pub struct GamepadMapping {
+    targets: [Option<PadButton>; GamepadControl::COUNT],
+}
 
 impl Default for GamepadMapping {
     fn default() -> Self {
-        let mut mapping = Self { targets: [None; GamepadControl::COUNT] };
+        let mut mapping = Self {
+            targets: [None; GamepadControl::COUNT],
+        };
         mapping.set_target(GamepadControl::South, Some(PadButton::A));
         mapping.set_target(GamepadControl::East, Some(PadButton::B));
         mapping.set_target(GamepadControl::North, Some(PadButton::X));
@@ -123,14 +195,16 @@ impl GamepadMapping {
     }
 
     pub fn mask_for_held_controls(&self, held_controls: u16) -> u32 {
-        GamepadControl::ALL.into_iter()
+        GamepadControl::ALL
+            .into_iter()
             .filter(|control| held_controls & control.bit() != 0)
             .filter_map(|control| self.target(control))
             .fold(0, |mask, target| mask | target.bit())
     }
 
     pub fn mask_from_pressed(&self, mut is_pressed: impl FnMut(GamepadControl) -> bool) -> u32 {
-        GamepadControl::ALL.into_iter()
+        GamepadControl::ALL
+            .into_iter()
             .filter(|control| is_pressed(*control))
             .filter_map(|control| self.target(control))
             .fold(0, |mask, target| mask | target.bit())
@@ -139,7 +213,10 @@ impl GamepadMapping {
     pub fn to_config_string(&self) -> String {
         let mut contents = format!("{CONFIG_MAGIC}\n");
         for control in GamepadControl::ALL {
-            let value = self.target(control).map(PadButton::config_value).unwrap_or("none");
+            let value = self
+                .target(control)
+                .map(PadButton::config_value)
+                .unwrap_or("none");
             contents.push_str(control.config_key());
             contents.push('=');
             contents.push_str(value);
@@ -151,15 +228,27 @@ impl GamepadMapping {
     /// Parses only the exact V1 schema; malformed or partial profiles are rejected.
     pub fn from_config_str(contents: &str) -> Option<Self> {
         let mut lines = contents.lines();
-        if lines.next()? != CONFIG_MAGIC { return None; }
-        let mut mapping = Self { targets: [None; GamepadControl::COUNT] };
+        if lines.next()? != CONFIG_MAGIC {
+            return None;
+        }
+        let mut mapping = Self {
+            targets: [None; GamepadControl::COUNT],
+        };
         for control in GamepadControl::ALL {
             let (key, value) = lines.next()?.split_once('=')?;
-            if key != control.config_key() { return None; }
-            let target = if value == "none" { None } else { Some(PadButton::from_config_value(value)?) };
+            if key != control.config_key() {
+                return None;
+            }
+            let target = if value == "none" {
+                None
+            } else {
+                Some(PadButton::from_config_value(value)?)
+            };
             mapping.set_target(control, target);
         }
-        if lines.next().is_some() { return None; }
+        if lines.next().is_some() {
+            return None;
+        }
         Some(mapping)
     }
 
@@ -172,10 +261,11 @@ impl GamepadMapping {
         game_identity: Option<GameIdentity>,
     ) -> Self {
         let global = load_profile(&settings_directory.join(GLOBAL_FILE)).unwrap_or_default();
-        let device = device_uuid.filter(|uuid| !is_zero_uuid(uuid))
+        let device = device_uuid
+            .filter(|uuid| !is_zero_uuid(uuid))
             .and_then(|uuid| load_profile(&device_profile_path(settings_directory, uuid)));
-        let game = game_identity.and_then(|identity|
-            load_profile(&game_profile_path(settings_directory, identity)));
+        let game = game_identity
+            .and_then(|identity| load_profile(&game_profile_path(settings_directory, identity)));
         game.or(device).unwrap_or(global)
     }
 
@@ -183,20 +273,32 @@ impl GamepadMapping {
         save_profile(&settings_directory.join(GLOBAL_FILE), self)
     }
 
-    pub fn save_for_device(&self, settings_directory: &Path, device_uuid: [u8; 16]) -> io::Result<()> {
+    pub fn save_for_device(
+        &self,
+        settings_directory: &Path,
+        device_uuid: [u8; 16],
+    ) -> io::Result<()> {
         if is_zero_uuid(&device_uuid) {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput,
-                "a zero controller UUID cannot identify a model profile"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a zero controller UUID cannot identify a model profile",
+            ));
         }
         save_profile(&device_profile_path(settings_directory, device_uuid), self)
     }
 
-    pub fn save_for_game(&self, settings_directory: &Path, identity: GameIdentity) -> io::Result<()> {
+    pub fn save_for_game(
+        &self,
+        settings_directory: &Path,
+        identity: GameIdentity,
+    ) -> io::Result<()> {
         save_profile(&game_profile_path(settings_directory, identity), self)
     }
 }
 
-fn is_zero_uuid(uuid: &[u8; 16]) -> bool { uuid.iter().all(|byte| *byte == 0) }
+fn is_zero_uuid(uuid: &[u8; 16]) -> bool {
+    uuid.iter().all(|byte| *byte == 0)
+}
 
 fn uuid_hex(uuid: [u8; 16]) -> String {
     let mut encoded = String::with_capacity(32);
@@ -208,11 +310,15 @@ fn uuid_hex(uuid: [u8; 16]) -> String {
 }
 
 fn device_profile_path(settings_directory: &Path, uuid: [u8; 16]) -> PathBuf {
-    settings_directory.join(DEVICE_DIRECTORY).join(format!("{}.v1", uuid_hex(uuid)))
+    settings_directory
+        .join(DEVICE_DIRECTORY)
+        .join(format!("{}.v1", uuid_hex(uuid)))
 }
 
 fn game_profile_path(settings_directory: &Path, identity: GameIdentity) -> PathBuf {
-    settings_directory.join(GAME_DIRECTORY).join(format!("{:016x}.v1", identity.title_id()))
+    settings_directory
+        .join(GAME_DIRECTORY)
+        .join(format!("{:016x}.v1", identity.title_id()))
 }
 
 fn load_profile(path: &Path) -> Option<GamepadMapping> {
@@ -220,7 +326,9 @@ fn load_profile(path: &Path) -> Option<GamepadMapping> {
 }
 
 fn save_profile(path: &Path, mapping: &GamepadMapping) -> io::Result<()> {
-    if let Some(parent) = path.parent() { fs::create_dir_all(parent)?; }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     fs::write(path, mapping.to_config_string())
 }
 
@@ -235,10 +343,22 @@ mod tests {
         assert_eq!(mapping.target(GamepadControl::East), Some(PadButton::B));
         assert_eq!(mapping.target(GamepadControl::North), Some(PadButton::X));
         assert_eq!(mapping.target(GamepadControl::West), Some(PadButton::Y));
-        assert_eq!(mapping.target(GamepadControl::LeftShoulder), Some(PadButton::L));
-        assert_eq!(mapping.target(GamepadControl::RightShoulder), Some(PadButton::R));
-        assert_eq!(mapping.target(GamepadControl::LeftTrigger), Some(PadButton::ZL));
-        assert_eq!(mapping.target(GamepadControl::RightTrigger), Some(PadButton::ZR));
+        assert_eq!(
+            mapping.target(GamepadControl::LeftShoulder),
+            Some(PadButton::L)
+        );
+        assert_eq!(
+            mapping.target(GamepadControl::RightShoulder),
+            Some(PadButton::R)
+        );
+        assert_eq!(
+            mapping.target(GamepadControl::LeftTrigger),
+            Some(PadButton::ZL)
+        );
+        assert_eq!(
+            mapping.target(GamepadControl::RightTrigger),
+            Some(PadButton::ZR)
+        );
     }
 
     #[test]
@@ -246,7 +366,10 @@ mod tests {
         let mut mapping = GamepadMapping::default();
         mapping.set_target(GamepadControl::South, Some(PadButton::X));
         mapping.set_target(GamepadControl::LeftShoulder, None);
-        assert_eq!(GamepadMapping::from_config_str(&mapping.to_config_string()), Some(mapping));
+        assert_eq!(
+            GamepadMapping::from_config_str(&mapping.to_config_string()),
+            Some(mapping)
+        );
     }
 
     #[test]
@@ -254,8 +377,13 @@ mod tests {
         let defaults = GamepadMapping::default().to_config_string();
         assert!(GamepadMapping::from_config_str("ACERIS_GAMEPAD_MAPPING_V2\n").is_none());
         assert!(GamepadMapping::from_config_str(&defaults.replace("south=a\n", "")).is_none());
-        assert!(GamepadMapping::from_config_str(&defaults.replace("south=a\n", "east=b\n")).is_none());
-        assert!(GamepadMapping::from_config_str(&defaults.replace("south=a\n", "south=unknown\n")).is_none());
+        assert!(
+            GamepadMapping::from_config_str(&defaults.replace("south=a\n", "east=b\n")).is_none()
+        );
+        assert!(
+            GamepadMapping::from_config_str(&defaults.replace("south=a\n", "south=unknown\n"))
+                .is_none()
+        );
         assert!(GamepadMapping::from_config_str(&(defaults + "unexpected=value\n")).is_none());
     }
 
@@ -264,13 +392,15 @@ mod tests {
         let mut mapping = GamepadMapping::default();
         mapping.set_target(GamepadControl::East, Some(PadButton::A));
         mapping.set_target(GamepadControl::West, None);
-        let held = GamepadControl::South.bit() | GamepadControl::East.bit() | GamepadControl::West.bit();
+        let held =
+            GamepadControl::South.bit() | GamepadControl::East.bit() | GamepadControl::West.bit();
         assert_eq!(mapping.mask_for_held_controls(held), pad::A);
     }
 
     #[test]
     fn global_device_and_game_profiles_follow_precedence() {
-        let root = std::env::temp_dir().join(format!("aceris-gamepad-profiles-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("aceris-gamepad-profiles-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let mut global = GamepadMapping::default();
         global.set_target(GamepadControl::South, Some(PadButton::B));
@@ -283,16 +413,30 @@ mod tests {
         let mut game = GamepadMapping::default();
         game.set_target(GamepadControl::South, Some(PadButton::Y));
         game.save_for_game(&root, identity).unwrap();
-        assert_eq!(GamepadMapping::load_for_context(&root, None, None).target(GamepadControl::South), Some(PadButton::B));
-        assert_eq!(GamepadMapping::load_for_context(&root, Some(device_uuid), None).target(GamepadControl::South), Some(PadButton::X));
-        assert_eq!(GamepadMapping::load_for_context(&root, Some(device_uuid), Some(identity)).target(GamepadControl::South), Some(PadButton::Y));
+        assert_eq!(
+            GamepadMapping::load_for_context(&root, None, None).target(GamepadControl::South),
+            Some(PadButton::B)
+        );
+        assert_eq!(
+            GamepadMapping::load_for_context(&root, Some(device_uuid), None)
+                .target(GamepadControl::South),
+            Some(PadButton::X)
+        );
+        assert_eq!(
+            GamepadMapping::load_for_context(&root, Some(device_uuid), Some(identity))
+                .target(GamepadControl::South),
+            Some(PadButton::Y)
+        );
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn zero_uuid_cannot_write_a_device_profile() {
-        let root = std::env::temp_dir().join(format!("aceris-gamepad-zero-uuid-{}", std::process::id()));
-        let error = GamepadMapping::default().save_for_device(&root, [0; 16]).unwrap_err();
+        let root =
+            std::env::temp_dir().join(format!("aceris-gamepad-zero-uuid-{}", std::process::id()));
+        let error = GamepadMapping::default()
+            .save_for_device(&root, [0; 16])
+            .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         let _ = fs::remove_dir_all(root);
     }
