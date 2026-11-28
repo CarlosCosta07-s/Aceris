@@ -4895,6 +4895,19 @@ impl Library {
                         brand::SURFACE_SELECTED,
                     );
                 }
+                if focused && selected {
+                    responsive_circle_outline(
+                        frame,
+                        width,
+                        height,
+                        ui::home::SIDEBAR_BRAND_CENTER_X,
+                        center_y,
+                        25.0,
+                        2.2,
+                        scale,
+                        brand::ACCENT_RED_LIGHT,
+                    );
+                }
             } else {
                 responsive_rounded_fill(
                     frame,
@@ -7747,7 +7760,12 @@ impl Library {
             if source_span > 0 && destination_span > 0 {
                 for y in header_bottom..height as usize {
                     for offset in (0..destination_span).rev() {
-                        let source_x = source_left + offset * source_span / destination_span;
+                        let source_offset = if destination_span > 1 {
+                            offset * source_span.saturating_sub(1) / (destination_span - 1)
+                        } else {
+                            0
+                        };
+                        let source_x = source_left + source_offset;
                         let destination_x = destination_left + offset;
                         let source = (y * width as usize + source_x) * 4;
                         let destination = (y * width as usize + destination_x) * 4;
@@ -7755,9 +7773,8 @@ impl Library {
                     }
 
                     let row_start = y * width as usize * 4;
-                    for pixel in frame
-                        [row_start..row_start + destination_left * 4]
-                        .chunks_exact_mut(4)
+                    for pixel in
+                        frame[row_start..row_start + destination_left * 4].chunks_exact_mut(4)
                     {
                         pixel[0] = background[0];
                         pixel[1] = background[1];
