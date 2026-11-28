@@ -7,6 +7,7 @@ members = [
     "crates/aceris-gl",
     "frontends/desktop",
     "frontends/android",
+    "frontends/android-smoke",
     "tools/icongen",
 ]
 default-members = [
