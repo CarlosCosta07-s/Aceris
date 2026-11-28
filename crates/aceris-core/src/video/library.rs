@@ -3848,820 +3848,145 @@ impl Library {
             0x18232D,
         );
         if self.page != LibraryPage::Home {
-            responsive_panel(
-                frame,
-                width,
-                height,
-                758.0,
-                82.0,
-                224.0,
-                (bottom - 82.0).max(280.0),
-                scale,
-                0x1D2A35,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                780.0,
-                103.0,
-                title_scale,
-                "ACERIS",
-                brand::TEXT,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                782.0,
-                132.0,
-                small_scale,
-                "BIBLIOTECA DE JOGOS",
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            responsive_fill(
-                frame,
-                width as usize,
-                height as usize,
-                780.0,
-                153.0,
-                180.0,
-                1.0,
-                scale,
-                0x563B67,
-            );
-        }
-
-        if self.page == LibraryPage::Home {
-            responsive_text(
-                frame,
-                width,
-                height,
-                28.0,
-                84.0,
-                title_scale,
-                "SUA COLEÇÃO",
-                brand::TEXT,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                30.0,
-                109.0,
-                text_scale,
-                if self.recent_count() > 0 {
-                    "Continue de onde você parou"
-                } else {
-                    "Escolha um jogo para começar"
-                },
-                0xB7C5D0,
-            );
-
-            if home_entries.is_empty() {
                 responsive_panel(
-                    frame, width, height, 28.0, 142.0, 924.0, 210.0, scale, 0x202A34,
+                    frame,
+                    width,
+                    height,
+                    758.0,
+                    82.0,
+                    224.0,
+                    (bottom - 82.0).max(280.0),
+                    scale,
+                    0x1D2A35,
                 );
-                responsive_folder_icon(frame, width, height, 150.0, 250.0, scale);
                 responsive_text(
                     frame,
                     width,
                     height,
-                    246.0,
-                    194.0,
+                    780.0,
+                    103.0,
                     title_scale,
-                    "Sua coleção começa aqui",
+                    "ACERIS",
                     brand::TEXT,
                 );
                 responsive_text(
                     frame,
                     width,
                     height,
-                    248.0,
-                    225.0,
-                    text_scale,
-                    "Importe uma pasta para adicionar seus jogos.",
-                    0xB7C5D0,
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    690.0,
-                    232.0,
-                    210.0,
-                    48.0,
-                    scale,
-                    brand::ACCENT_RED,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    795.0,
-                    249.0,
-                    text_scale,
-                    "IMPORTAR PASTA",
-                    brand::TEXT,
-                );
-            } else {
-                let first_visible = self.home_first_visible(4);
-                for (slot, entry) in home_entries.iter().skip(first_visible).take(4).enumerate() {
-                    let index = first_visible + slot;
-                    let card_x = 28.0 + slot as f32 * 232.0;
-                    render_home_game_tile(
-                        frame,
-                        width,
-                        height,
-                        scale,
-                        card_x,
-                        142.0,
-                        220.0,
-                        210.0,
-                        entry,
-                        index == self.selected,
-                        text_scale,
-                        small_scale,
-                    );
-                }
-            }
-
-            if let Some(entry) = self.selected_entry() {
-                let extension = entry
-                    .path
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or("3ds");
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    30.0,
-                    358.0,
+                    782.0,
+                    132.0,
                     small_scale,
-                    &format!(
-                        "SELECIONADO  ·  {}  ·  .{}",
-                        truncate(&entry.title, 48),
-                        extension.to_ascii_uppercase()
-                    ),
-                    0x75D8F1,
-                );
-            } else {
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    30.0,
-                    358.0,
-                    small_scale,
-                    "ADICIONE UMA PASTA COM SEUS JOGOS PARA COMEÇAR",
-                    0xB7C5D0,
-                );
-            }
-
-            let favorite_label = if selected_entry.is_some_and(|entry| self.is_favorite(entry)) {
-                "REMOVER FAVORITO"
-            } else {
-                "ADICIONAR FAVORITO"
-            };
-            let home_actions = [
-                (
-                    28.0,
-                    "JOGAR AGORA",
-                    if selected_entry.is_some() {
-                        brand::ACCENT_RED
-                    } else {
-                        0x2D4150
-                    },
-                ),
-                (260.0, favorite_label, 0x17485D),
-                (492.0, "IMPORTAR PASTA", brand::ACCENT_RED),
-                (724.0, "ATUALIZAR", 0x2D4150),
-            ];
-            for (x, label, color) in home_actions {
-                responsive_panel(
-                    frame, width, height, x, 380.0, 220.0, 44.0, scale, color,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    x + 110.0,
-                    394.0,
-                    small_scale,
-                    label,
-                    brand::TEXT,
-                );
-            }
-            responsive_fill(
-                frame,
-                width as usize,
-                height as usize,
-                20.0,
-                436.0,
-                924.0,
-                64.0,
-                scale,
-                0x141C25,
-            );
-            let dock_items = [
-                (LibraryPage::Recent, "R", "RECENTES"),
-                (LibraryPage::Games, "J", "JOGOS"),
-                (LibraryPage::Favorites, "F", "FAVORITOS"),
-                (LibraryPage::Homebrew, "H", "HOMEBREW"),
-                (LibraryPage::Settings, "A", "AJUSTES"),
-            ];
-            for (slot, (page, symbol, label)) in dock_items.into_iter().enumerate() {
-                let x = 28.0 + slot as f32 * 184.0;
-                let selected = self.page == page;
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    x,
-                    442.0,
-                    176.0,
-                    52.0,
-                    scale,
-                    if selected { 0x17485D } else { 0x202A34 },
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    x + 12.0,
-                    453.0,
-                    30.0,
-                    30.0,
-                    scale,
-                    if selected {
-                        brand::ACCENT_RED
-                    } else {
-                        0x2D4150
-                    },
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    x + 27.0,
-                    462.0,
-                    small_scale,
-                    symbol,
-                    brand::TEXT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    x + 54.0,
-                    464.0,
-                    small_scale,
-                    label,
-                    if selected { brand::TEXT } else { 0xB7C5D0 },
-                );
-            }
-        } else if self.page == LibraryPage::Settings {
-            responsive_text(
-                frame,
-                width,
-                height,
-                28.0,
-                84.0,
-                title_scale,
-                "CONFIGURAÇÕES",
-                brand::TEXT,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                30.0,
-                109.0,
-                text_scale,
-                "Pastas, desempenho e preferências da biblioteca",
-                0xBBAFC7,
-            );
-            responsive_panel(
-                frame,
-                width,
-                height,
-                28.0,
-                132.0,
-                702.0,
-                (bottom - 132.0).max(270.0),
-                scale,
-                0x21152F,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                48.0,
-                151.0,
-                text_scale,
-                &format!(
-                    "PASTAS MONITORADAS ({})",
-                    self.scan_config.directories.len()
-                ),
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
-                let row_y = 178.0 + index as f32 * 28.0;
-                responsive_panel(
-                    frame, width, height, 44.0, row_y, 620.0, 24.0, scale, 0x33223F,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    54.0,
-                    row_y + 7.0,
-                    small_scale,
-                    &tail(&directory.to_string_lossy(), 76),
-                    brand::TEXT,
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    670.0,
-                    row_y + 1.0,
-                    48.0,
-                    22.0,
-                    scale,
-                    0x422038,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    694.0,
-                    row_y + 6.0,
-                    small_scale,
-                    "REM",
-                    brand::TEXT,
-                );
-            }
-            if self.scan_config.directories.len() > 3 {
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    54.0,
-                    266.0,
-                    small_scale,
-                    &format!(
-                        "+ {} outra(s) pasta(s)",
-                        self.scan_config.directories.len() - 3
-                    ),
-                    0xBBAFC7,
-                );
-            }
-            let settings_actions = [
-                (
-                    28.0,
-                    280.0,
-                    217.0,
-                    "IMPORTAR PASTA",
-                    if self.scan_path_input_focused {
-                        brand::ACCENT_RED
-                    } else {
-                        0x2D1A3B
-                    },
-                ),
-                (
-                    255.0,
-                    280.0,
-                    220.0,
-                    if self.scan_config.options.recursive {
-                        "SUBPASTAS: SIM"
-                    } else {
-                        "SUBPASTAS: NÃO"
-                    },
-                    if self.scan_config.options.recursive {
-                        0x28543F
-                    } else {
-                        0x2D1A3B
-                    },
-                ),
-                (
-                    485.0,
-                    280.0,
-                    110.0,
-                    if self.performance_mode {
-                        "RÁPIDO: SIM"
-                    } else {
-                        "RÁPIDO: NÃO"
-                    },
-                    if self.performance_mode {
-                        0x28543F
-                    } else {
-                        0x2D1A3B
-                    },
-                ),
-            ];
-            for (x, y, card_width, label, color) in settings_actions {
-                responsive_panel(frame, width, height, x, y, card_width, 42.0, scale, color);
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    x + card_width * 0.5,
-                    y + 14.0,
-                    small_scale,
-                    label,
-                    brand::TEXT,
-                );
-            }
-            responsive_panel(
-                frame, width, height, 605.0, 280.0, 125.0, 42.0, scale, 0x2D1A3B,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                667.0,
-                289.0,
-                small_scale,
-                "ZONA MORTA",
-                brand::TEXT,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                667.0,
-                306.0,
-                small_scale,
-                &format!("{}%", self.gamepad_deadzone_percent),
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            if self.scan_path_input_focused {
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    48.0,
-                    340.0,
-                    small_scale,
-                    &truncate(&self.search_query, 100),
+                    "BIBLIOTECA DE JOGOS",
                     brand::ACCENT_GREEN_LIGHT,
                 );
-                responsive_text(
+                responsive_fill(
                     frame,
-                    width,
-                    height,
-                    48.0,
-                    360.0,
-                    small_scale,
-                    "Digite o caminho completo da pasta e pressione Enter/OK.",
-                    0xBBAFC7,
-                );
-            }
-            responsive_text(
-                frame,
-                width,
-                height,
-                48.0,
-                382.0,
-                small_scale,
-                "PREFERÊNCIAS DA BIBLIOTECA",
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            let view_label = if self.view_mode == LibraryViewMode::Grid {
-                "VISTA: GRADE"
-            } else {
-                "VISTA: LISTA"
-            };
-            let sort_label = if self.sort_descending {
-                "ORDEM: Z–A"
-            } else {
-                "ORDEM: A–Z"
-            };
-            let settings_footer = [
-                (28.0, 396.0, 217.0, view_label),
-                (255.0, 396.0, 220.0, sort_label),
-            ];
-            for (x, y, card_width, label) in settings_footer {
-                responsive_panel(
-                    frame, width, height, x, y, card_width, 32.0, scale, 0x2D1A3B,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    x + card_width * 0.5,
-                    y + 10.0,
-                    small_scale,
-                    label,
-                    brand::TEXT,
-                );
-            }
-            if self.touch_keyboard_enabled {
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    485.0,
-                    396.0,
-                    245.0,
-                    32.0,
+                    width as usize,
+                    height as usize,
+                    780.0,
+                    153.0,
+                    180.0,
+                    1.0,
                     scale,
-                    if self.virtual_controls_visible {
-                        0x28543F
-                    } else {
-                        0x2D1A3B
-                    },
+                    0x563B67,
                 );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    607.0,
-                    406.0,
-                    small_scale,
-                    if self.virtual_controls_visible {
-                        "CONTROLES: ATIVOS"
-                    } else {
-                        "CONTROLES: OCULTOS"
-                    },
-                    brand::TEXT,
-                );
-                if logical_height >= 540.0 {
-                    let control_options =
-                        [(485.0, "OPACIDADE"), (568.0, "TAMANHO"), (651.0, "LAYOUT")];
-                    for (x, label) in control_options {
-                        responsive_panel(
-                            frame, width, height, x, 438.0, 79.0, 38.0, scale, 0x2D1A3B,
-                        );
-                        responsive_text_centered(
-                            frame,
-                            width,
-                            height,
-                            x + 39.5,
-                            451.0,
-                            small_scale,
-                            label,
-                            brand::TEXT,
-                        );
-                    }
-                }
             }
-        } else {
-            let page_title = match self.page {
-                LibraryPage::Games => "JOGOS",
-                LibraryPage::Favorites => "FAVORITOS",
-                LibraryPage::Recent => "RECENTES",
-                LibraryPage::Homebrew => "HOMEBREW & DEMOS",
-                LibraryPage::Home | LibraryPage::Settings => "BIBLIOTECA",
-            };
-            responsive_text(
-                frame,
-                width,
-                height,
-                28.0,
-                84.0,
-                title_scale,
-                page_title,
-                brand::TEXT,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                30.0,
-                109.0,
-                text_scale,
-                &format!("{} item(ns) disponíveis", self.visible_entry_count()),
-                0xBBAFC7,
-            );
-            responsive_panel(
-                frame, width, height, 28.0, 126.0, 702.0, 32.0, scale, 0x21152F,
-            );
-            responsive_panel(
-                frame,
-                width,
-                height,
-                36.0,
-                130.0,
-                329.0,
-                24.0,
-                scale,
-                if self.search_focused {
-                    0x422038
-                } else {
-                    0x33223F
-                },
-            );
-            let search_label = if self.search_query.is_empty() {
-                "BUSCAR POR NOME OU CAMINHO".to_string()
-            } else {
-                format!("BUSCAR: {}", truncate(&self.search_query, 42))
-            };
-            responsive_text(
-                frame,
-                width,
-                height,
-                46.0,
-                138.0,
-                small_scale,
-                &search_label,
-                if self.search_focused {
-                    brand::ACCENT_GREEN_LIGHT
-                } else {
-                    0xBBAFC7
-                },
-            );
-            responsive_panel(
-                frame, width, height, 368.0, 130.0, 34.0, 24.0, scale, 0x422038,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                385.0,
-                137.0,
-                small_scale,
-                "X",
-                brand::TEXT,
-            );
-            responsive_panel(
-                frame, width, height, 410.0, 130.0, 108.0, 24.0, scale, 0x2D1A3B,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                464.0,
-                137.0,
-                small_scale,
-                self.format_filter.label(),
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            responsive_panel(
-                frame,
-                width,
-                height,
-                526.0,
-                130.0,
-                96.0,
-                24.0,
-                scale,
-                if self.view_mode == LibraryViewMode::List {
-                    brand::ACCENT_RED
-                } else {
-                    0x2D1A3B
-                },
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                574.0,
-                137.0,
-                small_scale,
-                if self.view_mode == LibraryViewMode::List {
-                    "LISTA"
-                } else {
-                    "GRADE"
-                },
-                brand::TEXT,
-            );
-            responsive_panel(
-                frame, width, height, 630.0, 130.0, 92.0, 24.0, scale, 0x2D1A3B,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                676.0,
-                137.0,
-                small_scale,
-                if self.sort_descending {
-                    "Z–A"
-                } else {
-                    "A–Z"
-                },
-                brand::TEXT,
-            );
 
-            let entries = self.filtered_entries();
-            if entries.is_empty() {
-                responsive_panel(
+            if self.page == LibraryPage::Home {
+                responsive_text(
                     frame,
                     width,
                     height,
                     28.0,
-                    170.0,
-                    702.0,
-                    (bottom - 190.0).max(190.0),
-                    scale,
-                    0x21152F,
-                );
-                responsive_folder_icon(frame, width, height, 140.0, 270.0, scale);
-                let (empty_title, first_line) = if self.page == LibraryPage::Homebrew {
-                    (
-                        "Nenhum homebrew encontrado",
-                        "Adicione arquivos .3dsx à biblioteca.",
-                    )
-                } else if !self.search_query.is_empty() {
-                    (
-                        "Nenhum resultado encontrado",
-                        "Tente outro termo ou limpe a busca.",
-                    )
-                } else {
-                    (
-                        "Sua biblioteca está vazia",
-                        "Adicione uma pasta com seus jogos para começar.",
-                    )
-                };
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    230.0,
-                    235.0,
+                    84.0,
                     title_scale,
-                    empty_title,
+                    "SUA COLEÇÃO",
                     brand::TEXT,
                 );
                 responsive_text(
-                    frame, width, height, 232.0, 270.0, text_scale, first_line, 0xBBAFC7,
-                );
-                responsive_panel(
                     frame,
                     width,
                     height,
-                    500.0,
-                    315.0,
-                    192.0,
-                    42.0,
-                    scale,
-                    brand::ACCENT_RED,
+                    30.0,
+                    109.0,
+                    text_scale,
+                    if self.recent_count() > 0 {
+                        "Continue de onde você parou"
+                    } else {
+                        "Escolha um jogo para começar"
+                    },
+                    0xB7C5D0,
                 );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    596.0,
-                    329.0,
-                    small_scale,
-                    "IMPORTAR PASTA",
-                    brand::TEXT,
-                );
-            } else if self.view_mode == LibraryViewMode::List {
-                let list_top = 170.0;
-                let row_step = 54.0;
-                let row_height = 48.0;
-                let visible_rows = ((bottom - list_top - row_height) / row_step)
-                    .floor()
-                    .max(0.0) as usize
-                    + 1;
-                for (row, entry) in entries
-                    .iter()
-                    .enumerate()
-                    .skip(self.first_visible)
-                    .take(visible_rows)
-                {
-                    let y = list_top + (row - self.first_visible) as f32 * row_step;
+
+                if home_entries.is_empty() {
                     responsive_panel(
-                        frame,
-                        width,
-                        height,
-                        28.0,
-                        y,
-                        702.0,
-                        row_height,
-                        scale,
-                        if row == self.selected {
-                            0x422038
-                        } else {
-                            0x21152F
-                        },
+                        frame, width, height, 28.0, 142.0, 924.0, 210.0, scale, 0x202A34,
                     );
-                    render_cover_art(
+                    responsive_folder_icon(frame, width, height, 150.0, 250.0, scale);
+                    responsive_text(
                         frame,
                         width,
                         height,
-                        scale,
-                        38.0,
-                        y + 5.0,
-                        54.0,
-                        38.0,
-                        entry,
-                        small_scale,
+                        246.0,
+                        194.0,
+                        title_scale,
+                        "Sua coleção começa aqui",
+                        brand::TEXT,
                     );
                     responsive_text(
                         frame,
                         width,
                         height,
-                        108.0,
-                        y + 17.0,
+                        248.0,
+                        225.0,
                         text_scale,
-                        &truncate(&entry.title, 64),
+                        "Importe uma pasta para adicionar seus jogos.",
+                        0xB7C5D0,
+                    );
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        690.0,
+                        232.0,
+                        210.0,
+                        48.0,
+                        scale,
+                        brand::ACCENT_RED,
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        795.0,
+                        249.0,
+                        text_scale,
+                        "IMPORTAR PASTA",
                         brand::TEXT,
                     );
+                } else {
+                    let first_visible = self.home_first_visible(4);
+                    for (slot, entry) in home_entries.iter().skip(first_visible).take(4).enumerate() {
+                        let index = first_visible + slot;
+                        let card_x = 28.0 + slot as f32 * 232.0;
+                        render_home_game_tile(
+                            frame,
+                            width,
+                            height,
+                            scale,
+                            card_x,
+                            142.0,
+                            220.0,
+                            210.0,
+                            entry,
+                            index == self.selected,
+                            text_scale,
+                            small_scale,
+                        );
+                    }
+                }
+
+                if let Some(entry) = self.selected_entry() {
                     let extension = entry
                         .path
                         .extension()
@@ -4671,217 +3996,892 @@ impl Library {
                         frame,
                         width,
                         height,
-                        650.0,
-                        y + 17.0,
+                        30.0,
+                        358.0,
                         small_scale,
-                        &extension.to_ascii_uppercase(),
+                        &format!(
+                            "SELECIONADO  ·  {}  ·  .{}",
+                            truncate(&entry.title, 48),
+                            extension.to_ascii_uppercase()
+                        ),
+                        0x75D8F1,
+                    );
+                } else {
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        30.0,
+                        358.0,
+                        small_scale,
+                        "ADICIONE UMA PASTA COM SEUS JOGOS PARA COMEÇAR",
+                        0xB7C5D0,
+                    );
+                }
+
+                let favorite_label = if selected_entry.is_some_and(|entry| self.is_favorite(entry)) {
+                    "REMOVER FAVORITO"
+                } else {
+                    "ADICIONAR FAVORITO"
+                };
+                let home_actions = [
+                    (
+                        28.0,
+                        "JOGAR AGORA",
+                        if selected_entry.is_some() {
+                            brand::ACCENT_RED
+                        } else {
+                            0x2D4150
+                        },
+                    ),
+                    (260.0, favorite_label, 0x17485D),
+                    (492.0, "IMPORTAR PASTA", brand::ACCENT_RED),
+                    (724.0, "ATUALIZAR", 0x2D4150),
+                ];
+                for (x, label, color) in home_actions {
+                    responsive_panel(
+                        frame, width, height, x, 380.0, 220.0, 44.0, scale, color,
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        x + 110.0,
+                        394.0,
+                        small_scale,
+                        label,
+                        brand::TEXT,
+                    );
+                }
+                responsive_fill(
+                    frame,
+                    width as usize,
+                    height as usize,
+                    20.0,
+                    436.0,
+                    924.0,
+                    64.0,
+                    scale,
+                    0x141C25,
+                );
+                let dock_items = [
+                    (LibraryPage::Recent, "R", "RECENTES"),
+                    (LibraryPage::Games, "J", "JOGOS"),
+                    (LibraryPage::Favorites, "F", "FAVORITOS"),
+                    (LibraryPage::Homebrew, "H", "HOMEBREW"),
+                    (LibraryPage::Settings, "A", "AJUSTES"),
+                ];
+                for (slot, (page, symbol, label)) in dock_items.into_iter().enumerate() {
+                    let x = 28.0 + slot as f32 * 184.0;
+                    let selected = self.page == page;
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        x,
+                        442.0,
+                        176.0,
+                        52.0,
+                        scale,
+                        if selected { 0x17485D } else { 0x202A34 },
+                    );
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        x + 12.0,
+                        453.0,
+                        30.0,
+                        30.0,
+                        scale,
+                        if selected {
+                            brand::ACCENT_RED
+                        } else {
+                            0x2D4150
+                        },
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        x + 27.0,
+                        462.0,
+                        small_scale,
+                        symbol,
+                        brand::TEXT,
+                    );
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        x + 54.0,
+                        464.0,
+                        small_scale,
+                        label,
+                        if selected { brand::TEXT } else { 0xB7C5D0 },
+                    );
+                }
+            } else if self.page == LibraryPage::Settings {
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    28.0,
+                    84.0,
+                    title_scale,
+                    "CONFIGURAÇÕES",
+                    brand::TEXT,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    30.0,
+                    109.0,
+                    text_scale,
+                    "Pastas, desempenho e preferências da biblioteca",
+                    0xBBAFC7,
+                );
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    28.0,
+                    132.0,
+                    702.0,
+                    (bottom - 132.0).max(270.0),
+                    scale,
+                    0x21152F,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    48.0,
+                    151.0,
+                    text_scale,
+                    &format!(
+                        "PASTAS MONITORADAS ({})",
+                        self.scan_config.directories.len()
+                    ),
+                    brand::ACCENT_GREEN_LIGHT,
+                );
+                for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
+                    let row_y = 178.0 + index as f32 * 28.0;
+                    responsive_panel(
+                        frame, width, height, 44.0, row_y, 620.0, 24.0, scale, 0x33223F,
+                    );
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        54.0,
+                        row_y + 7.0,
+                        small_scale,
+                        &tail(&directory.to_string_lossy(), 76),
+                        brand::TEXT,
+                    );
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        670.0,
+                        row_y + 1.0,
+                        48.0,
+                        22.0,
+                        scale,
+                        0x422038,
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        694.0,
+                        row_y + 6.0,
+                        small_scale,
+                        "REM",
+                        brand::TEXT,
+                    );
+                }
+                if self.scan_config.directories.len() > 3 {
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        54.0,
+                        266.0,
+                        small_scale,
+                        &format!(
+                            "+ {} outra(s) pasta(s)",
+                            self.scan_config.directories.len() - 3
+                        ),
+                        0xBBAFC7,
+                    );
+                }
+                let settings_actions = [
+                    (
+                        28.0,
+                        280.0,
+                        217.0,
+                        "IMPORTAR PASTA",
+                        if self.scan_path_input_focused {
+                            brand::ACCENT_RED
+                        } else {
+                            0x2D1A3B
+                        },
+                    ),
+                    (
+                        255.0,
+                        280.0,
+                        220.0,
+                        if self.scan_config.options.recursive {
+                            "SUBPASTAS: SIM"
+                        } else {
+                            "SUBPASTAS: NÃO"
+                        },
+                        if self.scan_config.options.recursive {
+                            0x28543F
+                        } else {
+                            0x2D1A3B
+                        },
+                    ),
+                    (
+                        485.0,
+                        280.0,
+                        110.0,
+                        if self.performance_mode {
+                            "RÁPIDO: SIM"
+                        } else {
+                            "RÁPIDO: NÃO"
+                        },
+                        if self.performance_mode {
+                            0x28543F
+                        } else {
+                            0x2D1A3B
+                        },
+                    ),
+                ];
+                for (x, y, card_width, label, color) in settings_actions {
+                    responsive_panel(frame, width, height, x, y, card_width, 42.0, scale, color);
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        x + card_width * 0.5,
+                        y + 14.0,
+                        small_scale,
+                        label,
+                        brand::TEXT,
+                    );
+                }
+                responsive_panel(
+                    frame, width, height, 605.0, 280.0, 125.0, 42.0, scale, 0x2D1A3B,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    667.0,
+                    289.0,
+                    small_scale,
+                    "ZONA MORTA",
+                    brand::TEXT,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    667.0,
+                    306.0,
+                    small_scale,
+                    &format!("{}%", self.gamepad_deadzone_percent),
+                    brand::ACCENT_GREEN_LIGHT,
+                );
+                if self.scan_path_input_focused {
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        48.0,
+                        340.0,
+                        small_scale,
+                        &truncate(&self.search_query, 100),
                         brand::ACCENT_GREEN_LIGHT,
                     );
-                    if self.is_favorite(entry) {
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        48.0,
+                        360.0,
+                        small_scale,
+                        "Digite o caminho completo da pasta e pressione Enter/OK.",
+                        0xBBAFC7,
+                    );
+                }
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    48.0,
+                    382.0,
+                    small_scale,
+                    "PREFERÊNCIAS DA BIBLIOTECA",
+                    brand::ACCENT_GREEN_LIGHT,
+                );
+                let view_label = if self.view_mode == LibraryViewMode::Grid {
+                    "VISTA: GRADE"
+                } else {
+                    "VISTA: LISTA"
+                };
+                let sort_label = if self.sort_descending {
+                    "ORDEM: Z–A"
+                } else {
+                    "ORDEM: A–Z"
+                };
+                let settings_footer = [
+                    (28.0, 396.0, 217.0, view_label),
+                    (255.0, 396.0, 220.0, sort_label),
+                ];
+                for (x, y, card_width, label) in settings_footer {
+                    responsive_panel(
+                        frame, width, height, x, y, card_width, 32.0, scale, 0x2D1A3B,
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        x + card_width * 0.5,
+                        y + 10.0,
+                        small_scale,
+                        label,
+                        brand::TEXT,
+                    );
+                }
+                if self.touch_keyboard_enabled {
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        485.0,
+                        396.0,
+                        245.0,
+                        32.0,
+                        scale,
+                        if self.virtual_controls_visible {
+                            0x28543F
+                        } else {
+                            0x2D1A3B
+                        },
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        607.0,
+                        406.0,
+                        small_scale,
+                        if self.virtual_controls_visible {
+                            "CONTROLES: ATIVOS"
+                        } else {
+                            "CONTROLES: OCULTOS"
+                        },
+                        brand::TEXT,
+                    );
+                    if logical_height >= 540.0 {
+                        let control_options =
+                            [(485.0, "OPACIDADE"), (568.0, "TAMANHO"), (651.0, "LAYOUT")];
+                        for (x, label) in control_options {
+                            responsive_panel(
+                                frame, width, height, x, 438.0, 79.0, 38.0, scale, 0x2D1A3B,
+                            );
+                            responsive_text_centered(
+                                frame,
+                                width,
+                                height,
+                                x + 39.5,
+                                451.0,
+                                small_scale,
+                                label,
+                                brand::TEXT,
+                            );
+                        }
+                    }
+                }
+            } else {
+                let page_title = match self.page {
+                    LibraryPage::Games => "JOGOS",
+                    LibraryPage::Favorites => "FAVORITOS",
+                    LibraryPage::Recent => "RECENTES",
+                    LibraryPage::Homebrew => "HOMEBREW & DEMOS",
+                    LibraryPage::Home | LibraryPage::Settings => "BIBLIOTECA",
+                };
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    28.0,
+                    84.0,
+                    title_scale,
+                    page_title,
+                    brand::TEXT,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    30.0,
+                    109.0,
+                    text_scale,
+                    &format!("{} item(ns) disponíveis", self.visible_entry_count()),
+                    0xBBAFC7,
+                );
+                responsive_panel(
+                    frame, width, height, 28.0, 126.0, 702.0, 32.0, scale, 0x21152F,
+                );
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    36.0,
+                    130.0,
+                    329.0,
+                    24.0,
+                    scale,
+                    if self.search_focused {
+                        0x422038
+                    } else {
+                        0x33223F
+                    },
+                );
+                let search_label = if self.search_query.is_empty() {
+                    "BUSCAR POR NOME OU CAMINHO".to_string()
+                } else {
+                    format!("BUSCAR: {}", truncate(&self.search_query, 42))
+                };
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    46.0,
+                    138.0,
+                    small_scale,
+                    &search_label,
+                    if self.search_focused {
+                        brand::ACCENT_GREEN_LIGHT
+                    } else {
+                        0xBBAFC7
+                    },
+                );
+                responsive_panel(
+                    frame, width, height, 368.0, 130.0, 34.0, 24.0, scale, 0x422038,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    385.0,
+                    137.0,
+                    small_scale,
+                    "X",
+                    brand::TEXT,
+                );
+                responsive_panel(
+                    frame, width, height, 410.0, 130.0, 108.0, 24.0, scale, 0x2D1A3B,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    464.0,
+                    137.0,
+                    small_scale,
+                    self.format_filter.label(),
+                    brand::ACCENT_GREEN_LIGHT,
+                );
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    526.0,
+                    130.0,
+                    96.0,
+                    24.0,
+                    scale,
+                    if self.view_mode == LibraryViewMode::List {
+                        brand::ACCENT_RED
+                    } else {
+                        0x2D1A3B
+                    },
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    574.0,
+                    137.0,
+                    small_scale,
+                    if self.view_mode == LibraryViewMode::List {
+                        "LISTA"
+                    } else {
+                        "GRADE"
+                    },
+                    brand::TEXT,
+                );
+                responsive_panel(
+                    frame, width, height, 630.0, 130.0, 92.0, 24.0, scale, 0x2D1A3B,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    676.0,
+                    137.0,
+                    small_scale,
+                    if self.sort_descending {
+                        "Z–A"
+                    } else {
+                        "A–Z"
+                    },
+                    brand::TEXT,
+                );
+
+                let entries = self.filtered_entries();
+                if entries.is_empty() {
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        28.0,
+                        170.0,
+                        702.0,
+                        (bottom - 190.0).max(190.0),
+                        scale,
+                        0x21152F,
+                    );
+                    responsive_folder_icon(frame, width, height, 140.0, 270.0, scale);
+                    let (empty_title, first_line) = if self.page == LibraryPage::Homebrew {
+                        (
+                            "Nenhum homebrew encontrado",
+                            "Adicione arquivos .3dsx à biblioteca.",
+                        )
+                    } else if !self.search_query.is_empty() {
+                        (
+                            "Nenhum resultado encontrado",
+                            "Tente outro termo ou limpe a busca.",
+                        )
+                    } else {
+                        (
+                            "Sua biblioteca está vazia",
+                            "Adicione uma pasta com seus jogos para começar.",
+                        )
+                    };
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        230.0,
+                        235.0,
+                        title_scale,
+                        empty_title,
+                        brand::TEXT,
+                    );
+                    responsive_text(
+                        frame, width, height, 232.0, 270.0, text_scale, first_line, 0xBBAFC7,
+                    );
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        500.0,
+                        315.0,
+                        192.0,
+                        42.0,
+                        scale,
+                        brand::ACCENT_RED,
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        596.0,
+                        329.0,
+                        small_scale,
+                        "IMPORTAR PASTA",
+                        brand::TEXT,
+                    );
+                } else if self.view_mode == LibraryViewMode::List {
+                    let list_top = 170.0;
+                    let row_step = 54.0;
+                    let row_height = 48.0;
+                    let visible_rows = ((bottom - list_top - row_height) / row_step)
+                        .floor()
+                        .max(0.0) as usize
+                        + 1;
+                    for (row, entry) in entries
+                        .iter()
+                        .enumerate()
+                        .skip(self.first_visible)
+                        .take(visible_rows)
+                    {
+                        let y = list_top + (row - self.first_visible) as f32 * row_step;
+                        responsive_panel(
+                            frame,
+                            width,
+                            height,
+                            28.0,
+                            y,
+                            702.0,
+                            row_height,
+                            scale,
+                            if row == self.selected {
+                                0x422038
+                            } else {
+                                0x21152F
+                            },
+                        );
+                        render_cover_art(
+                            frame,
+                            width,
+                            height,
+                            scale,
+                            38.0,
+                            y + 5.0,
+                            54.0,
+                            38.0,
+                            entry,
+                            small_scale,
+                        );
                         responsive_text(
                             frame,
                             width,
                             height,
-                            694.0,
+                            108.0,
+                            y + 17.0,
+                            text_scale,
+                            &truncate(&entry.title, 64),
+                            brand::TEXT,
+                        );
+                        let extension = entry
+                            .path
+                            .extension()
+                            .and_then(|value| value.to_str())
+                            .unwrap_or("3ds");
+                        responsive_text(
+                            frame,
+                            width,
+                            height,
+                            650.0,
                             y + 17.0,
                             small_scale,
-                            "F",
+                            &extension.to_ascii_uppercase(),
                             brand::ACCENT_GREEN_LIGHT,
+                        );
+                        if self.is_favorite(entry) {
+                            responsive_text(
+                                frame,
+                                width,
+                                height,
+                                694.0,
+                                y + 17.0,
+                                small_scale,
+                                "F",
+                                brand::ACCENT_GREEN_LIGHT,
+                            );
+                        }
+                    }
+                } else {
+                    const COLUMNS: usize = 4;
+                    let card_top = 170.0;
+                    let card_width = 168.0;
+                    let card_height = 122.0;
+                    let card_gap = 10.0;
+                    let row_step = 132.0;
+                    let visible_rows = landscape_grid_visible_rows(logical_height);
+                    for (index, entry) in entries
+                        .iter()
+                        .enumerate()
+                        .skip(self.first_visible)
+                        .take(visible_rows * COLUMNS)
+                    {
+                        let local = index - self.first_visible;
+                        let column = local % COLUMNS;
+                        let row = local / COLUMNS;
+                        let x = 28.0 + column as f32 * (card_width + card_gap);
+                        let y = card_top + row as f32 * row_step;
+                        render_library_tile(
+                            frame,
+                            width,
+                            height,
+                            scale,
+                            x,
+                            y,
+                            card_width,
+                            card_height,
+                            entry,
+                            index == self.selected,
+                            self.is_favorite(entry),
+                            text_scale,
+                            small_scale,
                         );
                     }
                 }
-            } else {
-                const COLUMNS: usize = 4;
-                let card_top = 170.0;
-                let card_width = 168.0;
-                let card_height = 122.0;
-                let card_gap = 10.0;
-                let row_step = 132.0;
-                let visible_rows = landscape_grid_visible_rows(logical_height);
-                for (index, entry) in entries
-                    .iter()
-                    .enumerate()
-                    .skip(self.first_visible)
-                    .take(visible_rows * COLUMNS)
-                {
-                    let local = index - self.first_visible;
-                    let column = local % COLUMNS;
-                    let row = local / COLUMNS;
-                    let x = 28.0 + column as f32 * (card_width + card_gap);
-                    let y = card_top + row as f32 * row_step;
-                    render_library_tile(
-                        frame,
-                        width,
-                        height,
-                        scale,
-                        x,
-                        y,
-                        card_width,
-                        card_height,
-                        entry,
-                        index == self.selected,
-                        self.is_favorite(entry),
-                        text_scale,
-                        small_scale,
-                    );
-                }
             }
-        }
 
-        // Detail and management actions stay on library pages. Home uses the full width.
-        if self.page != LibraryPage::Home {
-            responsive_text(
+            // Detail and management actions stay on library pages. Home uses the full width.
+            if self.page != LibraryPage::Home {
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    780.0,
+                    174.0,
+                    small_scale,
+                    if self.page == LibraryPage::Settings {
+                        "BIBLIOTECA"
+                    } else {
+                        "SELECIONADO"
+                    },
+                    brand::ACCENT_GREEN_LIGHT,
+                );
+            if let Some(entry) = selected_entry {
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    780.0,
+                    197.0,
+                    text_scale,
+                    &truncate(&entry.title, 26),
+                    brand::TEXT,
+                );
+                let extension = entry
+                    .path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("3ds");
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    782.0,
+                    220.0,
+                    small_scale,
+                    &format!(".{}", extension.to_ascii_uppercase()),
+                    0xBBAFC7,
+                );
+            } else {
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    780.0,
+                    199.0,
+                    small_scale,
+                    &format!("{} jogo(s)", game_count),
+                    brand::TEXT,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    782.0,
+                    220.0,
+                    small_scale,
+                    &format!("{} homebrew(s)", homebrew_count),
+                    0xBBAFC7,
+                );
+            }
+            responsive_panel(
                 frame,
                 width,
                 height,
-                780.0,
-                174.0,
-                small_scale,
-                if self.page == LibraryPage::Settings {
-                    "BIBLIOTECA"
+                776.0,
+                238.0,
+                188.0,
+                42.0,
+                scale,
+                if selected_entry.is_some() {
+                    brand::ACCENT_RED
                 } else {
-                    "SELECIONADO"
+                    0x2D1A3B
                 },
-                brand::ACCENT_GREEN_LIGHT,
             );
-        if let Some(entry) = selected_entry {
-            responsive_text(
+            responsive_text_centered(
                 frame,
                 width,
                 height,
-                780.0,
-                197.0,
-                text_scale,
-                &truncate(&entry.title, 26),
+                870.0,
+                252.0,
+                small_scale,
+                "ABRIR JOGO",
                 brand::TEXT,
             );
-            let extension = entry
-                .path
-                .extension()
-                .and_then(|value| value.to_str())
-                .unwrap_or("3ds");
-            responsive_text(
-                frame,
-                width,
-                height,
-                782.0,
-                220.0,
-                small_scale,
-                &format!(".{}", extension.to_ascii_uppercase()),
-                0xBBAFC7,
+            responsive_panel(
+                frame, width, height, 776.0, 286.0, 188.0, 42.0, scale, 0x2D1A3B,
             );
-        } else {
-            responsive_text(
+            responsive_text_centered(
                 frame,
                 width,
                 height,
-                780.0,
-                199.0,
+                870.0,
+                300.0,
                 small_scale,
-                &format!("{} jogo(s)", game_count),
+                if selected_entry.is_some_and(|entry| self.is_favorite(entry)) {
+                    "REMOVER FAVORITO"
+                } else {
+                    "ADICIONAR FAVORITO"
+                },
                 brand::TEXT,
             );
-            responsive_text(
+            responsive_panel(
                 frame,
                 width,
                 height,
-                782.0,
-                220.0,
-                small_scale,
-                &format!("{} homebrew(s)", homebrew_count),
-                0xBBAFC7,
+                776.0,
+                336.0,
+                188.0,
+                42.0,
+                scale,
+                brand::ACCENT_RED,
             );
-        }
-        responsive_panel(
-            frame,
-            width,
-            height,
-            776.0,
-            238.0,
-            188.0,
-            42.0,
-            scale,
-            if selected_entry.is_some() {
-                brand::ACCENT_RED
-            } else {
-                0x2D1A3B
-            },
-        );
-        responsive_text_centered(
-            frame,
-            width,
-            height,
-            870.0,
-            252.0,
-            small_scale,
-            "ABRIR JOGO",
-            brand::TEXT,
-        );
-        responsive_panel(
-            frame, width, height, 776.0, 286.0, 188.0, 42.0, scale, 0x2D1A3B,
-        );
-        responsive_text_centered(
-            frame,
-            width,
-            height,
-            870.0,
-            300.0,
-            small_scale,
-            if selected_entry.is_some_and(|entry| self.is_favorite(entry)) {
-                "REMOVER FAVORITO"
-            } else {
-                "ADICIONAR FAVORITO"
-            },
-            brand::TEXT,
-        );
-        responsive_panel(
-            frame,
-            width,
-            height,
-            776.0,
-            336.0,
-            188.0,
-            42.0,
-            scale,
-            brand::ACCENT_RED,
-        );
-        responsive_text_centered(
-            frame,
-            width,
-            height,
-            870.0,
-            350.0,
-            small_scale,
-            "IMPORTAR PASTA",
-            brand::TEXT,
-        );
-        responsive_panel(
-            frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, 0x2D1A3B,
-        );
-        responsive_text_centered(
-            frame,
-            width,
-            height,
-            870.0,
-            398.0,
-            small_scale,
-            "ATUALIZAR",
-            brand::TEXT,
-        );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                870.0,
+                350.0,
+                small_scale,
+                "IMPORTAR PASTA",
+                brand::TEXT,
+            );
+            responsive_panel(
+                frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, 0x2D1A3B,
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                870.0,
+                398.0,
+                small_scale,
+                "ATUALIZAR",
+                brand::TEXT,
+            );
 
-            responsive_text(
-                frame,
-                width,
-                height,
-                780.0,
-                (bottom - 34.0).max(0.0),
-                small_scale,
-                &format!(
-                    "{} PASTA(S) MONITORADA(S)",
-                    self.scan_config.directories.len()
-                ),
-                0xBBAFC7,
-            );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    780.0,
+                    (bottom - 34.0).max(0.0),
+                    small_scale,
+                    &format!(
+                        "{} PASTA(S) MONITORADA(S)",
+                        self.scan_config.directories.len()
+                    ),
+                    0xBBAFC7,
+                );
         }
         if let Some(status) = &self.status {
             responsive_text(
