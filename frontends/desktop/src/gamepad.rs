@@ -123,8 +123,7 @@ impl GamepadManager {
             self.previous_library_navigation = 0;
         }
         self.active_gamepad = active;
-        let newly_pressed =
-            newly_pressed_navigation(current, self.previous_library_navigation);
+        let newly_pressed = newly_pressed_navigation(current, self.previous_library_navigation);
         self.previous_library_navigation = current;
         newly_pressed
     }
