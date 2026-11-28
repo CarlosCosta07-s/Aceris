@@ -1078,6 +1078,7 @@ fn render(
         if frame.is_empty() {
             record_performance_sample(
                 performance_monitor,
+                app,
                 frame_started,
                 emulation_elapsed,
                 None,
@@ -1104,6 +1105,7 @@ fn render(
             Some(Ok(())) => {
                 record_performance_sample(
                     performance_monitor,
+                    app,
                     frame_started,
                     emulation_elapsed,
                     presentation_started,
@@ -1125,6 +1127,7 @@ fn render(
                 eprintln!("ANativeWindow could not select RGBA_8888 fallback buffers");
                 record_performance_sample(
                     performance_monitor,
+                    app,
                     frame_started,
                     emulation_elapsed,
                     presentation_started,
@@ -1146,6 +1149,7 @@ fn render(
         if ANativeWindow_lock(window.get(), &mut buffer, ptr::null_mut()) != 0 {
             record_performance_sample(
                 performance_monitor,
+                app,
                 frame_started,
                 emulation_elapsed,
                 presentation_started,
@@ -1158,6 +1162,7 @@ fn render(
         let presented = ANativeWindow_unlockAndPost(window.get()) == 0;
         record_performance_sample(
             performance_monitor,
+            app,
             frame_started,
             emulation_elapsed,
             presentation_started,
@@ -1170,6 +1175,7 @@ fn render(
 /// Records timing only when the optional Android diagnostics switch is enabled.
 fn record_performance_sample(
     monitor: &mut Option<FramePerformanceMonitor>,
+    app: &mut App,
     frame_started: Option<Instant>,
     emulation_elapsed: Duration,
     presentation_started: Option<Instant>,
@@ -1189,7 +1195,9 @@ fn record_performance_sample(
         presented,
         gpu_presented,
     ) {
-        eprintln!("Aceris Android performance: {report}");
+        let summary = report.to_string();
+        app.set_performance_summary(summary.clone());
+        eprintln!("Aceris Android performance: {summary}");
     }
 }
 
