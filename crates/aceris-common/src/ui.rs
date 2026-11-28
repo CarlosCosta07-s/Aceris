@@ -135,6 +135,13 @@ pub mod home {
     pub const GAME_CARD_HEIGHT: f32 = 270.0;
     pub const GAME_CARD_GAP: f32 = 14.0;
     pub const GAME_CARD_STEP: f32 = GAME_CARD_WIDTH + GAME_CARD_GAP;
+    // Kept temporarily for the legacy non-Home renderer while pages migrate.
+    pub const SUMMARY_TOP: f32 = 492.0;
+    pub const SUMMARY_HEIGHT: f32 = 64.0;
+
+    pub fn summary_visible(logical_height: f32) -> bool {
+        logical_height >= SUMMARY_TOP + SUMMARY_HEIGHT
+    }
 
     pub fn carousel_top(logical_height: f32) -> f32 {
         if logical_height < 520.0 {
