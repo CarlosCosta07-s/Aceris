@@ -4039,9 +4039,7 @@ impl Library {
                 (724.0, "ATUALIZAR", 0x2D4150),
             ];
             for (x, label, color) in home_actions {
-                responsive_panel(
-                    frame, width, height, x, 380.0, 220.0, 44.0, scale, color,
-                );
+                responsive_panel(frame, width, height, x, 380.0, 220.0, 44.0, scale, color);
                 responsive_text_centered(
                     frame,
                     width,
@@ -6301,10 +6299,7 @@ mod tests {
 
     #[test]
     fn landscape_home_action_row_launches_favorites_import_and_refresh() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-home-actions-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("aceris-home-actions-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("home-game.3ds");
         fs::write(&path, b"fixture").unwrap();
@@ -6342,10 +6337,8 @@ mod tests {
 
     #[test]
     fn landscape_home_fourth_wide_tile_can_be_selected_and_activated() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-home-fourth-tile-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aceris-home-fourth-tile-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let mut entries = Vec::new();
         for index in 0..4 {
