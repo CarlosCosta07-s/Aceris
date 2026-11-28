@@ -830,16 +830,19 @@ fn emulate(
                     }
                 }
                 window::WindowEvent::Key(window::Key::Up)
-                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() => {
+                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() =>
+                {
                     gamepad_mapping_selected = gamepad_mapping_selected.saturating_sub(1);
                 }
                 window::WindowEvent::Key(window::Key::Down)
-                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() => {
+                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() =>
+                {
                     gamepad_mapping_selected = (gamepad_mapping_selected + 1)
                         .min(aceris_core::input_mapping::GamepadControl::COUNT - 1);
                 }
                 window::WindowEvent::Key(window::Key::Left)
-                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() => {
+                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() =>
+                {
                     let mut mapping = *gamepad.mapping();
                     let control =
                         aceris_core::input_mapping::GamepadControl::ALL[gamepad_mapping_selected];
@@ -851,7 +854,8 @@ fn emulate(
                     }
                 }
                 window::WindowEvent::Key(window::Key::Right)
-                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() => {
+                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() =>
+                {
                     let mut mapping = *gamepad.mapping();
                     let control =
                         aceris_core::input_mapping::GamepadControl::ALL[gamepad_mapping_selected];
@@ -863,7 +867,8 @@ fn emulate(
                     }
                 }
                 window::WindowEvent::Key(window::Key::Enter)
-                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() => {
+                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() =>
+                {
                     gamepad_mapping_game_scope =
                         !gamepad_mapping_game_scope && system.game_identity().is_some();
                     let mapping = if gamepad_mapping_game_scope {
@@ -874,7 +879,8 @@ fn emulate(
                     gamepad.set_mapping_for_editor(mapping);
                 }
                 window::WindowEvent::Key(window::Key::Backspace)
-                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() => {
+                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() =>
+                {
                     if let Err(error) = gamepad.save_mapping_for_editor(
                         aceris_core::input_mapping::GamepadMapping::default(),
                         gamepad_mapping_game_scope,

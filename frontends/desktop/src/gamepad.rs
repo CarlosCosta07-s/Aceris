@@ -92,9 +92,7 @@ impl GamepadManager {
         let gilrs = self.gilrs.as_mut()?;
         let mut captured = None;
         while let Some(event) = gilrs.next_event() {
-            if !capture_active
-                || active_gamepad.is_some_and(|active| event.id != active)
-            {
+            if !capture_active || active_gamepad.is_some_and(|active| event.id != active) {
                 continue;
             }
             if let EventType::ButtonPressed(button, _) = event.event {
