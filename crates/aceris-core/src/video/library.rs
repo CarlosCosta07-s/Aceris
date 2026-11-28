@@ -2117,7 +2117,7 @@ impl Library {
                 ClickResult::Ignored
             }
             LibraryPage::Settings => {
-                for index in 0..self.scan_config.directories.len().min(4) {
+                for index in 0..self.scan_config.directories.len().min(3) {
                     let row_top = 178.0 + index as f32 * 28.0;
                     if (row_top..row_top + 25.0).contains(&y) && (670.0..724.0).contains(&x) {
                         self.remove_scan_directory_from_settings(index);
@@ -3677,7 +3677,7 @@ impl Library {
                 28.0,
                 132.0,
                 702.0,
-                (bottom - 150.0).max(270.0),
+                (bottom - 132.0).max(270.0),
                 scale,
                 0x21152F,
             );
@@ -3694,7 +3694,7 @@ impl Library {
                 ),
                 brand::ACCENT_GREEN_LIGHT,
             );
-            for (index, directory) in self.scan_config.directories.iter().take(4).enumerate() {
+            for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
                 let row_y = 178.0 + index as f32 * 28.0;
                 responsive_panel(
                     frame, width, height, 44.0, row_y, 620.0, 24.0, scale, 0x33223F,
@@ -3731,17 +3731,17 @@ impl Library {
                     brand::TEXT,
                 );
             }
-            if self.scan_config.directories.len() > 4 {
+            if self.scan_config.directories.len() > 3 {
                 responsive_text(
                     frame,
                     width,
                     height,
                     54.0,
-                    292.0,
+                    266.0,
                     small_scale,
                     &format!(
                         "+ {} outra(s) pasta(s)",
-                        self.scan_config.directories.len() - 4
+                        self.scan_config.directories.len() - 3
                     ),
                     0xBBAFC7,
                 );
@@ -3788,7 +3788,6 @@ impl Library {
                         0x2D1A3B
                     },
                 ),
-                (605.0, 280.0, 125.0, "ZONA MORTA", 0x2D1A3B),
             ];
             for (x, y, card_width, label, color) in settings_actions {
                 responsive_panel(frame, width, height, x, y, card_width, 42.0, scale, color);
@@ -3803,15 +3802,36 @@ impl Library {
                     brand::TEXT,
                 );
             }
+            responsive_panel(
+                frame,
+                width,
+                height,
+                605.0,
+                280.0,
+                125.0,
+                42.0,
+                scale,
+                0x2D1A3B,
+            );
             responsive_text_centered(
                 frame,
                 width,
                 height,
                 667.0,
-                294.0,
+                289.0,
                 small_scale,
-                &format!("ZONA: {}%", self.gamepad_deadzone_percent),
+                "ZONA MORTA",
                 brand::TEXT,
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                667.0,
+                306.0,
+                small_scale,
+                &format!("{}%", self.gamepad_deadzone_percent),
+                brand::ACCENT_GREEN_LIGHT,
             );
             if self.scan_path_input_focused {
                 responsive_text(
