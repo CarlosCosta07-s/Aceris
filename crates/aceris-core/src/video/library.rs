@@ -62,6 +62,14 @@ struct LibraryPreferences {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum HomeFocus {
+    #[default]
+    Games,
+    Actions,
+    Navigation,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum SettingsSection {
     #[default]
     Library,
@@ -179,6 +187,9 @@ pub struct Library {
     status: Option<String>,
     page: LibraryPage,
     settings_section: SettingsSection,
+    home_focus: HomeFocus,
+    home_action_selected: usize,
+    home_navigation_selected: usize,
     favorites: std::collections::HashSet<String>,
     recent: Vec<String>,
     sort_descending: bool,
@@ -930,6 +941,9 @@ impl Library {
             status: None,
             page: LibraryPage::Home,
             settings_section: SettingsSection::Library,
+            home_focus: HomeFocus::Games,
+            home_action_selected: 0,
+            home_navigation_selected: 0,
             favorites,
             recent,
             sort_descending: preferences.sort_descending,
@@ -1882,6 +1896,9 @@ impl Library {
             self.page = page;
             self.selected = 0;
             self.first_visible = 0;
+            self.home_focus = HomeFocus::Games;
+            self.home_action_selected = 0;
+            self.home_navigation_selected = 0;
             self.status = None;
         }
     }
@@ -2010,7 +2027,7 @@ impl Library {
             return;
         };
         if self.page == LibraryPage::Home {
-            self.move_home_selection(delta, if portrait { 3 } else { 4 });
+            self.move_home_focus_vertical(delta, portrait);
             return;
         }
         if portrait {
@@ -2024,6 +2041,112 @@ impl Library {
             let visible_items = visible_rows * 4;
             let delta = if delta.abs() == 1 { delta * 4 } else { delta };
             self.move_grid_selection(delta, visible_items);
+        }
+    }
+
+    fn move_home_focus_vertical(&mut self, delta: i32, portrait: bool) {
+        if delta == 0 {
+            return;
+        }
+        let direction = delta.signum();
+        let next = if portrait {
+            match (self.home_focus, direction) {
+                (HomeFocus::Actions, 1) => HomeFocus::Games,
+                (HomeFocus::Games, -1) => HomeFocus::Actions,
+                (HomeFocus::Games, 1) => HomeFocus::Navigation,
+                (HomeFocus::Navigation, -1) => HomeFocus::Games,
+                _ => self.home_focus,
+            }
+        } else {
+            match (self.home_focus, direction) {
+                (HomeFocus::Games, 1) => HomeFocus::Actions,
+                (HomeFocus::Actions, 1) => HomeFocus::Navigation,
+                (HomeFocus::Navigation, -1) => HomeFocus::Actions,
+                (HomeFocus::Actions, -1) => HomeFocus::Games,
+                _ => self.home_focus,
+            }
+        };
+        if next != self.home_focus {
+            self.home_focus = next;
+            self.status = None;
+        }
+    }
+
+    /// Activates the item currently focused on the Home screen.
+    ///
+    /// Game tiles return Activated so the host can launch the selected entry.
+    /// Other actions are handled here and return Ignored.
+    pub fn activate_home_selection(&mut self, width: u32, height: u32) -> ClickResult {
+        let Some((portrait, _, _, _)) = responsive_metrics(width, height) else {
+            return ClickResult::Ignored;
+        };
+        if self.page != LibraryPage::Home {
+            return ClickResult::Ignored;
+        }
+
+        match self.home_focus {
+            HomeFocus::Games => ClickResult::Activated,
+            HomeFocus::Actions if portrait => {
+                if self.home_entries().is_empty() {
+                    self.request_folder_picker();
+                    ClickResult::Ignored
+                } else {
+                    ClickResult::Activated
+                }
+            }
+            HomeFocus::Actions => match self.home_action_selected {
+                0 if self.selected_entry().is_some() => ClickResult::Activated,
+                0 => {
+                    self.request_folder_picker();
+                    ClickResult::Ignored
+                }
+                1 => {
+                    self.toggle_selected_favorite();
+                    ClickResult::Ignored
+                }
+                2 => {
+                    self.request_folder_picker();
+                    ClickResult::Ignored
+                }
+                3 => {
+                    self.reload();
+                    ClickResult::Ignored
+                }
+                _ => ClickResult::Ignored,
+            },
+            HomeFocus::Navigation if portrait => match self.home_navigation_selected {
+                0 => {
+                    self.select_page(LibraryPage::Recent);
+                    ClickResult::Ignored
+                }
+                1 => {
+                    self.select_page(LibraryPage::Favorites);
+                    ClickResult::Ignored
+                }
+                2 => {
+                    self.request_folder_picker();
+                    ClickResult::Ignored
+                }
+                3 => {
+                    self.reload();
+                    ClickResult::Ignored
+                }
+                _ => ClickResult::Ignored,
+            },
+            HomeFocus::Navigation => {
+                let page = match self.home_navigation_selected {
+                    0 => Some(LibraryPage::Recent),
+                    1 => Some(LibraryPage::Games),
+                    2 => Some(LibraryPage::Favorites),
+                    3 => Some(LibraryPage::Homebrew),
+                    4 => Some(LibraryPage::Settings),
+                    _ => None,
+                };
+                if let Some(page) = page {
+                    self.select_page(page);
+                }
+                ClickResult::Ignored
+            }
         }
     }
 
@@ -2103,7 +2226,21 @@ impl Library {
             return;
         }
         if self.page == LibraryPage::Home {
-            self.move_home_selection(delta, if portrait { 3 } else { 4 });
+            match self.home_focus {
+                HomeFocus::Games => self.move_home_selection(delta, if portrait { 3 } else { 4 }),
+                HomeFocus::Actions => {
+                    let count = if portrait { 1 } else { 4 };
+                    self.home_action_selected = (self.home_action_selected as i64
+                        + i64::from(delta.signum()))
+                    .clamp(0, count - 1) as usize;
+                }
+                HomeFocus::Navigation => {
+                    let count = if portrait { 4 } else { 5 };
+                    self.home_navigation_selected = (self.home_navigation_selected as i64
+                        + i64::from(delta.signum()))
+                    .clamp(0, count - 1) as usize;
+                }
+            }
             return;
         }
         if portrait {
@@ -2169,10 +2306,9 @@ impl Library {
             }
             if self.page == LibraryPage::Home {
                 if (250.0..420.0).contains(&y) && (20.0..380.0).contains(&x) {
-                    if !self.home_entries().is_empty() {
-                        return ClickResult::Activated;
-                    }
-                    self.request_folder_picker();
+                    self.home_focus = HomeFocus::Actions;
+                    self.home_action_selected = 0;
+                    return self.activate_home_selection(width, height);
                 } else if (476.0..652.0).contains(&y) {
                     let index = if (20.0..132.0).contains(&x) {
                         Some(0)
@@ -2186,6 +2322,7 @@ impl Library {
                     if let Some(slot) = index {
                         let index = self.home_first_visible(3) + slot;
                         if index < self.home_entries().len() {
+                            self.home_focus = HomeFocus::Games;
                             if index == self.selected {
                                 return ClickResult::Activated;
                             }
@@ -2195,14 +2332,21 @@ impl Library {
                         }
                     }
                 } else if (676.0..720.0).contains(&y) {
-                    if (12.0..100.0).contains(&x) {
-                        self.select_page(LibraryPage::Recent);
+                    let slot = if (12.0..100.0).contains(&x) {
+                        Some(0)
                     } else if (108.0..196.0).contains(&x) {
-                        self.select_page(LibraryPage::Favorites);
+                        Some(1)
                     } else if (204.0..292.0).contains(&x) {
-                        self.request_folder_picker();
+                        Some(2)
                     } else if (300.0..388.0).contains(&x) {
-                        self.reload();
+                        Some(3)
+                    } else {
+                        None
+                    };
+                    if let Some(slot) = slot {
+                        self.home_focus = HomeFocus::Navigation;
+                        self.home_navigation_selected = slot;
+                        let _ = self.activate_home_selection(width, height);
                     }
                 }
                 return ClickResult::Ignored;
@@ -2377,6 +2521,8 @@ impl Library {
             LibraryPage::Home => {
                 if (140.0..356.0).contains(&y) && (28.0..960.0).contains(&x) {
                     if self.home_entries().is_empty() {
+                        self.home_focus = HomeFocus::Actions;
+                        self.home_action_selected = 2;
                         self.request_folder_picker();
                         return ClickResult::Ignored;
                     }
@@ -2394,6 +2540,7 @@ impl Library {
                     if let Some(slot) = index {
                         let index = self.home_first_visible(4) + slot;
                         if index < self.home_entries().len() {
+                            self.home_focus = HomeFocus::Games;
                             if index == self.selected {
                                 return ClickResult::Activated;
                             }
@@ -2403,38 +2550,40 @@ impl Library {
                         }
                     }
                 } else if (380.0..424.0).contains(&y) {
-                    if (28.0..248.0).contains(&x) {
-                        return if self.selected_entry().is_some() {
-                            ClickResult::Activated
-                        } else {
-                            self.request_folder_picker();
-                            ClickResult::Ignored
-                        };
+                    let action = if (28.0..248.0).contains(&x) {
+                        Some(0)
                     } else if (260.0..480.0).contains(&x) {
-                        if self.selected_entry().is_some() {
-                            self.toggle_selected_favorite();
-                        }
+                        Some(1)
                     } else if (492.0..712.0).contains(&x) {
-                        self.request_folder_picker();
+                        Some(2)
                     } else if (724.0..944.0).contains(&x) {
-                        self.reload();
-                    }
-                } else if (438.0..502.0).contains(&y) {
-                    let page = if (28.0..204.0).contains(&x) {
-                        Some(LibraryPage::Recent)
-                    } else if (212.0..388.0).contains(&x) {
-                        Some(LibraryPage::Games)
-                    } else if (396.0..572.0).contains(&x) {
-                        Some(LibraryPage::Favorites)
-                    } else if (580.0..756.0).contains(&x) {
-                        Some(LibraryPage::Homebrew)
-                    } else if (764.0..940.0).contains(&x) {
-                        Some(LibraryPage::Settings)
+                        Some(3)
                     } else {
                         None
                     };
-                    if let Some(page) = page {
-                        self.select_page(page);
+                    if let Some(action) = action {
+                        self.home_focus = HomeFocus::Actions;
+                        self.home_action_selected = action;
+                        return self.activate_home_selection(width, height);
+                    }
+                } else if (438.0..502.0).contains(&y) {
+                    let slot = if (28.0..204.0).contains(&x) {
+                        Some(0)
+                    } else if (212.0..388.0).contains(&x) {
+                        Some(1)
+                    } else if (396.0..572.0).contains(&x) {
+                        Some(2)
+                    } else if (580.0..756.0).contains(&x) {
+                        Some(3)
+                    } else if (764.0..940.0).contains(&x) {
+                        Some(4)
+                    } else {
+                        None
+                    };
+                    if let Some(slot) = slot {
+                        self.home_focus = HomeFocus::Navigation;
+                        self.home_navigation_selected = slot;
+                        let _ = self.activate_home_selection(width, height);
                     }
                 }
                 ClickResult::Ignored
@@ -2788,6 +2937,11 @@ impl Library {
             responsive_panel(
                 frame, width, height, 20.0, 250.0, 360.0, 184.0, scale, 0x1B2D3D,
             );
+            if self.home_focus == HomeFocus::Actions {
+                responsive_panel(
+                    frame, width, height, 32.0, 374.0, 336.0, 50.0, scale, 0x55C8E8,
+                );
+            }
             if let Some(entry) = home_entries
                 .get(self.selected)
                 .or_else(|| home_entries.first())
@@ -2971,7 +3125,7 @@ impl Library {
                         164.0,
                         entry,
                         self.smdh_icons.get(&entry.path),
-                        index == self.selected,
+                        index == self.selected && self.home_focus == HomeFocus::Games,
                         small_scale,
                         small_scale,
                     );
@@ -2996,6 +3150,13 @@ impl Library {
             ];
             for (slot, (symbol, label)) in dock_actions.into_iter().enumerate() {
                 let x = 12.0 + slot as f32 * 96.0;
+                if self.home_focus == HomeFocus::Navigation
+                    && self.home_navigation_selected == slot
+                {
+                    responsive_panel(
+                        frame, width, height, x - 3.0, 673.0, 94.0, 50.0, scale, 0x55C8E8,
+                    );
+                }
                 responsive_panel(frame, width, height, x, 676.0, 88.0, 44.0, scale, 0x243543);
                 responsive_panel(
                     frame,
@@ -4231,7 +4392,7 @@ impl Library {
                         210.0,
                         entry,
                         self.smdh_icons.get(&entry.path),
-                        index == self.selected,
+                        index == self.selected && self.home_focus == HomeFocus::Games,
                         text_scale,
                         small_scale,
                     );
@@ -4290,7 +4451,12 @@ impl Library {
                 (492.0, "IMPORTAR PASTA", brand::ACCENT_RED),
                 (724.0, "ATUALIZAR", 0x304A5E),
             ];
-            for (x, label, color) in home_actions {
+            for (slot, (x, label, color)) in home_actions.into_iter().enumerate() {
+                if self.home_focus == HomeFocus::Actions && self.home_action_selected == slot {
+                    responsive_panel(
+                        frame, width, height, x - 4.0, 376.0, 228.0, 52.0, scale, 0x55C8E8,
+                    );
+                }
                 responsive_panel(frame, width, height, x, 380.0, 220.0, 44.0, scale, color);
                 responsive_text_centered(
                     frame,
@@ -4324,6 +4490,13 @@ impl Library {
             for (slot, (page, symbol, label)) in dock_items.into_iter().enumerate() {
                 let x = 28.0 + slot as f32 * 184.0;
                 let selected = self.page == page;
+                let focused = self.home_focus == HomeFocus::Navigation
+                    && self.home_navigation_selected == slot;
+                if focused {
+                    responsive_panel(
+                        frame, width, height, x - 3.0, 439.0, 182.0, 58.0, scale, 0x55C8E8,
+                    );
+                }
                 responsive_panel(
                     frame,
                     width,
@@ -7071,6 +7244,94 @@ mod tests {
             ClickResult::Ignored
         );
         assert_eq!(library.page(), LibraryPage::Home);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn home_controller_focus_reaches_actions_and_navigation_landscape() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-home-focus-landscape-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("focus-game.3ds");
+        fs::write(&path, b"fixture").unwrap();
+        let mut library = Library::new(
+            vec![Entry {
+                title: "Focus Game".into(),
+                path,
+            }],
+            dir.display().to_string(),
+        );
+
+        library.move_selection_responsive(1, 1000, 600);
+        assert_eq!(library.home_focus, HomeFocus::Actions);
+        library.move_selection_horizontal_responsive(1, 1000, 600);
+        assert_eq!(
+            library.activate_home_selection(1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.favorite_count(), 1);
+
+        library.move_selection_responsive(1, 1000, 600);
+        assert_eq!(library.home_focus, HomeFocus::Navigation);
+        library.move_selection_horizontal_responsive(1, 1000, 600);
+        assert_eq!(
+            library.activate_home_selection(1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.page(), LibraryPage::Games);
+
+        library.select_page(LibraryPage::Home);
+        library.move_selection_responsive(1, 1000, 600);
+        library.move_selection_horizontal_responsive(2, 1000, 600);
+        assert_eq!(
+            library.activate_home_selection(1000, 600),
+            ClickResult::Ignored
+        );
+        assert!(library.take_folder_picker_request());
+        assert_eq!(library.page(), LibraryPage::Settings);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn home_controller_focus_maps_portrait_featured_action_and_dock() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-home-focus-portrait-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("focus-game.3ds");
+        fs::write(&path, b"fixture").unwrap();
+        let mut library = Library::new(
+            vec![Entry {
+                title: "Focus Game".into(),
+                path,
+            }],
+            dir.display().to_string(),
+        );
+
+        library.move_selection_responsive(-1, 400, 800);
+        assert_eq!(library.home_focus, HomeFocus::Actions);
+        assert_eq!(
+            library.activate_home_selection(400, 800),
+            ClickResult::Activated
+        );
+        library.move_selection_responsive(1, 400, 800);
+        assert_eq!(library.home_focus, HomeFocus::Games);
+        library.move_selection_responsive(1, 400, 800);
+        assert_eq!(library.home_focus, HomeFocus::Navigation);
+        library.move_selection_horizontal_responsive(2, 400, 800);
+        assert_eq!(
+            library.activate_home_selection(400, 800),
+            ClickResult::Ignored
+        );
+        assert!(library.take_folder_picker_request());
+        assert_eq!(library.page(), LibraryPage::Settings);
 
         fs::remove_dir_all(dir).unwrap();
     }
