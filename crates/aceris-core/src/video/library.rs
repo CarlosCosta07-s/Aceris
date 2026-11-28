@@ -2725,6 +2725,31 @@ impl Library {
             return self.click_console_collection(x, y, width, height, logical_height);
         }
 
+        if !portrait && self.page == LibraryPage::Settings && x < ui::home::SIDEBAR_WIDTH {
+            if let Some(slot) = (0..ui::home::SIDEBAR_ITEM_COUNT).find(|slot| {
+                let center_y = ui::home::sidebar_item_center_y(*slot, logical_height);
+                (center_y - 24.0..center_y + 24.0).contains(&y)
+            }) {
+                match slot {
+                    0 => self.select_page(LibraryPage::Home),
+                    1 => self.select_page(LibraryPage::Games),
+                    2 => self.request_folder_picker(),
+                    3 => self.select_page(LibraryPage::Favorites),
+                    4 => self.select_page(LibraryPage::Settings),
+                    _ => {}
+                }
+            }
+            return ClickResult::Ignored;
+        }
+        if !portrait && self.page == LibraryPage::Settings && y < ui::chrome::HEADER_HEIGHT {
+            return ClickResult::Ignored;
+        }
+        let x = if !portrait && self.page == LibraryPage::Settings {
+            28.0 + (x - 96.0) * (972.0 / 904.0)
+        } else {
+            x
+        };
+
         if !portrait
             && matches!(
                 self.page,
@@ -7699,6 +7724,77 @@ impl Library {
             "ACERIS  |  RUST  |  SEUS ARQUIVOS, SUAS REGRAS",
             brand::TEXT_MUTED,
         );
+
+        // Settings keeps its existing controls and persistence contracts, but
+        // its rendered content is fitted into the same console shell. This
+        // avoids maintaining a second set of settings widgets during migration.
+        if self.page == LibraryPage::Settings {
+            let legacy_frame = frame.to_vec();
+            responsive_vertical_gradient(
+                frame,
+                width as usize,
+                height as usize,
+                0.0,
+                0.0,
+                1000.0,
+                logical_height,
+                scale,
+                brand::PURPLE_LIGHT,
+                brand::SURFACE_BASE,
+            );
+
+            let source_left = (28.0 * scale).floor().max(0.0) as usize;
+            let destination_left = (96.0 * scale).floor().max(0.0) as usize;
+            let source_span = width as usize - source_left.min(width as usize);
+            let destination_span = width as usize - destination_left.min(width as usize);
+            let header_bottom =
+                (ui::chrome::HEADER_HEIGHT * scale).ceil().min(height as f32) as usize;
+            if source_span > 0 && destination_span > 0 {
+                for y in header_bottom..height as usize {
+                    for offset in 0..destination_span {
+                        let source_x = source_left + offset * source_span / destination_span;
+                        if source_x >= width as usize {
+                            continue;
+                        }
+                        let source = (y * width as usize + source_x) * 4;
+                        let destination = (y * width as usize + destination_left + offset) * 4;
+                        frame[destination..destination + 4]
+                            .copy_from_slice(&legacy_frame[source..source + 4]);
+                    }
+                }
+            }
+
+            render_console_sidebar(
+                frame,
+                width,
+                height,
+                scale,
+                logical_height,
+                LibraryPage::Settings,
+            );
+            responsive_fill(
+                frame,
+                width as usize,
+                height as usize,
+                ui::home::SIDEBAR_WIDTH,
+                (logical_height - 18.0).max(0.0),
+                1000.0 - ui::home::SIDEBAR_WIDTH,
+                18.0,
+                scale,
+                brand::SURFACE_HEADER,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                ui::home::SIDEBAR_WIDTH + 20.0,
+                (logical_height - 13.0).max(0.0),
+                small_scale,
+                "ACERIS  |  AJUSTES  |  CONFIGURAÇÕES DO SISTEMA",
+                brand::TEXT_MUTED,
+            );
+        }
+
         if self.touch_keyboard_open {
             self.render_touch_keyboard(frame, width, height, scale, logical_height, text_scale);
         }
