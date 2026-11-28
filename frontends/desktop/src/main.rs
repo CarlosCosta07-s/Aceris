@@ -1198,6 +1198,36 @@ fn emulate(
                                 eprintln!("could not save gamepad axis settings: {error}");
                             }
                         }
+                        Some(quick_menu::GamepadAxisEditorHit::DeadzoneDown) => {
+                            let mut settings = *gamepad.axis_settings();
+                            settings.adjust_deadzone_override(gamepad_deadzone_percent, -1);
+                            if let Err(error) = gamepad.save_axis_settings_for_editor_scope(
+                                settings,
+                                gamepad_axis_profile_scope,
+                            ) {
+                                eprintln!("could not save gamepad axis settings: {error}");
+                            }
+                        }
+                        Some(quick_menu::GamepadAxisEditorHit::DeadzoneUp) => {
+                            let mut settings = *gamepad.axis_settings();
+                            settings.adjust_deadzone_override(gamepad_deadzone_percent, 1);
+                            if let Err(error) = gamepad.save_axis_settings_for_editor_scope(
+                                settings,
+                                gamepad_axis_profile_scope,
+                            ) {
+                                eprintln!("could not save gamepad axis settings: {error}");
+                            }
+                        }
+                        Some(quick_menu::GamepadAxisEditorHit::DeadzoneInherit) => {
+                            let mut settings = *gamepad.axis_settings();
+                            settings.set_deadzone_override_percent(None);
+                            if let Err(error) = gamepad.save_axis_settings_for_editor_scope(
+                                settings,
+                                gamepad_axis_profile_scope,
+                            ) {
+                                eprintln!("could not inherit global deadzone: {error}");
+                            }
+                        }
                         Some(quick_menu::GamepadAxisEditorHit::Reset) => {
                             if let Err(error) = gamepad.save_axis_settings_for_editor_scope(
                                 aceris_core::input_mapping::GamepadAxisSettings::default(),
@@ -1525,6 +1555,7 @@ fn emulate(
                         frame_height as u32,
                         MenuPixelFormat::Bgrx8,
                         gamepad.axis_settings(),
+                        gamepad_deadzone_percent,
                         match gamepad_axis_profile_scope {
                             GamepadAxisProfileScope::Global => "ESCOPO: GLOBAL",
                             GamepadAxisProfileScope::Device => "ESCOPO: MODELO",

@@ -366,6 +366,8 @@ impl App {
                     pad::DOWN => self.toggle_gamepad_axis_invert_y(),
                     pad::LEFT => self.adjust_gamepad_axis_sensitivity(-10),
                     pad::RIGHT | pad::A | pad::START => self.adjust_gamepad_axis_sensitivity(10),
+                    pad::L => self.adjust_gamepad_axis_deadzone(-1),
+                    pad::R => self.adjust_gamepad_axis_deadzone(1),
                     pad::X => {
                         self.toggle_gamepad_mapping_scope();
                         self.library.set_status("ESCOPO DO PERFIL ALTERADO");
@@ -633,6 +635,7 @@ impl App {
                         self.height,
                         MenuPixelFormat::Rgba8,
                         &self.gamepad_axis_settings,
+                        self.library.gamepad_deadzone_percent(),
                         scope_label,
                     );
                 } else {
@@ -1220,6 +1223,18 @@ impl App {
         self.save_gamepad_axis_settings_editor(GamepadAxisSettings::default());
     }
 
+    fn adjust_gamepad_axis_deadzone(&mut self, direction: i8) {
+        let mut settings = self.gamepad_axis_settings;
+        settings.adjust_deadzone_override(self.library.gamepad_deadzone_percent(), direction);
+        self.save_gamepad_axis_settings_editor(settings);
+    }
+
+    fn inherit_gamepad_axis_deadzone(&mut self) {
+        let mut settings = self.gamepad_axis_settings;
+        settings.set_deadzone_override_percent(None);
+        self.save_gamepad_axis_settings_editor(settings);
+    }
+
     fn save_gamepad_mapping_editor(&mut self) {
         let settings_directory = self.games_dir.join(".aceris");
         let result = if self.gamepad_mapping_game_scope {
@@ -1339,6 +1354,15 @@ impl App {
                 }
                 Some(quick_menu::GamepadAxisEditorHit::SensitivityUp) => {
                     self.adjust_gamepad_axis_sensitivity(10);
+                }
+                Some(quick_menu::GamepadAxisEditorHit::DeadzoneDown) => {
+                    self.adjust_gamepad_axis_deadzone(-1);
+                }
+                Some(quick_menu::GamepadAxisEditorHit::DeadzoneUp) => {
+                    self.adjust_gamepad_axis_deadzone(1);
+                }
+                Some(quick_menu::GamepadAxisEditorHit::DeadzoneInherit) => {
+                    self.inherit_gamepad_axis_deadzone();
                 }
                 Some(quick_menu::GamepadAxisEditorHit::Reset) => {
                     self.reset_gamepad_axis_settings_editor();
