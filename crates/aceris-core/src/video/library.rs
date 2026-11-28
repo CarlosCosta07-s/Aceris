@@ -2276,7 +2276,8 @@ impl Library {
                 HomeFocus::Navigation => {
                     self.home_navigation_selected = (self.home_navigation_selected as i64
                         + i64::from(direction))
-                    .clamp(0, ui::home::SIDEBAR_ITEM_COUNT as i64 - 1) as usize;
+                    .clamp(0, ui::home::SIDEBAR_ITEM_COUNT as i64 - 1)
+                        as usize;
                 }
                 HomeFocus::Games if direction < 0 => {
                     self.home_focus = HomeFocus::Navigation;
@@ -8031,16 +8032,7 @@ fn responsive_circle_outline(
             center_y + angle.sin() * radius,
         );
         responsive_line(
-            frame,
-            width,
-            height,
-            previous.0,
-            previous.1,
-            next.0,
-            next.1,
-            thickness,
-            scale,
-            color,
+            frame, width, height, previous.0, previous.1, next.0, next.1, thickness, scale, color,
         );
         previous = next;
     }
@@ -8213,13 +8205,7 @@ fn render_console_nav_icon(
                 center_x + 12.0,
                 center_y + 10.0,
             );
-            line(
-                frame,
-                center_x,
-                center_y - 12.0,
-                center_x,
-                center_y + 1.0,
-            );
+            line(frame, center_x, center_y - 12.0, center_x, center_y + 1.0);
             line(
                 frame,
                 center_x - 6.0,
