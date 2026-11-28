@@ -2815,17 +2815,7 @@ impl Library {
             ];
             for (slot, (symbol, label)) in dock_actions.into_iter().enumerate() {
                 let x = 12.0 + slot as f32 * 96.0;
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    x,
-                    676.0,
-                    88.0,
-                    44.0,
-                    scale,
-                    0x202A34,
-                );
+                responsive_panel(frame, width, height, x, 676.0, 88.0, 44.0, scale, 0x202A34);
                 responsive_panel(
                     frame,
                     width,
@@ -2835,7 +2825,11 @@ impl Library {
                     22.0,
                     26.0,
                     scale,
-                    if slot == 2 { brand::ACCENT_RED } else { 0x17485D },
+                    if slot == 2 {
+                        brand::ACCENT_RED
+                    } else {
+                        0x17485D
+                    },
                 );
                 responsive_text_centered(
                     frame,
@@ -4072,7 +4066,11 @@ impl Library {
                     30.0,
                     30.0,
                     scale,
-                    if selected { brand::ACCENT_RED } else { 0x2D4150 },
+                    if selected {
+                        brand::ACCENT_RED
+                    } else {
+                        0x2D4150
+                    },
                 );
                 responsive_text_centered(
                     frame,
@@ -6229,10 +6227,8 @@ mod tests {
 
     #[test]
     fn landscape_home_dock_navigates_to_console_pages() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-landscape-dock-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aceris-landscape-dock-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let mut library = Library::new(Vec::new(), dir.display().to_string());
 
