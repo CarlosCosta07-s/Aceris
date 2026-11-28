@@ -5657,7 +5657,8 @@ impl Library {
                             644.0,
                             112.0,
                             scale,
-                            if self.settings_controls_focused && self.settings_control_selected == 0 {
+                            if self.settings_controls_focused && self.settings_control_selected == 0
+                            {
                                 brand::SURFACE_SELECTED
                             } else {
                                 brand::SURFACE_CARD
