@@ -5718,22 +5718,31 @@ impl Library {
                     780.0,
                     174.0,
                     small_scale,
-                    if self.page == LibraryPage::Settings {
-                        "BIBLIOTECA"
-                    } else {
-                        "SELECIONADO"
-                    },
+                    "EM FOCO",
                     brand::ACCENT_GREEN_LIGHT,
                 );
                 if let Some(entry) = selected_entry {
+                    render_cover_art(
+                        frame,
+                        width,
+                        height,
+                        scale,
+                        780.0,
+                        186.0,
+                        54.0,
+                        48.0,
+                        entry,
+                        self.smdh_icons.get(&entry.path),
+                        small_scale,
+                    );
                     responsive_text(
                         frame,
                         width,
                         height,
-                        780.0,
-                        197.0,
-                        text_scale,
-                        &truncate(&entry.title, 26),
+                        846.0,
+                        190.0,
+                        small_scale,
+                        &truncate(&entry.title, 18),
                         brand::TEXT,
                     );
                     let extension = entry
@@ -5741,15 +5750,28 @@ impl Library {
                         .extension()
                         .and_then(|value| value.to_str())
                         .unwrap_or("3ds");
+                    let state = if self.is_favorite(entry) {
+                        "FAVORITO"
+                    } else if self.is_recent(entry) {
+                        "RECENTE"
+                    } else {
+                        "NA BIBLIOTECA"
+                    };
                     responsive_text(
                         frame,
                         width,
                         height,
-                        782.0,
-                        220.0,
+                        846.0,
+                        214.0,
                         small_scale,
-                        &format!(".{}", extension.to_ascii_uppercase()),
-                        brand::TEXT_MUTED,
+                        &format!(".{}  ·  {state}", extension.to_ascii_uppercase()),
+                        if self.is_favorite(entry) {
+                            brand::ACCENT_RED_LIGHT
+                        } else if self.is_recent(entry) {
+                            brand::ACCENT_GREEN_LIGHT
+                        } else {
+                            brand::TEXT_MUTED
+                        },
                     );
                 } else {
                     responsive_text(
