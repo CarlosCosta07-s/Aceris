@@ -62,7 +62,7 @@ pub mod library {
 
     pub fn details_panel_height(logical_height: f32) -> f32 {
         if logical_height < 520.0 {
-            (logical_height - 178.0).clamp(240.0, DETAILS_PANEL_HEIGHT)
+            (logical_height - 216.0).clamp(180.0, DETAILS_PANEL_HEIGHT)
         } else {
             DETAILS_PANEL_HEIGHT
         }
@@ -121,7 +121,7 @@ pub mod home {
     pub const SIDEBAR_POWER_BOTTOM: f32 = 0.08;
 
     pub fn sidebar_item_center_y(index: usize, logical_height: f32) -> f32 {
-        let span = (logical_height - 210.0).clamp(180.0, 238.0);
+        let span = (logical_height - 230.0).clamp(180.0, 320.0);
         SIDEBAR_FIRST_ITEM_Y
             + span * index.min(SIDEBAR_ITEM_COUNT - 1) as f32 / (SIDEBAR_ITEM_COUNT - 1) as f32
     }
