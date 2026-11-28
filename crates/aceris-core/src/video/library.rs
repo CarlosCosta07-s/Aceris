@@ -2141,10 +2141,10 @@ impl Library {
             }
         } else {
             match (self.home_focus, direction) {
-                (HomeFocus::Games, 1) => HomeFocus::Actions,
-                (HomeFocus::Actions, 1) => HomeFocus::Navigation,
-                (HomeFocus::Navigation, -1) => HomeFocus::Actions,
-                (HomeFocus::Actions, -1) => HomeFocus::Games,
+                (HomeFocus::Actions, 1) => HomeFocus::Games,
+                (HomeFocus::Games, -1) => HomeFocus::Actions,
+                (HomeFocus::Games, 1) => HomeFocus::Navigation,
+                (HomeFocus::Navigation, -1) => HomeFocus::Games,
                 _ => self.home_focus,
             }
         };
@@ -2614,14 +2614,36 @@ impl Library {
 
         match self.page {
             LibraryPage::Home => {
-                if (140.0..356.0).contains(&y) && (28.0..960.0).contains(&x) {
-                    if self.home_entries().is_empty() {
+                if (88.0..204.0).contains(&y) && (28.0..972.0).contains(&x) {
+                    if self.selected_entry().is_some() {
+                        self.home_focus = HomeFocus::Games;
+                        return ClickResult::Activated;
+                    }
+                } else if (216.0..264.0).contains(&y) {
+                    let action = if (220.0..376.0).contains(&x) {
+                        Some(0)
+                    } else if (388.0..544.0).contains(&x) {
+                        Some(1)
+                    } else if (556.0..736.0).contains(&x) {
+                        Some(2)
+                    } else if (748.0..916.0).contains(&x) {
+                        Some(3)
+                    } else {
+                        None
+                    };
+                    if let Some(action) = action {
+                        self.home_focus = HomeFocus::Actions;
+                        self.home_action_selected = action;
+                        return self.activate_home_selection(width, height);
+                    }
+                } else if (316.0..420.0).contains(&y) {
+                    if self.home_entries().is_empty() && (28.0..972.0).contains(&x) {
                         self.home_focus = HomeFocus::Actions;
                         self.home_action_selected = 2;
                         self.request_folder_picker();
                         return ClickResult::Ignored;
                     }
-                    let index = if (28.0..248.0).contains(&x) {
+                    let slot = if (28.0..248.0).contains(&x) {
                         Some(0)
                     } else if (260.0..480.0).contains(&x) {
                         Some(1)
@@ -2632,7 +2654,7 @@ impl Library {
                     } else {
                         None
                     };
-                    if let Some(slot) = index {
+                    if let Some(slot) = slot {
                         let index = self.home_first_visible(4) + slot;
                         if index < self.home_entries().len() {
                             self.home_focus = HomeFocus::Games;
@@ -2643,23 +2665,6 @@ impl Library {
                             self.status = None;
                             return ClickResult::Selected;
                         }
-                    }
-                } else if (380.0..424.0).contains(&y) {
-                    let action = if (28.0..248.0).contains(&x) {
-                        Some(0)
-                    } else if (260.0..480.0).contains(&x) {
-                        Some(1)
-                    } else if (492.0..712.0).contains(&x) {
-                        Some(2)
-                    } else if (724.0..944.0).contains(&x) {
-                        Some(3)
-                    } else {
-                        None
-                    };
-                    if let Some(action) = action {
-                        self.home_focus = HomeFocus::Actions;
-                        self.home_action_selected = action;
-                        return self.activate_home_selection(width, height);
                     }
                 } else if (438.0..502.0).contains(&y) {
                     let slot = if (28.0..204.0).contains(&x) {
@@ -4444,174 +4449,215 @@ impl Library {
         );
 
         if self.page == LibraryPage::Home {
-            responsive_text(
-                frame,
-                width,
-                height,
-                142.0,
-                27.0,
-                text_scale,
-                "SEUS JOGOS",
-                brand::TEXT,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                790.0,
-                27.0,
-                text_scale,
-                &format!("{} JOGOS", game_count),
-                brand::ACCENT_GREEN_LIGHT,
-            );
-        } else {
-            let tabs = [
-                (120.0, 84.0, LibraryPage::Home, "INÍCIO"),
-                (210.0, 100.0, LibraryPage::Recent, "RECENTES"),
-                (316.0, 94.0, LibraryPage::Games, "JOGOS"),
-                (416.0, 150.0, LibraryPage::Homebrew, "HOMEBREW"),
-                (572.0, 120.0, LibraryPage::Favorites, "FAVORITOS"),
-            ];
-            for (x, tab_width, page, label) in tabs {
-                let selected = self.page == page;
-                if selected {
-                    responsive_fill(
-                        frame,
-                        width as usize,
-                        height as usize,
-                        x + tab_width * 0.2,
-                        53.0,
-                        tab_width * 0.6,
-                        2.0,
-                        scale,
-                        brand::ACCENT_RED,
-                    );
-                }
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    x + tab_width * 0.5,
-                    27.0,
-                    text_scale,
-                    label,
-                    if selected {
-                        brand::TEXT
-                    } else {
-                        brand::TEXT_MUTED
-                    },
-                );
-            }
-            let settings_selected = self.page == LibraryPage::Settings;
-            if settings_selected {
-                responsive_fill(
-                    frame,
-                    width as usize,
-                    height as usize,
-                    888.0,
-                    53.0,
-                    80.0,
-                    2.0,
-                    scale,
-                    brand::ACCENT_RED,
-                );
-            }
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                928.0,
-                27.0,
-                text_scale,
-                "AJUSTES",
-                if settings_selected {
-                    brand::TEXT
-                } else {
-                    brand::TEXT_MUTED
-                },
-            );
-        }
-
-        // A distinct right-side action panel leaves the main area for the collection.
-        responsive_fill(
-            frame,
-            width as usize,
-            height as usize,
-            0.0,
-            70.0,
-            1000.0,
-            logical_height - 70.0,
-            scale,
-            brand::SURFACE_BASE,
-        );
-        if self.page != LibraryPage::Home {
+            // The featured panel is the primary action surface, like a console
+            // dashboard: one clear game identity, concise metadata and actions.
             responsive_panel(
                 frame,
                 width,
                 height,
-                758.0,
-                82.0,
-                224.0,
-                (bottom - 82.0).max(280.0),
+                28.0,
+                88.0,
+                944.0,
+                190.0,
                 scale,
-                brand::SURFACE_PANEL,
+                brand::SURFACE_CARD,
             );
-            responsive_text(
-                frame,
-                width,
-                height,
-                780.0,
-                103.0,
-                title_scale,
-                "ACERIS",
-                brand::TEXT,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                782.0,
-                132.0,
-                small_scale,
-                "BIBLIOTECA DE JOGOS",
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            responsive_fill(
-                frame,
-                width as usize,
-                height as usize,
-                780.0,
-                153.0,
-                180.0,
-                1.0,
-                scale,
-                brand::BORDER,
-            );
-        }
+            if let Some(entry) = selected_entry {
+                render_cover_art(
+                    frame,
+                    width,
+                    height,
+                    scale,
+                    46.0,
+                    102.0,
+                    144.0,
+                    158.0,
+                    entry,
+                    self.smdh_icons.get(&entry.path),
+                    small_scale,
+                );
+                responsive_fill(
+                    frame,
+                    width as usize,
+                    height as usize,
+                    204.0,
+                    106.0,
+                    2.0,
+                    150.0,
+                    scale,
+                    brand::ACCENT_RED,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    224.0,
+                    112.0,
+                    small_scale,
+                    if self.is_recent(entry) {
+                        "CONTINUAR JOGANDO"
+                    } else {
+                        "JOGO EM DESTAQUE"
+                    },
+                    brand::ACCENT_GREEN_LIGHT,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    224.0,
+                    144.0,
+                    title_scale,
+                    &truncate(&entry.title, 44),
+                    brand::TEXT,
+                );
+                let extension = entry
+                    .path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("3ds");
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    226.0,
+                    178.0,
+                    small_scale,
+                    &format!(
+                        "NINTENDO 3DS  ·  .{}  ·  {}",
+                        extension.to_ascii_uppercase(),
+                        if self.is_favorite(entry) { "FAVORITO" } else { "NA SUA BIBLIOTECA" }
+                    ),
+                    brand::TEXT_MUTED,
+                );
+            } else {
+                responsive_folder_icon(frame, width, height, 92.0, 142.0, scale);
+                responsive_fill(
+                    frame,
+                    width as usize,
+                    height as usize,
+                    204.0,
+                    106.0,
+                    2.0,
+                    150.0,
+                    scale,
+                    brand::ACCENT_RED,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    224.0,
+                    144.0,
+                    title_scale,
+                    "Sua biblioteca começa aqui",
+                    brand::TEXT,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    226.0,
+                    178.0,
+                    text_scale,
+                    "Adicione uma pasta com seus jogos para começar.",
+                    brand::TEXT_MUTED,
+                );
+            }
 
-        if self.page == LibraryPage::Home {
+            let favorite_label = if selected_entry.is_some_and(|entry| self.is_favorite(entry)) {
+                "REMOVER FAVORITO"
+            } else {
+                "ADICIONAR FAVORITO"
+            };
+            let play_label = if selected_entry.is_some_and(|entry| self.is_recent(entry)) {
+                "CONTINUAR"
+            } else {
+                "JOGAR AGORA"
+            };
+            let home_actions = [
+                (
+                    220.0,
+                    156.0,
+                    if selected_entry.is_some() { play_label } else { "IMPORTAR PASTA" },
+                    if selected_entry.is_some() {
+                        brand::ACCENT_RED
+                    } else {
+                        brand::SURFACE_BUTTON
+                    },
+                ),
+                (
+                    388.0,
+                    156.0,
+                    favorite_label,
+                    if selected_entry.is_some() {
+                        brand::SURFACE_SELECTED
+                    } else {
+                        brand::SURFACE_BUTTON
+                    },
+                ),
+                (556.0, 180.0, "ADICIONAR PASTA", brand::SURFACE_BUTTON),
+                (748.0, 168.0, "ATUALIZAR", brand::SURFACE_BUTTON),
+            ];
+            for (slot, (x, button_width, label, color)) in home_actions.into_iter().enumerate() {
+                if self.home_focus == HomeFocus::Actions && self.home_action_selected == slot {
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        x - 4.0,
+                        216.0,
+                        button_width + 8.0,
+                        48.0,
+                        scale,
+                        brand::ACCENT_RED_LIGHT,
+                    );
+                }
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    x,
+                    220.0,
+                    button_width,
+                    40.0,
+                    scale,
+                    color,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    x + button_width * 0.5,
+                    233.0,
+                    small_scale,
+                    label,
+                    brand::TEXT,
+                );
+            }
+
             responsive_text(
                 frame,
                 width,
                 height,
                 28.0,
-                84.0,
-                title_scale,
-                "SUA COLEÇÃO",
+                294.0,
+                text_scale,
+                if self.recent_count() > 0 {
+                    "JOGADOS RECENTEMENTE"
+                } else {
+                    "SUA COLEÇÃO"
+                },
                 brand::TEXT,
             );
             responsive_text(
                 frame,
                 width,
                 height,
-                30.0,
-                109.0,
-                text_scale,
-                if self.recent_count() > 0 {
-                    "Continue de onde você parou"
-                } else {
-                    "Escolha um jogo para começar"
-                },
+                846.0,
+                295.0,
+                small_scale,
+                &format!("{} TÍTULO(S)", home_entries.len()),
                 brand::TEXT_MUTED,
             );
 
@@ -4621,53 +4667,21 @@ impl Library {
                     width,
                     height,
                     28.0,
-                    142.0,
-                    924.0,
-                    210.0,
+                    316.0,
+                    944.0,
+                    104.0,
                     scale,
-                    brand::SURFACE_CARD,
-                );
-                responsive_folder_icon(frame, width, height, 150.0, 250.0, scale);
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    246.0,
-                    194.0,
-                    title_scale,
-                    "Sua coleção começa aqui",
-                    brand::TEXT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    248.0,
-                    225.0,
-                    text_scale,
-                    "Importe uma pasta para adicionar seus jogos.",
-                    brand::TEXT_MUTED,
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    690.0,
-                    232.0,
-                    210.0,
-                    48.0,
-                    scale,
-                    brand::ACCENT_RED,
+                    brand::SURFACE_PANEL,
                 );
                 responsive_text_centered(
                     frame,
                     width,
                     height,
-                    795.0,
-                    249.0,
+                    500.0,
+                    360.0,
                     text_scale,
-                    "IMPORTAR PASTA",
-                    brand::TEXT,
+                    "Nenhum jogo adicionado. Importe uma pasta para começar.",
+                    brand::TEXT_MUTED,
                 );
             } else {
                 let first_visible = self.home_first_visible(4);
@@ -4680,9 +4694,9 @@ impl Library {
                         height,
                         scale,
                         card_x,
-                        142.0,
+                        316.0,
                         220.0,
-                        210.0,
+                        104.0,
                         entry,
                         self.smdh_icons.get(&entry.path),
                         index == self.selected && self.home_focus == HomeFocus::Games,
@@ -4694,98 +4708,6 @@ impl Library {
                 }
             }
 
-            if let Some(entry) = self.selected_entry() {
-                let extension = entry
-                    .path
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or("3ds");
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    30.0,
-                    358.0,
-                    small_scale,
-                    &format!(
-                        "SELECIONADO  ·  {}  ·  .{}",
-                        truncate(&entry.title, 48),
-                        extension.to_ascii_uppercase()
-                    ),
-                    brand::ACCENT_RED_LIGHT,
-                );
-            } else {
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    30.0,
-                    358.0,
-                    small_scale,
-                    "ADICIONE UMA PASTA COM SEUS JOGOS PARA COMEÇAR",
-                    brand::TEXT_MUTED,
-                );
-            }
-
-            if !home_entries.is_empty() {
-                let position = self.selected.saturating_add(1).min(home_entries.len());
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    914.0,
-                    358.0,
-                    small_scale,
-                    &format!("{position}/{}", home_entries.len()),
-                    brand::ACCENT_GREEN_LIGHT,
-                );
-            }
-
-            let favorite_label = if selected_entry.is_some_and(|entry| self.is_favorite(entry)) {
-                "REMOVER FAVORITO"
-            } else {
-                "ADICIONAR FAVORITO"
-            };
-            let home_actions = [
-                (
-                    28.0,
-                    "JOGAR AGORA",
-                    if selected_entry.is_some() {
-                        brand::ACCENT_RED
-                    } else {
-                        brand::SURFACE_BUTTON
-                    },
-                ),
-                (260.0, favorite_label, brand::SURFACE_SELECTED),
-                (492.0, "IMPORTAR PASTA", brand::ACCENT_RED),
-                (724.0, "ATUALIZAR", brand::SURFACE_BUTTON),
-            ];
-            for (slot, (x, label, color)) in home_actions.into_iter().enumerate() {
-                if self.home_focus == HomeFocus::Actions && self.home_action_selected == slot {
-                    responsive_panel(
-                        frame,
-                        width,
-                        height,
-                        x - 4.0,
-                        376.0,
-                        228.0,
-                        52.0,
-                        scale,
-                        brand::ACCENT_RED_LIGHT,
-                    );
-                }
-                responsive_panel(frame, width, height, x, 380.0, 220.0, 44.0, scale, color);
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    x + 110.0,
-                    394.0,
-                    small_scale,
-                    label,
-                    brand::TEXT,
-                );
-            }
             responsive_panel(
                 frame,
                 width,
@@ -7657,7 +7579,7 @@ mod tests {
         assert_eq!(library.first_visible, 1);
         assert_eq!(library.home_first_visible(3), 2);
         assert_eq!(
-            library.click_responsive(100, 200, 1000, 600),
+            library.click_responsive(100, 350, 1000, 600),
             ClickResult::Selected
         );
         assert_eq!(library.selected_entry().unwrap().title, "Game 1");
@@ -7697,12 +7619,12 @@ mod tests {
         assert_eq!(library.selected_entry().unwrap().title, "Third");
 
         assert_eq!(
-            library.click_responsive(280, 220, 1000, 600),
+            library.click_responsive(280, 350, 1000, 600),
             ClickResult::Selected
         );
         assert_eq!(library.selected_entry().unwrap().title, "Second");
         assert_eq!(
-            library.click_responsive(280, 220, 1000, 600),
+            library.click_responsive(280, 350, 1000, 600),
             ClickResult::Activated
         );
         library.move_selection_horizontal_responsive(-1, 1000, 600);
@@ -7866,7 +7788,7 @@ mod tests {
             dir.display().to_string(),
         );
 
-        library.move_selection_responsive(1, 1000, 600);
+        library.move_selection_responsive(-1, 1000, 600);
         assert_eq!(library.home_focus, HomeFocus::Actions);
         library.move_selection_horizontal_responsive(1, 1000, 600);
         assert_eq!(
@@ -7875,6 +7797,8 @@ mod tests {
         );
         assert_eq!(library.favorite_count(), 1);
 
+        library.move_selection_responsive(1, 1000, 600);
+        assert_eq!(library.home_focus, HomeFocus::Games);
         library.move_selection_responsive(1, 1000, 600);
         assert_eq!(library.home_focus, HomeFocus::Navigation);
         library.move_selection_horizontal_responsive(1, 1000, 600);
@@ -7885,9 +7809,8 @@ mod tests {
         assert_eq!(library.page(), LibraryPage::Games);
 
         library.select_page(LibraryPage::Home);
-        library.move_selection_responsive(1, 1000, 600);
-        library.move_selection_horizontal_responsive(1, 1000, 600);
-        library.move_selection_horizontal_responsive(1, 1000, 600);
+        library.move_selection_responsive(-1, 1000, 600);
+        library.move_selection_horizontal_responsive(2, 1000, 600);
         assert_eq!(
             library.activate_home_selection(1000, 600),
             ClickResult::Ignored
@@ -7949,24 +7872,24 @@ mod tests {
         let mut library = Library::new(vec![entry], dir.display().to_string());
 
         assert_eq!(
-            library.click_responsive(100, 400, 1000, 600),
+            library.click_responsive(280, 240, 1000, 600),
             ClickResult::Activated
         );
         assert_eq!(
-            library.click_responsive(360, 400, 1000, 600),
+            library.click_responsive(460, 240, 1000, 600),
             ClickResult::Ignored
         );
         assert_eq!(library.favorite_count(), 1);
 
         assert_eq!(
-            library.click_responsive(600, 400, 1000, 600),
+            library.click_responsive(640, 240, 1000, 600),
             ClickResult::Ignored
         );
         assert!(library.take_folder_picker_request());
 
         library.select_page(LibraryPage::Home);
         assert_eq!(
-            library.click_responsive(830, 400, 1000, 600),
+            library.click_responsive(830, 240, 1000, 600),
             ClickResult::Ignored
         );
         assert_eq!(library.page(), LibraryPage::Home);
@@ -7991,12 +7914,12 @@ mod tests {
         let mut library = Library::new(entries, dir.display().to_string());
 
         assert_eq!(
-            library.click_responsive(830, 220, 1000, 600),
+            library.click_responsive(830, 350, 1000, 600),
             ClickResult::Selected
         );
         assert_eq!(library.selected_entry().unwrap().title, "Wide Game 3");
         assert_eq!(
-            library.click_responsive(830, 220, 1000, 600),
+            library.click_responsive(830, 350, 1000, 600),
             ClickResult::Activated
         );
 
