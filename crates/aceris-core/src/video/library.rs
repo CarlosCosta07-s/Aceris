@@ -6,6 +6,7 @@
 use super::font::{self, draw_text};
 use super::frontend::{VirtualControlPositions, VirtualControlPreset};
 use crate::game_identity::GameIdentity;
+use crate::loader::ncsd::NcsdImageReader;
 use crate::loader::smdh::{SMDH_FILE_SIZE, Smdh, SmdhIcon};
 use crate::loader::threedsx::ThreeDsxImage;
 use aceris_common::brand;
@@ -782,25 +783,49 @@ fn scan_path_identity(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Loads SMDH icons only for 3DSX entries, once when the library is built/refreshed.
-/// A conventional sibling .smdh file takes priority; embedded 3DSX metadata is
-/// used as the fallback. No image file is opened from the per-frame renderer.
+/// Loads SMDH icons once when the library is built/refreshed.
+/// 3DSX uses sidecar or embedded metadata; NCSD images use the verified ExeFS
+/// icon from a NoCrypto program partition. Rendering never performs disk I/O.
 fn load_smdh_icon_cache(entries: &[Entry]) -> HashMap<PathBuf, SmdhIcon> {
     let mut icons = HashMap::new();
     for entry in entries {
-        let is_3dsx = entry
+        let extension = entry
             .path
             .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("3dsx"));
-        if !is_3dsx {
-            continue;
-        }
-        if let Some(icon) = load_3dsx_smdh_icon(&entry.path) {
+            .and_then(|extension| extension.to_str());
+        let icon = match extension {
+            Some(extension) if extension.eq_ignore_ascii_case("3dsx") => {
+                load_3dsx_smdh_icon(&entry.path)
+            }
+            Some(extension)
+                if extension.eq_ignore_ascii_case("3ds")
+                    || extension.eq_ignore_ascii_case("cci") =>
+            {
+                load_ncsd_smdh_icon(&entry.path)
+            }
+            _ => None,
+        };
+        if let Some(icon) = icon {
             icons.insert(entry.path.clone(), icon);
         }
     }
     icons
+}
+
+/// Extracts the standard ExeFS icon only from a cleartext NCCH program.
+/// The ExeFS superblock and selected file digest are verified by the loader
+/// before SMDH bytes are decoded; encrypted images are intentionally skipped.
+fn load_ncsd_smdh_icon(path: &Path) -> Option<SmdhIcon> {
+    let image = NcsdImageReader::open(File::open(path).ok()?).ok()?;
+    let program = image.open_primary_ncch().ok()?;
+    if !program.header().declares_no_crypto() {
+        return None;
+    }
+
+    let mut icon_file = program.open_verified_exefs_file_reader("icon").ok()??;
+    let mut bytes = vec![0; SMDH_FILE_SIZE];
+    icon_file.read_exact(&mut bytes).ok()?;
+    Smdh::parse(&bytes).ok().map(|metadata| metadata.large_icon)
 }
 
 fn load_3dsx_smdh_icon(path: &Path) -> Option<SmdhIcon> {
@@ -5983,6 +6008,36 @@ mod tests {
         assert_eq!((icon.width, icon.height), (48, 48));
         assert_eq!(&icon.pixels_rgba8[..4], &[255, 0, 0, 255]);
 
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn library_skips_malformed_ncsd_images_when_caching_icons() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-ncsd-icon-invalid-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let three_ds = dir.join("invalid.3ds");
+        let cci = dir.join("invalid.cci");
+        fs::write(&three_ds, b"not an NCSD image").unwrap();
+        fs::write(&cci, b"not an NCSD image").unwrap();
+
+        let library = Library::new(
+            vec![
+                Entry {
+                    title: "Invalid cartridge image".into(),
+                    path: three_ds,
+                },
+                Entry {
+                    title: "Invalid CCI image".into(),
+                    path: cci,
+                },
+            ],
+            dir.display().to_string(),
+        );
+
+        assert!(library.smdh_icons.is_empty());
         fs::remove_dir_all(dir).unwrap();
     }
 
