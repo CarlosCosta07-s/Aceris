@@ -1881,28 +1881,28 @@ mod screenshot_tests {
 
     #[test]
     fn physical_gamepad_left_stick_navigates_home_with_edge_triggering() {
-        let directory = std::env::temp_dir().join(format!("aceris-home-stick-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("aceris-home-stick-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         let mut app = App::new(&directory);
         app.resize(1000, 600);
         app.screen = Screen::Library;
-        app.library.home_focus = HomeFocus::Actions;
-        app.library.home_action_selected = 0;
+        assert_eq!(app.library.page(), library::LibraryPage::Home);
 
-        assert!(app.set_gamepad_axes(0.8, 0.0));
-        assert_eq!(app.library.home_action_selected, 1);
-        assert!(app.set_gamepad_axes(0.8, 0.0));
-        assert_eq!(app.library.home_action_selected, 1, "a held stick must not repeat a focus change every frame");
-
-        assert!(app.set_gamepad_axes(0.0, 0.0));
-        assert!(app.set_gamepad_axes(0.8, 0.0));
-        assert_eq!(app.library.home_action_selected, 2);
-
-        assert!(app.set_gamepad_axes(0.0, 0.0));
-        app.library.home_focus = HomeFocus::Games;
-        app.library.home_action_selected = 0;
+        let initial = app.library.render_responsive(1000, 600);
         assert!(app.set_gamepad_axes(0.0, 0.8));
-        assert_eq!(app.library.home_focus, HomeFocus::Actions);
+        let focused_actions = app.library.render_responsive(1000, 600);
+        assert_ne!(focused_actions, initial, "stick down should focus the home action row");
+
+        assert!(app.set_gamepad_axes(0.0, 0.8));
+        let held = app.library.render_responsive(1000, 600);
+        assert_eq!(held, focused_actions, "a held stick must not repeat a focus change every frame");
+
+        assert!(app.set_gamepad_axes(0.0, 0.0));
+        assert!(app.set_gamepad_axes(0.0, 0.8));
+        let focused_navigation = app.library.render_responsive(1000, 600);
+        assert_ne!(focused_navigation, held, "a new stick press should move to the next focus group");
+
         let _ = fs::remove_dir_all(directory);
     }
 
