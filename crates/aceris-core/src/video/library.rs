@@ -2677,13 +2677,12 @@ impl Library {
                     let offset = x - ui::home::CAROUSEL_X;
                     if offset >= 0.0 {
                         let slot = (offset / ui::home::GAME_CARD_STEP).floor() as usize;
-                        let card_x = ui::home::CAROUSEL_X
-                            + slot as f32 * ui::home::GAME_CARD_STEP;
+                        let card_x = ui::home::CAROUSEL_X + slot as f32 * ui::home::GAME_CARD_STEP;
                         if slot < ui::home::VISIBLE_GAME_CARDS
                             && x < card_x + ui::home::GAME_CARD_WIDTH
                         {
-                            let index = self.home_first_visible(ui::home::VISIBLE_GAME_CARDS)
-                                + slot;
+                            let index =
+                                self.home_first_visible(ui::home::VISIBLE_GAME_CARDS) + slot;
                             if index < home_entries.len() {
                                 self.home_focus = HomeFocus::Games;
                                 if index == self.selected {
@@ -4781,8 +4780,7 @@ impl Library {
                     brand::TEXT_MUTED,
                 );
             } else {
-                let first_visible =
-                    self.home_first_visible(ui::home::VISIBLE_GAME_CARDS);
+                let first_visible = self.home_first_visible(ui::home::VISIBLE_GAME_CARDS);
                 for (slot, entry) in home_entries
                     .iter()
                     .skip(first_visible)
@@ -4790,8 +4788,7 @@ impl Library {
                     .enumerate()
                 {
                     let index = first_visible + slot;
-                    let card_x = ui::home::CAROUSEL_X
-                        + slot as f32 * ui::home::GAME_CARD_STEP;
+                    let card_x = ui::home::CAROUSEL_X + slot as f32 * ui::home::GAME_CARD_STEP;
                     render_home_game_tile(
                         frame,
                         width,
@@ -7963,10 +7960,7 @@ mod tests {
         }
         assert_eq!(library.selected_entry().unwrap().title, "Game 5");
         assert_eq!(library.first_visible, 1);
-        assert_eq!(
-            library.home_first_visible(ui::home::VISIBLE_GAME_CARDS),
-            1
-        );
+        assert_eq!(library.home_first_visible(ui::home::VISIBLE_GAME_CARDS), 1);
         assert_eq!(
             library.click_responsive(100, 350, 1000, 600),
             ClickResult::Selected
