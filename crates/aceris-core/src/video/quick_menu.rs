@@ -899,6 +899,9 @@ pub enum GamepadAxisEditorHit {
     InvertY,
     SensitivityDown,
     SensitivityUp,
+    DeadzoneDown,
+    DeadzoneUp,
+    DeadzoneInherit,
     Reset,
     Back,
 }
@@ -906,7 +909,7 @@ pub enum GamepadAxisEditorHit {
 #[derive(Clone, Copy)]
 struct GamepadAxisEditorGeometry {
     panel: Rect,
-    rows: [Rect; 3],
+    rows: [Rect; 4],
     scope: Rect,
     reset: Rect,
     back: Rect,
@@ -930,12 +933,12 @@ fn gamepad_axis_editor_geometry(width: u32, height: u32) -> Option<GamepadAxisEd
     let horizontal_padding = 12 * scale;
     let row_top = panel.y + 46 * scale;
     let footer_y = panel.y + panel.height.saturating_sub(25 * scale);
-    let row_gap = 5 * scale;
+    let row_gap = 4 * scale;
     let available = footer_y.saturating_sub(row_top);
     let row_height = available
-        .saturating_sub(row_gap * 2)
-        .checked_div(3)?
-        .min(58 * scale);
+        .saturating_sub(row_gap * 3)
+        .checked_div(4)?
+        .min(48 * scale);
     if row_height < 10 * scale {
         return None;
     }
@@ -1018,8 +1021,18 @@ pub fn hit_test_gamepad_axis_editor(
             0 => Some(GamepadAxisEditorHit::InvertX),
             1 => Some(GamepadAxisEditorHit::InvertY),
             2 if x < row.x + row.width * 45 / 100 => None,
-            2 if x < row.x + row.width * 70 / 100 => Some(GamepadAxisEditorHit::SensitivityDown),
-            2 => Some(GamepadAxisEditorHit::SensitivityUp),
+            2 if x < row.x + row.width * 65 / 100 => {
+                Some(GamepadAxisEditorHit::SensitivityDown)
+            }
+            2 => None,
+            3 if x < row.x + row.width * 45 / 100 => None,
+            3 if x < row.x + row.width * 65 / 100 => {
+                Some(GamepadAxisEditorHit::DeadzoneDown)
+            }
+            3 if x < row.x + row.width * 85 / 100 => {
+                Some(GamepadAxisEditorHit::DeadzoneInherit)
+            }
+            3 => Some(GamepadAxisEditorHit::DeadzoneUp),
             _ => None,
         }
     })
@@ -1032,6 +1045,7 @@ pub fn render_gamepad_axis_editor(
     height: u32,
     format: PixelFormat,
     settings: &GamepadAxisSettings,
+    inherited_deadzone_percent: u8,
     scope_label: &str,
 ) -> bool {
     let Some(geometry) = gamepad_axis_editor_geometry(width, height) else {
@@ -1090,7 +1104,8 @@ pub fn render_gamepad_axis_editor(
         let label = match index {
             0 => "INVERTER EIXO X",
             1 => "INVERTER EIXO Y",
-            _ => "SENSIBILIDADE",
+            2 => "SENSIBILIDADE",
+            _ => "ZONA MORTA",
         };
         draw_text_for_format(
             frame,
@@ -1148,7 +1163,14 @@ pub fn render_gamepad_axis_editor(
                 [190, 225, 203],
                 format,
             );
-            let center_value = format!("{}%", settings.sensitivity_percent());
+            let center_value = if index == 2 {
+                format!("{}%", settings.sensitivity_percent())
+            } else {
+                settings
+                    .deadzone_override_percent()
+                    .map(|value| format!("{value}%"))
+                    .unwrap_or_else(|| format!("AUTO {inherited_deadzone_percent}%"))
+            };
             let center_x = row.x + row.width * 77 / 100
                 - font::text_width(center_value.chars().count(), text_scale) / 2;
             draw_text_for_format(
@@ -1700,12 +1722,13 @@ mod tests {
                     height,
                     format,
                     &GamepadAxisSettings::default(),
+                    16,
                     "ESCOPO: GLOBAL",
                 ));
             }
             for (index, row) in geometry.rows.iter().enumerate() {
                 let x = (row.x
-                    + if index == 2 {
+                    + if index >= 2 {
                         row.width * 58 / 100
                     } else {
                         row.width / 4
@@ -1714,7 +1737,8 @@ mod tests {
                 let expected = match index {
                     0 => GamepadAxisEditorHit::InvertX,
                     1 => GamepadAxisEditorHit::InvertY,
-                    _ => GamepadAxisEditorHit::SensitivityDown,
+                    2 => GamepadAxisEditorHit::SensitivityDown,
+                    _ => GamepadAxisEditorHit::DeadzoneDown,
                 };
                 assert_eq!(
                     hit_test_gamepad_axis_editor(width, height, x, y),
@@ -1730,6 +1754,25 @@ mod tests {
                     (sensitivity.y + sensitivity.height / 2) as i32,
                 ),
                 Some(GamepadAxisEditorHit::SensitivityUp)
+            );
+            let deadzone = geometry.rows[3];
+            assert_eq!(
+                hit_test_gamepad_axis_editor(
+                    width,
+                    height,
+                    (deadzone.x + deadzone.width * 90 / 100) as i32,
+                    (deadzone.y + deadzone.height / 2) as i32,
+                ),
+                Some(GamepadAxisEditorHit::DeadzoneUp)
+            );
+            assert_eq!(
+                hit_test_gamepad_axis_editor(
+                    width,
+                    height,
+                    (deadzone.x + deadzone.width * 75 / 100) as i32,
+                    (deadzone.y + deadzone.height / 2) as i32,
+                ),
+                Some(GamepadAxisEditorHit::DeadzoneInherit)
             );
             assert_eq!(
                 hit_test_gamepad_axis_editor(
@@ -1771,6 +1814,7 @@ mod tests {
             240,
             PixelFormat::Rgba8,
             &GamepadAxisSettings::default(),
+            16,
             "ESCOPO: GLOBAL",
         ));
         assert_eq!(frame, before);
