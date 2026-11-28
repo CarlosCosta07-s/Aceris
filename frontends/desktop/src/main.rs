@@ -778,6 +778,9 @@ fn emulate(
     let mut menu_selected = 0usize;
     let mut diagnostics_visible = false;
     let mut quick_menu_notice: Option<&'static str> = None;
+    let mut gamepad_mapping_editor_open = false;
+    let mut gamepad_mapping_selected = 0usize;
+    let mut gamepad_mapping_game_scope = false;
     let mut layout_profile = layout_preferences.profile_for_game(
         system.game_identity(),
         window::GAME_CANVAS_WIDTH as u32,
@@ -799,7 +802,10 @@ fn emulate(
             match event {
                 window::WindowEvent::CloseRequested => return Ok(Flow::Quit),
                 window::WindowEvent::Key(window::Key::Escape) => {
-                    if pending_confirmation.take().is_some() {
+                    if gamepad_mapping_editor_open {
+                        gamepad_mapping_editor_open = false;
+                        gamepad.reload_effective_mapping();
+                    } else if pending_confirmation.take().is_some() {
                         confirmation_selected = 0;
                     } else if menu_open {
                         menu_open = false;
@@ -817,6 +823,47 @@ fn emulate(
                     }
                     if let Some(performance) = performance.as_mut() {
                         performance.reset_after_pause();
+                    }
+                }
+                window::WindowEvent::Key(window::Key::Up) if gamepad_mapping_editor_open => {
+                    gamepad_mapping_selected = gamepad_mapping_selected.saturating_sub(1);
+                }
+                window::WindowEvent::Key(window::Key::Down) if gamepad_mapping_editor_open => {
+                    gamepad_mapping_selected =
+                        (gamepad_mapping_selected + 1).min(aceris_core::input_mapping::GamepadControl::COUNT - 1);
+                }
+                window::WindowEvent::Key(window::Key::Left) if gamepad_mapping_editor_open => {
+                    let mut mapping = *gamepad.mapping();
+                    let control = aceris_core::input_mapping::GamepadControl::ALL[gamepad_mapping_selected];
+                    mapping.cycle_target(control, -1);
+                    if let Err(error) = gamepad.save_mapping_for_editor(mapping, gamepad_mapping_game_scope) {
+                        eprintln!("could not save gamepad mapping: {error}");
+                    }
+                }
+                window::WindowEvent::Key(window::Key::Right) if gamepad_mapping_editor_open => {
+                    let mut mapping = *gamepad.mapping();
+                    let control = aceris_core::input_mapping::GamepadControl::ALL[gamepad_mapping_selected];
+                    mapping.cycle_target(control, 1);
+                    if let Err(error) = gamepad.save_mapping_for_editor(mapping, gamepad_mapping_game_scope) {
+                        eprintln!("could not save gamepad mapping: {error}");
+                    }
+                }
+                window::WindowEvent::Key(window::Key::Enter) if gamepad_mapping_editor_open => {
+                    gamepad_mapping_game_scope = !gamepad_mapping_game_scope
+                        && system.game_identity().is_some();
+                    let mapping = if gamepad_mapping_game_scope {
+                        gamepad.load_game_mapping_for_editor()
+                    } else {
+                        gamepad.load_global_mapping_for_editor()
+                    };
+                    gamepad.set_mapping_for_editor(mapping);
+                }
+                window::WindowEvent::Key(window::Key::Backspace) if gamepad_mapping_editor_open => {
+                    if let Err(error) = gamepad.save_mapping_for_editor(
+                        aceris_core::input_mapping::GamepadMapping::default(),
+                        gamepad_mapping_game_scope,
+                    ) {
+                        eprintln!("could not reset gamepad mapping: {error}");
                     }
                 }
                 window::WindowEvent::Key(window::Key::Up) if pending_confirmation.is_some() => {
@@ -841,7 +888,7 @@ fn emulate(
                 window::WindowEvent::Key(window::Key::Down) if menu_open => {
                     menu_selected = (menu_selected + 1).min(quick_menu::DESKTOP_ACTION_COUNT - 1);
                 }
-                window::WindowEvent::Key(window::Key::Enter) if menu_open => match menu_selected {
+                window::WindowEvent::Key(window::Key::Enter) if menu_open && !gamepad_mapping_editor_open => match menu_selected {
                     0 => {
                         menu_open = false;
                         keyboard.reset(system.input_mut());
@@ -918,6 +965,17 @@ fn emulate(
                             performance.reset_after_pause();
                         }
                     }
+                    8 => {
+                        gamepad_mapping_editor_open = true;
+                        gamepad_mapping_selected = 0;
+                        gamepad_mapping_game_scope = system.game_identity().is_some();
+                        let mapping = if gamepad_mapping_game_scope {
+                            gamepad.load_game_mapping_for_editor()
+                        } else {
+                            gamepad.load_global_mapping_for_editor()
+                        };
+                        gamepad.set_mapping_for_editor(mapping);
+                    }
                     _ => {}
                 },
                 window::WindowEvent::Click { x, y } if pending_confirmation.is_some() => {
@@ -940,6 +998,56 @@ fn emulate(
                                 }
                             });
                         }
+                    }
+                }
+                window::WindowEvent::Click { x, y }
+                    if menu_open && gamepad_mapping_editor_open =>
+                {
+                    let (canvas_width, canvas_height) =
+                        screen_layout_canvas_size(layout_profile.mode);
+                    match quick_menu::hit_test_gamepad_mapping_editor(
+                        canvas_width * scale as u32,
+                        canvas_height * scale as u32,
+                        x,
+                        y,
+                    ) {
+                        Some(quick_menu::GamepadMappingEditorHit::Scope) => {
+                            gamepad_mapping_game_scope = !gamepad_mapping_game_scope
+                                && system.game_identity().is_some();
+                            let mapping = if gamepad_mapping_game_scope {
+                                gamepad.load_game_mapping_for_editor()
+                            } else {
+                                gamepad.load_global_mapping_for_editor()
+                            };
+                            gamepad.set_mapping_for_editor(mapping);
+                        }
+                        Some(quick_menu::GamepadMappingEditorHit::Control(index)) => {
+                            gamepad_mapping_selected = index;
+                        }
+                        Some(quick_menu::GamepadMappingEditorHit::Target(index)) => {
+                            gamepad_mapping_selected = index;
+                            let mut mapping = *gamepad.mapping();
+                            let control = aceris_core::input_mapping::GamepadControl::ALL[index];
+                            mapping.cycle_target(control, 1);
+                            if let Err(error) =
+                                gamepad.save_mapping_for_editor(mapping, gamepad_mapping_game_scope)
+                            {
+                                eprintln!("could not save gamepad mapping: {error}");
+                            }
+                        }
+                        Some(quick_menu::GamepadMappingEditorHit::Reset) => {
+                            if let Err(error) = gamepad.save_mapping_for_editor(
+                                aceris_core::input_mapping::GamepadMapping::default(),
+                                gamepad_mapping_game_scope,
+                            ) {
+                                eprintln!("could not reset gamepad mapping: {error}");
+                            }
+                        }
+                        Some(quick_menu::GamepadMappingEditorHit::Close) => {
+                            gamepad_mapping_editor_open = false;
+                            gamepad.reload_effective_mapping();
+                        }
+                        None => {}
                     }
                 }
                 window::WindowEvent::Click { x, y } if menu_open => {
@@ -1153,6 +1261,21 @@ fn emulate(
                     action,
                     confirmation_selected,
                 ),
+                None if gamepad_mapping_editor_open => {
+                    quick_menu::render_gamepad_mapping_editor(
+                        &mut frame,
+                        frame_width as u32,
+                        frame_height as u32,
+                        MenuPixelFormat::Bgrx8,
+                        gamepad.mapping(),
+                        gamepad_mapping_selected,
+                        if gamepad_mapping_game_scope {
+                            "ESCOPO: JOGO"
+                        } else {
+                            "ESCOPO: GLOBAL"
+                        },
+                    )
+                }
                 None => quick_menu::render_desktop_overlay_with_profile(
                     &mut frame,
                     frame_width as u32,

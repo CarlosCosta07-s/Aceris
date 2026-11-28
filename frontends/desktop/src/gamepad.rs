@@ -66,6 +66,53 @@ impl GamepadManager {
         input.set_circle_pad(i32::from(x), i32::from(y));
     }
 
+
+    pub(crate) fn mapping(&self) -> &GamepadMapping {
+        &self.mapping
+    }
+
+    pub(crate) fn set_mapping_for_editor(&mut self, mapping: GamepadMapping) {
+        self.mapping = mapping;
+    }
+
+    pub(crate) fn load_global_mapping_for_editor(&self) -> GamepadMapping {
+        GamepadMapping::load_global(&self.settings_directory)
+    }
+
+    pub(crate) fn load_game_mapping_for_editor(&self) -> GamepadMapping {
+        self.game_identity
+            .map(|identity| {
+                GamepadMapping::load_for_game_or_global(&self.settings_directory, identity)
+            })
+            .unwrap_or_else(|| self.load_global_mapping_for_editor())
+    }
+
+    pub(crate) fn save_mapping_for_editor(
+        &mut self,
+        mapping: GamepadMapping,
+        game_scope: bool,
+    ) -> std::io::Result<()> {
+        if game_scope {
+            if let Some(identity) = self.game_identity {
+                mapping.save_for_game(&self.settings_directory, identity)?;
+            } else {
+                mapping.save_global(&self.settings_directory)?;
+            }
+        } else {
+            mapping.save_global(&self.settings_directory)?;
+        }
+        self.mapping = mapping;
+        Ok(())
+    }
+
+    pub(crate) fn reload_effective_mapping(&mut self) {
+        self.mapping = GamepadMapping::load_for_context(
+            &self.settings_directory,
+            self.active_device_uuid,
+            self.game_identity,
+        );
+    }
+
     fn read_active_gamepad(&mut self, deadzone_percent: u8) -> (u32, (i16, i16)) {
         let Some(gilrs) = self.gilrs.as_mut() else {
             self.active_gamepad = None;
