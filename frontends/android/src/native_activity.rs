@@ -18,7 +18,7 @@ use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
 use raw_window_handle::{
     AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle,
 };
-use std::ffi::{CStr, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::path::{Path, PathBuf};
 use std::ptr::{self, NonNull};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -146,6 +146,33 @@ const MOTION_AXIS_Y: i32 = 1;
 const MOTION_AXIS_LTRIGGER: i32 = 17;
 const MOTION_AXIS_RTRIGGER: i32 = 18;
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
+const ANDROID_LOG_INFO: i32 = 4;
+const ANDROID_LOG_ERROR: i32 = 6;
+
+#[cfg(target_os = "android")]
+#[link(name = "log")]
+unsafe extern "C" {
+    fn __android_log_write(priority: i32, tag: *const c_char, text: *const c_char) -> i32;
+}
+
+/// Writes startup diagnostics to Android's native log, which remains available
+/// even when the app thread exits before the first frame.
+fn android_log(priority: i32, message: &str) {
+    #[cfg(target_os = "android")]
+    {
+        let tag = c"Aceris";
+        let sanitized = message.replace('\\0', " ");
+        if let Ok(text) = CString::new(sanitized) {
+            // SAFETY: both C strings remain alive for the duration of the call.
+            unsafe { __android_log_write(priority, tag.as_ptr(), text.as_ptr()) };
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = priority;
+        eprintln!("[Aceris] {message}");
+    }
+}
 
 /// A raw pointer owned by the Android framework, stored as an address so it
 /// can live in the shared state.
@@ -544,6 +571,10 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
 ) {
     // SAFETY: `activity` and its callback table are valid for the activity's lifetime.
     unsafe {
+        std::panic::set_hook(Box::new(|panic| {
+            android_log(ANDROID_LOG_ERROR, &format!("Rust panic: {panic}"));
+        }));
+        android_log(ANDROID_LOG_INFO, "ANativeActivity_onCreate entered");
         let callbacks = &mut *(*activity).callbacks;
         callbacks.on_resume = Some(on_resume);
         callbacks.on_pause = Some(on_pause);
@@ -553,8 +584,9 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
         callbacks.on_input_queue_created = Some(on_queue_created);
         callbacks.on_input_queue_destroyed = Some(on_queue_destroyed);
 
-        eprintln!("Aceris Android startup: NativeActivity created");
+        android_log(ANDROID_LOG_INFO, "NativeActivity callbacks registered");
         let games_dir = games_directory(&*activity);
+        android_log(ANDROID_LOG_INFO, &format!("Games directory: {}", games_dir.display()));
         let host = std::sync::Arc::new(Host {
             shared: Mutex::new(Shared::default()),
             thread: Mutex::new(None),
@@ -566,8 +598,21 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
         });
         *lock(&HOST) = Some(host.clone());
         let worker = host.clone();
-        let handle = std::thread::spawn(move || run_app_thread(&worker, games_dir));
-        *lock(&host.thread) = Some(handle);
+        let handle = std::thread::Builder::new()
+            .name("aceris-app".to_string())
+            .spawn(move || run_app_thread(&worker, games_dir));
+        match handle {
+            Ok(handle) => {
+                android_log(ANDROID_LOG_INFO, "Application worker thread started");
+                *lock(&host.thread) = Some(handle);
+            }
+            Err(error) => {
+                android_log(
+                    ANDROID_LOG_ERROR,
+                    &format!("Could not start application worker thread: {error}"),
+                );
+            }
+        }
     }
 }
 
@@ -825,13 +870,17 @@ fn create_android_gpu_presenter(
 
 /// The app thread: owns the emulator, input-queue attachment and rendering.
 fn run_app_thread(host: &Host, games_dir: PathBuf) {
+    android_log(ANDROID_LOG_INFO, "Application worker entered");
     // SAFETY: preparing a looper for this thread; it lives as long as the thread.
     let looper = unsafe { ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS) };
+    if looper.is_null() {
+        android_log(ANDROID_LOG_ERROR, "ALooper_prepare returned null");
+        return;
+    }
     lock(&host.shared).looper = Raw::new(looper);
-
-    eprintln!("Aceris Android startup: creating application state");
+    android_log(ANDROID_LOG_INFO, "Android looper ready; constructing App");
     let mut app = App::new(&games_dir);
-    eprintln!("Aceris Android startup: application state ready; showing intro/library");
+    android_log(ANDROID_LOG_INFO, "App::new completed; waiting for native surface");
     let settings_directory = games_dir.join(".aceris");
     let gpu_pipeline_cache_directory = settings_directory.join("gpu_pipeline_cache");
     let gpu_backend_recovery_file = settings_directory.join("android_gpu_backend_recovery_v1.txt");
@@ -864,6 +913,7 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
     let mut attempted_gpu_window = Raw::default();
     let mut cpu_geometry_size = (0u32, 0u32);
     let mut next_frame = Instant::now();
+    let mut first_frame_logged = false;
 
     loop {
         let (window, queue, resumed, destroyed) = {
@@ -973,6 +1023,10 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
                 host.sdk_version,
                 &gpu_backend_recovery_file,
             );
+            if frame_presented && !first_frame_logged {
+                first_frame_logged = true;
+                android_log(ANDROID_LOG_INFO, "First application frame presented");
+            }
             if frame_presented
                 && !audio_initialization_attempted
                 && matches!(app.screen(), Screen::Game)
@@ -1338,6 +1392,7 @@ fn render(
             reserved: [0; 6],
         };
         if ANativeWindow_lock(window.get(), &mut buffer, ptr::null_mut()) != 0 {
+            android_log(ANDROID_LOG_ERROR, "ANativeWindow_lock failed for CPU presentation");
             record_performance_sample(
                 performance_monitor,
                 app,
