@@ -5978,7 +5978,6 @@ impl Library {
 
                 let detail_actions = [
                     (
-                        ui::library::DETAILS_PLAY_Y,
                         if selected_entry.is_some() {
                             "INICIAR JOGO"
                         } else {
@@ -5991,7 +5990,6 @@ impl Library {
                         },
                     ),
                     (
-                        ui::library::DETAILS_FAVORITE_Y,
                         if selected_entry.is_some_and(|entry| self.is_favorite(entry)) {
                             "REMOVER FAVORITO"
                         } else {
@@ -5999,16 +5997,8 @@ impl Library {
                         },
                         brand::SURFACE_SELECTED,
                     ),
-                    (
-                        ui::library::DETAILS_IMPORT_Y,
-                        "IMPORTAR PASTA",
-                        brand::SURFACE_CARD,
-                    ),
-                    (
-                        ui::library::DETAILS_REFRESH_Y,
-                        "ATUALIZAR",
-                        brand::SURFACE_CARD,
-                    ),
+                    ("IMPORTAR PASTA", brand::SURFACE_CARD),
+                    ("ATUALIZAR", brand::SURFACE_CARD),
                 ];
                 let button_height = ui::library::details_button_height(logical_height);
                 for (index, (label, color)) in detail_actions.into_iter().enumerate() {
