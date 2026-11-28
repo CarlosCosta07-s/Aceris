@@ -2314,7 +2314,14 @@ impl Library {
         }
         if self.page == LibraryPage::Home {
             match self.home_focus {
-                HomeFocus::Games => self.move_home_selection(delta, if portrait { 3 } else { 4 }),
+                HomeFocus::Games => self.move_home_selection(
+                    delta,
+                    if portrait {
+                        3
+                    } else {
+                        ui::home::VISIBLE_GAME_CARDS
+                    },
+                ),
                 HomeFocus::Actions => {
                     let count = if portrait { 1 } else { 4 };
                     self.home_action_selected = (self.home_action_selected as i64
@@ -2659,34 +2666,33 @@ impl Library {
                         self.home_action_selected = action;
                         return self.activate_home_selection(width, height);
                     }
-                } else if (316.0..420.0).contains(&y) {
-                    if self.home_entries().is_empty() && (28.0..972.0).contains(&x) {
+                } else if (ui::home::CAROUSEL_TOP..ui::home::CAROUSEL_BOTTOM).contains(&y) {
+                    let home_entries = self.home_entries();
+                    if home_entries.is_empty() && (28.0..972.0).contains(&x) {
                         self.home_focus = HomeFocus::Actions;
                         self.home_action_selected = 2;
                         self.request_folder_picker();
                         return ClickResult::Ignored;
                     }
-                    let slot = if (28.0..248.0).contains(&x) {
-                        Some(0)
-                    } else if (260.0..480.0).contains(&x) {
-                        Some(1)
-                    } else if (492.0..712.0).contains(&x) {
-                        Some(2)
-                    } else if (724.0..944.0).contains(&x) {
-                        Some(3)
-                    } else {
-                        None
-                    };
-                    if let Some(slot) = slot {
-                        let index = self.home_first_visible(4) + slot;
-                        if index < self.home_entries().len() {
-                            self.home_focus = HomeFocus::Games;
-                            if index == self.selected {
-                                return ClickResult::Activated;
+                    let offset = x - ui::home::CAROUSEL_X;
+                    if offset >= 0.0 {
+                        let slot = (offset / ui::home::GAME_CARD_STEP).floor() as usize;
+                        let card_x = ui::home::CAROUSEL_X
+                            + slot as f32 * ui::home::GAME_CARD_STEP;
+                        if slot < ui::home::VISIBLE_GAME_CARDS
+                            && x < card_x + ui::home::GAME_CARD_WIDTH
+                        {
+                            let index = self.home_first_visible(ui::home::VISIBLE_GAME_CARDS)
+                                + slot;
+                            if index < home_entries.len() {
+                                self.home_focus = HomeFocus::Games;
+                                if index == self.selected {
+                                    return ClickResult::Activated;
+                                }
+                                self.selected = index;
+                                self.status = None;
+                                return ClickResult::Selected;
                             }
-                            self.selected = index;
-                            self.status = None;
-                            return ClickResult::Selected;
                         }
                     }
                 }
@@ -4551,10 +4557,10 @@ impl Library {
                     width,
                     height,
                     scale,
-                    46.0,
-                    102.0,
-                    144.0,
-                    158.0,
+                    44.0,
+                    100.0,
+                    156.0,
+                    156.0,
                     entry,
                     self.smdh_icons.get(&entry.path),
                     small_scale,
@@ -4563,10 +4569,10 @@ impl Library {
                     frame,
                     width as usize,
                     height as usize,
-                    204.0,
-                    106.0,
+                    218.0,
+                    104.0,
                     2.0,
-                    150.0,
+                    148.0,
                     scale,
                     brand::ACCENT_RED,
                 );
@@ -4574,7 +4580,7 @@ impl Library {
                     frame,
                     width,
                     height,
-                    224.0,
+                    242.0,
                     112.0,
                     small_scale,
                     if self.is_recent(entry) {
@@ -4588,7 +4594,7 @@ impl Library {
                     frame,
                     width,
                     height,
-                    224.0,
+                    242.0,
                     144.0,
                     title_scale,
                     &truncate(&entry.title, 44),
@@ -4603,7 +4609,7 @@ impl Library {
                     frame,
                     width,
                     height,
-                    226.0,
+                    244.0,
                     178.0,
                     small_scale,
                     &format!(
@@ -4623,10 +4629,10 @@ impl Library {
                     frame,
                     width as usize,
                     height as usize,
-                    204.0,
-                    106.0,
+                    218.0,
+                    104.0,
                     2.0,
-                    150.0,
+                    148.0,
                     scale,
                     brand::ACCENT_RED,
                 );
@@ -4634,7 +4640,7 @@ impl Library {
                     frame,
                     width,
                     height,
-                    224.0,
+                    242.0,
                     144.0,
                     title_scale,
                     "Sua biblioteca começa aqui",
@@ -4644,7 +4650,7 @@ impl Library {
                     frame,
                     width,
                     height,
-                    226.0,
+                    244.0,
                     178.0,
                     text_scale,
                     "Adicione uma pasta com seus jogos para começar.",
@@ -4757,10 +4763,10 @@ impl Library {
                     frame,
                     width,
                     height,
-                    28.0,
-                    316.0,
+                    ui::home::CAROUSEL_X,
+                    ui::home::CAROUSEL_TOP,
                     944.0,
-                    104.0,
+                    ui::home::GAME_CARD_HEIGHT,
                     scale,
                     brand::SURFACE_PANEL,
                 );
@@ -4769,25 +4775,32 @@ impl Library {
                     width,
                     height,
                     500.0,
-                    360.0,
+                    382.0,
                     text_scale,
                     "Nenhum jogo adicionado. Importe uma pasta para começar.",
                     brand::TEXT_MUTED,
                 );
             } else {
-                let first_visible = self.home_first_visible(4);
-                for (slot, entry) in home_entries.iter().skip(first_visible).take(4).enumerate() {
+                let first_visible =
+                    self.home_first_visible(ui::home::VISIBLE_GAME_CARDS);
+                for (slot, entry) in home_entries
+                    .iter()
+                    .skip(first_visible)
+                    .take(ui::home::VISIBLE_GAME_CARDS)
+                    .enumerate()
+                {
                     let index = first_visible + slot;
-                    let card_x = 28.0 + slot as f32 * 232.0;
+                    let card_x = ui::home::CAROUSEL_X
+                        + slot as f32 * ui::home::GAME_CARD_STEP;
                     render_home_game_tile(
                         frame,
                         width,
                         height,
                         scale,
                         card_x,
-                        316.0,
-                        220.0,
-                        104.0,
+                        ui::home::CAROUSEL_TOP,
+                        ui::home::GAME_CARD_WIDTH,
+                        ui::home::GAME_CARD_HEIGHT,
                         entry,
                         self.smdh_icons.get(&entry.path),
                         index == self.selected && self.home_focus == HomeFocus::Games,
@@ -4806,9 +4819,9 @@ impl Library {
                 width,
                 height,
                 28.0,
-                436.0,
+                ui::home::SUMMARY_TOP,
                 944.0,
-                64.0,
+                ui::home::SUMMARY_HEIGHT,
                 scale,
                 brand::SURFACE_HEADER,
             );
@@ -4825,7 +4838,7 @@ impl Library {
                     width,
                     height,
                     x,
-                    444.0,
+                    ui::home::SUMMARY_TOP + 8.0,
                     220.0,
                     48.0,
                     scale,
@@ -4836,7 +4849,7 @@ impl Library {
                     width,
                     height,
                     x + 14.0,
-                    451.0,
+                    ui::home::SUMMARY_TOP + 15.0,
                     small_scale,
                     label,
                     brand::TEXT_MUTED,
@@ -4846,7 +4859,7 @@ impl Library {
                     width,
                     height,
                     x + 14.0,
-                    469.0,
+                    ui::home::SUMMARY_TOP + 33.0,
                     text_scale,
                     &count.to_string(),
                     brand::TEXT,
@@ -6403,9 +6416,158 @@ fn render_home_game_tile(
     title_scale: usize,
     small_scale: usize,
 ) {
-    // Landscape dashboard cards use a compact horizontal composition: a
-    // square game identity on the left, then readable title and metadata.
-    // Portrait cards keep their taller artwork-first composition below.
+    // Landscape Home uses Switch-inspired square-cover cards: artwork gets
+    // priority, with title and container metadata on a stable footer.
+    if (160.0..180.0).contains(&card_width) && card_height >= 150.0 {
+        if selected {
+            responsive_panel(
+                frame,
+                width,
+                height,
+                x - 3.0,
+                y - 3.0,
+                card_width + 6.0,
+                card_height + 6.0,
+                scale,
+                brand::ACCENT_RED_LIGHT,
+            );
+        }
+        responsive_panel(
+            frame,
+            width,
+            height,
+            x,
+            y,
+            card_width,
+            card_height,
+            scale,
+            if selected {
+                brand::SURFACE_SELECTED
+            } else {
+                brand::SURFACE_CARD
+            },
+        );
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            x + 8.0,
+            y + 4.0,
+            card_width - 16.0,
+            2.0,
+            scale,
+            if selected {
+                brand::ACCENT_RED_LIGHT
+            } else {
+                brand::BORDER
+            },
+        );
+        const COVER_SIZE: f32 = 108.0;
+        let cover_x = x + (card_width - COVER_SIZE) * 0.5;
+        let cover_y = y + 12.0;
+        render_cover_art(
+            frame,
+            width,
+            height,
+            scale,
+            cover_x,
+            cover_y,
+            COVER_SIZE,
+            COVER_SIZE,
+            entry,
+            smdh_icon,
+            small_scale,
+        );
+        if recent {
+            responsive_panel(
+                frame,
+                width,
+                height,
+                x + 6.0,
+                y + 7.0,
+                42.0,
+                16.0,
+                scale,
+                brand::SUCCESS_SURFACE,
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                x + 27.0,
+                y + 11.0,
+                small_scale,
+                "REC",
+                brand::TEXT,
+            );
+        }
+        if favorite {
+            responsive_panel(
+                frame,
+                width,
+                height,
+                x + card_width - 42.0,
+                y + 7.0,
+                36.0,
+                16.0,
+                scale,
+                brand::ACCENT_RED,
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                x + card_width - 24.0,
+                y + 11.0,
+                small_scale,
+                "FAV",
+                brand::TEXT,
+            );
+        }
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            x + 10.0,
+            y + 124.0,
+            card_width - 20.0,
+            1.0,
+            scale,
+            brand::BORDER,
+        );
+        responsive_text_centered(
+            frame,
+            width,
+            height,
+            x + card_width * 0.5,
+            y + 132.0,
+            title_scale,
+            &truncate(&entry.title, 18),
+            brand::TEXT,
+        );
+        let extension = entry
+            .path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("3ds");
+        responsive_text_centered(
+            frame,
+            width,
+            height,
+            x + card_width * 0.5,
+            y + 150.0,
+            small_scale,
+            &format!(".{}", extension.to_ascii_uppercase()),
+            if selected {
+                brand::ACCENT_RED_LIGHT
+            } else {
+                brand::TEXT_MUTED
+            },
+        );
+        return;
+    }
+
+    // The wide-card treatment remains available to legacy landscape call sites.
     if card_width >= 180.0 && card_height <= 130.0 {
         if selected {
             responsive_panel(
@@ -7796,12 +7958,15 @@ mod tests {
         }
         let mut library = Library::new(entries, dir.display().to_string());
 
-        for _ in 0..4 {
+        for _ in 0..5 {
             library.move_selection_horizontal_responsive(1, 1000, 600);
         }
-        assert_eq!(library.selected_entry().unwrap().title, "Game 4");
+        assert_eq!(library.selected_entry().unwrap().title, "Game 5");
         assert_eq!(library.first_visible, 1);
-        assert_eq!(library.home_first_visible(3), 2);
+        assert_eq!(
+            library.home_first_visible(ui::home::VISIBLE_GAME_CARDS),
+            1
+        );
         assert_eq!(
             library.click_responsive(100, 350, 1000, 600),
             ClickResult::Selected
@@ -7809,6 +7974,26 @@ mod tests {
         assert_eq!(library.selected_entry().unwrap().title, "Game 1");
 
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn landscape_home_uses_five_square_cover_hitboxes() {
+        let mut library = library(6);
+        library.select_page(LibraryPage::Home);
+        let fifth_x = (ui::home::CAROUSEL_X
+            + 4.0 * ui::home::GAME_CARD_STEP
+            + ui::home::GAME_CARD_WIDTH * 0.5) as i32;
+        let y = (ui::home::CAROUSEL_TOP + 40.0) as i32;
+
+        assert_eq!(
+            library.click_responsive(fifth_x, y, 1000, 600),
+            ClickResult::Selected
+        );
+        assert_eq!(library.selected_entry().unwrap().title, "Game 5");
+        assert_eq!(
+            library.click_responsive(fifth_x, y, 1000, 600),
+            ClickResult::Activated
+        );
     }
 
     #[test]
@@ -8132,7 +8317,7 @@ mod tests {
     }
 
     #[test]
-    fn landscape_home_fourth_wide_tile_can_be_selected_and_activated() {
+    fn landscape_home_fourth_cover_tile_can_be_selected_and_activated() {
         let dir =
             std::env::temp_dir().join(format!("aceris-home-fourth-tile-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
@@ -8148,12 +8333,26 @@ mod tests {
         let mut library = Library::new(entries, dir.display().to_string());
 
         assert_eq!(
-            library.click_responsive(830, 350, 1000, 600),
+            library.click_responsive(
+                (ui::home::CAROUSEL_X
+                    + 3.0 * ui::home::GAME_CARD_STEP
+                    + ui::home::GAME_CARD_WIDTH * 0.5) as i32,
+                (ui::home::CAROUSEL_TOP + 20.0) as i32,
+                1000,
+                600
+            ),
             ClickResult::Selected
         );
         assert_eq!(library.selected_entry().unwrap().title, "Wide Game 3");
         assert_eq!(
-            library.click_responsive(830, 350, 1000, 600),
+            library.click_responsive(
+                (ui::home::CAROUSEL_X
+                    + 3.0 * ui::home::GAME_CARD_STEP
+                    + ui::home::GAME_CARD_WIDTH * 0.5) as i32,
+                (ui::home::CAROUSEL_TOP + 20.0) as i32,
+                1000,
+                600
+            ),
             ClickResult::Activated
         );
 
@@ -8248,6 +8447,7 @@ mod tests {
     fn landscape_grid_hitboxes_follow_three_column_card_geometry() {
         let mut library = library(9);
         library.select_page(LibraryPage::Games);
+        library.move_selection(-100);
         let y = (ui::library::GRID_TOP + 6.0) as i32;
         let second_x = (ui::library::GRID_ORIGIN_X + ui::library::GRID_STEP_X + 6.0) as i32;
         let third_x = (ui::library::GRID_ORIGIN_X + 2.0 * ui::library::GRID_STEP_X + 6.0) as i32;

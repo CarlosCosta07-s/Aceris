@@ -48,6 +48,21 @@ pub mod library {
     pub const GRID_STEP_Y: f32 = GRID_CARD_HEIGHT + GRID_GAP_Y;
 }
 
+/// Shared geometry for the console-style landscape Home dashboard.
+pub mod home {
+    /// Five square-cover entries fit across the landscape collection shelf.
+    pub const VISIBLE_GAME_CARDS: usize = 5;
+    pub const CAROUSEL_X: f32 = 28.0;
+    pub const CAROUSEL_TOP: f32 = 316.0;
+    pub const GAME_CARD_WIDTH: f32 = 172.0;
+    pub const GAME_CARD_HEIGHT: f32 = 164.0;
+    pub const GAME_CARD_GAP: f32 = 16.0;
+    pub const GAME_CARD_STEP: f32 = GAME_CARD_WIDTH + GAME_CARD_GAP;
+    pub const CAROUSEL_BOTTOM: f32 = CAROUSEL_TOP + GAME_CARD_HEIGHT;
+    pub const SUMMARY_TOP: f32 = 492.0;
+    pub const SUMMARY_HEIGHT: f32 = 64.0;
+}
+
 /// Consistent spacing steps in logical UI units (4-unit base grid).
 pub mod spacing {
     pub const XXS: f32 = 2.0;
@@ -179,6 +194,16 @@ mod tests {
         let collection_width = library::GRID_COLUMNS as f32 * library::GRID_CARD_WIDTH
             + (library::GRID_COLUMNS - 1) as f32 * library::GRID_GAP_X;
         assert_eq!(collection_width, 702.0);
+    }
+
+    #[test]
+    fn landscape_home_fits_five_square_cover_cards_and_summary() {
+        assert_eq!(home::VISIBLE_GAME_CARDS, 5);
+        let shelf_width = home::VISIBLE_GAME_CARDS as f32 * home::GAME_CARD_WIDTH
+            + (home::VISIBLE_GAME_CARDS - 1) as f32 * home::GAME_CARD_GAP;
+        assert!(shelf_width <= 944.0);
+        assert!(home::CAROUSEL_BOTTOM < home::SUMMARY_TOP);
+        assert!(home::SUMMARY_TOP + home::SUMMARY_HEIGHT <= 562.5);
     }
 
     #[test]

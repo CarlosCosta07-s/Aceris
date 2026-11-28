@@ -39,14 +39,14 @@ Use a consistent spacing scale, predictable alignment, restrained borders, subtl
 
 - Persistent left navigation rail with Aceris identity and clear destinations: Início, Jogos, Favoritos, Recentes, Homebrew and Configurações.
 - Top content bar for page title, search, import action and contextual controls.
-- Main content area with a large featured/continue-playing region, followed by recently played and collection sections.
+- Main content area with a large featured/continue-playing region, followed by a horizontal shelf of five square game covers. Selection uses a clear red focus frame and controller navigation moves across the visible covers before scrolling the shelf.
 - A responsive game-card grid with cover art when available, readable title, subtle format metadata and a clear focus/selected state.
 - A details view/panel for the selected title with Play, Favorite and relevant metadata/actions.
 - Controller and keyboard navigation must mirror pointer navigation; focus must always be visible.
 
 ### Android
 
-- Same information architecture and visual language, adapted to touch.
+- Same information architecture and visual language, adapted to touch. Home remains a landscape dashboard with five large, touch-friendly game covers across its main shelf.
 - The Android app is landscape-only; `AndroidManifest.xml` must keep `android:screenOrientation="landscape"`.
 - Compact top bar and a bottom navigation bar for primary destinations.
 - Large touch targets, safe-area awareness, scrollable content and responsive game cards, designed for landscape phones and tablets.
