@@ -11,6 +11,10 @@ authors.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+startup-probe-no-app = []
+startup-probe-app-frame = []
+
 [[bin]]
 name = "aceris-benchmark"
 path = "src/bin/benchmark.rs"
