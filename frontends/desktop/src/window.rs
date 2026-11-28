@@ -167,6 +167,8 @@ pub fn game_key_from_keysym(keysym: u64) -> Option<GameKey> {
 pub struct KeyboardInput {
     /// Held circle-pad direction keys: left, right, up, down.
     stick_keys: [bool; 4],
+    /// Buttons currently held by the keyboard, kept separate from gamepads.
+    buttons: u32,
 }
 
 impl KeyboardInput {
@@ -174,10 +176,11 @@ impl KeyboardInput {
         match key {
             GameKey::Button(bits) => {
                 if pressed {
-                    input.press(bits);
+                    self.buttons |= bits;
                 } else {
-                    input.release(bits);
+                    self.buttons &= !bits;
                 }
+                input.set_buttons(self.buttons);
             }
             GameKey::Stick { x, y } => {
                 let slot = match (x, y) {
@@ -196,6 +199,22 @@ impl KeyboardInput {
                 );
             }
         }
+    }
+
+    /// Buttons currently held by the keyboard, independent from other devices.
+    pub fn button_mask(&self) -> u32 {
+        self.buttons
+    }
+
+    /// Circle Pad value produced by the keyboard's directional keys.
+    pub fn circle_pad(&self) -> (i16, i16) {
+        let axis = |negative: bool, positive: bool| {
+            (i32::from(positive) - i32::from(negative)) * i32::from(CIRCLE_PAD_LIMIT)
+        };
+        (
+            axis(self.stick_keys[0], self.stick_keys[1]) as i16,
+            axis(self.stick_keys[3], self.stick_keys[2]) as i16,
+        )
     }
 
     /// Forgets held keys, for example on focus loss.
