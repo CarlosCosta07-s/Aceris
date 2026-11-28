@@ -6,6 +6,7 @@
 
 mod audio;
 mod background;
+mod gamepad;
 mod performance;
 mod window;
 
@@ -23,6 +24,7 @@ use aceris_core::{
     },
 };
 use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
+use gamepad::GamepadManager;
 use performance::{
     DesktopFrameKind, DesktopFrameTimings, DesktopPerformanceMonitor, performance_logging_enabled,
 };
@@ -767,6 +769,7 @@ fn emulate(
 ) -> Result<Flow, String> {
     let frame_time = Duration::from_micros(16_667);
     let mut keyboard = window::KeyboardInput::default();
+    let mut gamepad = GamepadManager::new();
     let mut audio = audio::AudioOutput::open();
     let mut frame = Vec::new();
     let mut menu_open = false;
@@ -1064,6 +1067,7 @@ fn emulate(
         let mut emulation_elapsed = Duration::ZERO;
         let mut audio_elapsed = Duration::ZERO;
         if !menu_open {
+            gamepad.apply(&keyboard, system.input_mut());
             let emulation_started = performance.as_ref().map(|_| Instant::now());
             run_frame_with_diagnostics(system)?;
             emulation_elapsed = emulation_started
