@@ -4797,17 +4797,6 @@ impl Library {
             brand::TEXT_MUTED,
         );
 
-        responsive_text(
-            frame,
-            width,
-            height,
-            850.0,
-            18.0,
-            label_scale,
-            &format!("{} JOGOS", home_entries.len()),
-            brand::TEXT_MUTED,
-        );
-
         if let Some(entry) = self.selected_entry() {
             render_cover_art(
                 frame,
@@ -4961,7 +4950,7 @@ impl Library {
                     "GRADE"
                 },
                 3usize,
-                120.0,
+                96.0,
             ),
         ];
         for (x, key, label, slot, group_width) in command_items {
