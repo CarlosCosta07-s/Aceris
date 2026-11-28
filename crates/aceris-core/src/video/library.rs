@@ -2377,9 +2377,7 @@ impl Library {
                     1 => self.select_page(LibraryPage::Games),
                     2 => self.request_folder_picker(),
                     3 => self.select_page(LibraryPage::Favorites),
-                    4 => self.select_page(LibraryPage::Recent),
-                    5 => self.select_page(LibraryPage::Homebrew),
-                    6 => self.select_page(LibraryPage::Settings),
+                    4 => self.select_page(LibraryPage::Settings),
                     _ => {}
                 }
                 ClickResult::Ignored
@@ -4693,8 +4691,6 @@ impl Library {
             Some(LibraryPage::Games),
             None,
             Some(LibraryPage::Favorites),
-            Some(LibraryPage::Recent),
-            Some(LibraryPage::Homebrew),
             Some(LibraryPage::Settings),
         ];
         for (slot, page) in nav_pages.into_iter().enumerate() {
@@ -4776,7 +4772,7 @@ impl Library {
         }
 
         // The power glyph is a host hint, not an invented process action.
-        let power_y = (logical_height - ui::home::SIDEBAR_POWER_BOTTOM).max(0.0);
+        let power_y = ui::home::sidebar_power_center_y(logical_height);
         responsive_rounded_fill(
             frame,
             width as usize,
@@ -8245,68 +8241,8 @@ fn render_console_nav_icon(
                 );
             }
         }
-        // Recent activity.
-        4 => {
-            responsive_circle_outline(
-                frame, width, height, center_x, center_y, 13.0, 2.4, scale, color,
-            );
-            line(frame, center_x, center_y, center_x, center_y - 8.0);
-            line(frame, center_x, center_y, center_x + 7.0, center_y + 4.0);
-        }
-        // Homebrew.
-        5 => {
-            line(
-                frame,
-                center_x - 4.0,
-                center_y - 13.0,
-                center_x + 4.0,
-                center_y - 13.0,
-            );
-            line(
-                frame,
-                center_x - 2.0,
-                center_y - 13.0,
-                center_x - 2.0,
-                center_y - 5.0,
-            );
-            line(
-                frame,
-                center_x + 2.0,
-                center_y - 13.0,
-                center_x + 2.0,
-                center_y - 5.0,
-            );
-            line(
-                frame,
-                center_x - 2.0,
-                center_y - 5.0,
-                center_x - 11.0,
-                center_y + 10.0,
-            );
-            line(
-                frame,
-                center_x + 2.0,
-                center_y - 5.0,
-                center_x + 11.0,
-                center_y + 10.0,
-            );
-            line(
-                frame,
-                center_x - 11.0,
-                center_y + 10.0,
-                center_x + 11.0,
-                center_y + 10.0,
-            );
-            line(
-                frame,
-                center_x - 7.0,
-                center_y + 3.0,
-                center_x + 7.0,
-                center_y + 3.0,
-            );
-        }
         // Settings.
-        6 => {
+        4 => {
             responsive_circle_outline(
                 frame, width, height, center_x, center_y, 11.0, 2.2, scale, color,
             );
@@ -9738,9 +9674,7 @@ mod tests {
             (0, LibraryPage::Home),
             (1, LibraryPage::Games),
             (3, LibraryPage::Favorites),
-            (4, LibraryPage::Recent),
-            (5, LibraryPage::Homebrew),
-            (6, LibraryPage::Settings),
+            (4, LibraryPage::Settings),
         ] {
             library.select_page(LibraryPage::Home);
             let y = ui::home::sidebar_item_center_y(slot, 600.0) as i32;
@@ -9758,7 +9692,7 @@ mod tests {
             ClickResult::Ignored
         );
         assert!(library.take_folder_picker_request());
-        assert_eq!(library.page(), LibraryPage::Settings);
+        assert_eq!(library.page(), LibraryPage::Home);
 
         fs::remove_dir_all(dir).unwrap();
     }
@@ -9882,13 +9816,14 @@ mod tests {
         library.select_page(LibraryPage::Games);
         library.select_page(LibraryPage::Home);
         library.move_selection_responsive(-1, 1000, 600);
-        library.move_selection_responsive(1, 1000, 600);
-        library.move_selection_responsive(1, 1000, 600);
+        for _ in 0..4 {
+            library.move_selection_responsive(1, 1000, 600);
+        }
+        assert_eq!(library.home_navigation_selected, 4);
         assert_eq!(
             library.activate_home_selection(1000, 600),
             ClickResult::Ignored
         );
-        assert!(library.take_folder_picker_request());
         assert_eq!(library.page(), LibraryPage::Settings);
 
         fs::remove_dir_all(dir).unwrap();
