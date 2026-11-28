@@ -2941,7 +2941,7 @@ impl Library {
                 brand::TEXT_MUTED,
             );
             responsive_panel(
-                frame, width, height, 20.0, 250.0, 360.0, 184.0, scale, 0x1B2D3D,
+                frame, width, height, 20.0, 250.0, 360.0, 184.0, scale, brand::SURFACE_PANEL,
             );
             if self.home_focus == HomeFocus::Actions {
                 responsive_panel(
@@ -4443,7 +4443,7 @@ impl Library {
                 224.0,
                 (bottom - 82.0).max(280.0),
                 scale,
-                0x1B2D3D,
+                brand::SURFACE_PANEL,
             );
             responsive_text(
                 frame,
@@ -6309,7 +6309,7 @@ fn render_home_game_tile(
         card_height,
         scale,
         if selected {
-            0x173B4A
+            brand::SURFACE_SELECTED
         } else {
             brand::SURFACE_CARD
         },
@@ -6326,7 +6326,7 @@ fn render_home_game_tile(
         if selected {
             brand::ACCENT_RED_LIGHT
         } else {
-            0x344754
+            brand::BORDER
         },
     );
     let cover_height = (card_height - 52.0).max(70.0);
@@ -6379,7 +6379,7 @@ fn render_home_game_tile(
             badge_width,
             18.0,
             scale,
-            0x245A48,
+            brand::SUCCESS_SURFACE,
         );
         responsive_text_centered(
             frame,
@@ -6442,7 +6442,7 @@ fn render_home_game_tile(
         if selected {
             brand::ACCENT_RED_LIGHT
         } else {
-            0x9EAFBA
+            brand::TEXT_MUTED
         },
     );
 }
@@ -6882,7 +6882,7 @@ fn responsive_panel(
         rect_height,
         scale,
         6.0,
-        0x39576B,
+        brand::BORDER,
     );
     responsive_rounded_fill(
         frame,
@@ -6905,7 +6905,7 @@ fn responsive_panel(
         rect_width - 14.0,
         1.0,
         scale,
-        0x6C91A5,
+        brand::TEXT_SUBTLE,
     );
     responsive_fill(
         frame,
@@ -6916,7 +6916,7 @@ fn responsive_panel(
         rect_width - 14.0,
         1.0,
         scale,
-        0x172635,
+        brand::SURFACE_BASE,
     );
 }
 
@@ -7192,10 +7192,10 @@ mod tests {
         };
         assert_eq!(pixel(52, 20), [0x09, 0x0F, 0x15]);
         assert_eq!(pixel(10, 10), [0, 0, 0]);
-        assert_eq!(pixel(14, 10), [0x39, 0x57, 0x6B]);
+        assert_eq!(pixel(14, 10), brand::rgb(brand::BORDER));
         assert_eq!(pixel(15, 15), brand::rgb(brand::SURFACE_PANEL));
-        assert_eq!(pixel(18, 12), [0x6C, 0x91, 0xA5]);
-        assert_eq!(pixel(18, 32), [0x17, 0x26, 0x35]);
+        assert_eq!(pixel(18, 12), brand::rgb(brand::TEXT_SUBTLE));
+        assert_eq!(pixel(18, 32), brand::rgb(brand::SURFACE_BASE));
     }
 
     #[test]
