@@ -8052,7 +8052,7 @@ fn render_console_nav_icon(
     kind: usize,
     color: u32,
 ) {
-    let line = |frame: &mut [u8], x1, y1, x2, y2| {
+    let line = |frame: &mut [u8], x1: f32, y1: f32, x2: f32, y2: f32| {
         responsive_line(frame, width, height, x1, y1, x2, y2, 2.4, scale, color);
     };
     match kind {
@@ -9243,8 +9243,9 @@ mod tests {
         assert_eq!(pixel(8, 8), &brand::rgb(brand::SURFACE_HEADER));
         assert_eq!(pixel(90, 8), &brand::rgb(brand::SURFACE_BASE));
 
-        let focus_x = (ui::home::CAROUSEL_X - 2.0) as usize;
-        let focus_y = (ui::home::carousel_top(562.0) - 2.0) as usize;
+        let focus_x =
+            (ui::home::CAROUSEL_X + ui::home::GAME_CARD_WIDTH * 0.5) as usize;
+        let focus_y = (ui::home::carousel_top(562.0) - 4.0) as usize;
         assert_eq!(
             pixel(focus_x, focus_y),
             &brand::rgb(brand::ACCENT_RED_LIGHT)
@@ -9532,7 +9533,8 @@ mod tests {
         library.move_selection_responsive(-1, 1000, 600);
         assert_eq!(library.home_focus, HomeFocus::Navigation);
         assert_eq!(library.home_navigation_selected, 0);
-        library.move_selection_responsive(2, 1000, 600);
+        library.move_selection_responsive(1, 1000, 600);
+        library.move_selection_responsive(1, 1000, 600);
         assert_eq!(library.home_navigation_selected, 2);
         library.move_selection_horizontal_responsive(1, 1000, 600);
         assert_eq!(library.home_focus, HomeFocus::Games);
@@ -9548,7 +9550,8 @@ mod tests {
 
         library.select_page(LibraryPage::Home);
         library.move_selection_responsive(-1, 1000, 600);
-        library.move_selection_responsive(2, 1000, 600);
+        library.move_selection_responsive(1, 1000, 600);
+        library.move_selection_responsive(1, 1000, 600);
         assert_eq!(
             library.activate_home_selection(1000, 600),
             ClickResult::Ignored
