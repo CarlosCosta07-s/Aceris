@@ -78,7 +78,7 @@ assets originais do projeto.
 
 ## Launcher horizontal, abertura e áudio externo
 
-O launcher Android inicia em paisagem (`sensorLandscape`). A home partilha o renderer Rust com o desktop e apresenta Início, Jogos, Favoritos, Recentes, Homebrew e Configurações.
+O aplicativo Android opera exclusivamente em paisagem (`landscape`), fixada no manifesto. A renderização retrato continua disponível apenas para outros contextos de janela e não é uma opção do frontend Android. A home partilha o renderer Rust com o desktop e apresenta Início, Jogos, Favoritos, Recentes, Homebrew e Configurações.
 
 - A barra lateral permanece fixa; a home destaca Continuar jogando, contagens de Favoritos/Homebrew e o indicador de mídia externa.
 - Jogos, Favoritos, Recentes e Homebrew usam cartões em grade de três colunas, com ordenação A–Z/Z–A e ações por toque/clique. Favoritos e Recentes persistem na pasta interna `.aceris` da pasta de jogos.
