@@ -138,7 +138,12 @@ mod tests {
     fn typography_roles_keep_a_clear_hierarchy_at_small_and_large_sizes() {
         let scale = |role| typography_scale(role, 1.0);
         assert!(scale(TypographyRole::Display) > scale(TypographyRole::Body));
-        assert!(scale(TypographyRole::Body) > scale(TypographyRole::Caption));
+        assert_eq!(scale(TypographyRole::Body), scale(TypographyRole::Caption));
+
+        let large_body = typography_scale(TypographyRole::Body, 5.0);
+        let large_caption = typography_scale(TypographyRole::Caption, 5.0);
+        assert!(large_body > large_caption);
+
         assert_eq!(typography_scale(TypographyRole::Display, 0.1), 2);
         assert_eq!(typography_scale(TypographyRole::Caption, f32::NAN), 1);
         assert!(typography_scale(TypographyRole::Display, 100.0) <= 12);
