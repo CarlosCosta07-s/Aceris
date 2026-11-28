@@ -346,17 +346,17 @@ impl AttachedMediaMonitor {
         let Some(activity_class) = self.class_of(self.activity) else {
             return;
         };
-        let Some(method) = self.method(
-            activity_class,
-            b"setVolumeControlStream\0",
-            b"(I)V\0",
-        ) else {
+        let Some(method) =
+            self.method(activity_class, b"setVolumeControlStream\0", b"(I)V\0")
+        else {
             self.delete_local(activity_class);
             return;
         };
         let call: Option<CallVoidMethodAFn> = jni_function(self.env, 63);
         if let Some(call) = call {
-            let args = [JniValue { int_value: STREAM_MUSIC }];
+            let args = [JniValue {
+                int_value: STREAM_MUSIC,
+            }];
             // SAFETY: method and argument match Activity.setVolumeControlStream(int).
             unsafe { call(self.env, self.activity, method, args.as_ptr()) };
             if self.exception_pending() {
@@ -736,15 +736,19 @@ fn select_android_backend(sdk_version: i32, recovery_file: &Path) -> GraphicsBac
     if let Ok(failed) = std::fs::read_to_string(recovery_file) {
         match failed.trim() {
             "vulkan" => {
-                let fallback = GraphicsBackend::OpenGl;
+                let fallback = fallback_android_backend_after_failure("vulkan");
                 let _ = std::fs::write(recovery_file, android_backend_name(fallback));
-                eprintln!("Aceris Android startup: previous Vulkan initialization did not complete; retrying with OpenGL ES");
+                eprintln!(
+                    "Aceris Android startup: previous Vulkan initialization did not complete; retrying with OpenGL ES"
+                );
                 return fallback;
             }
             "opengl" => {
-                let fallback = GraphicsBackend::Software;
+                let fallback = fallback_android_backend_after_failure("opengl");
                 let _ = std::fs::write(recovery_file, android_backend_name(fallback));
-                eprintln!("Aceris Android startup: previous OpenGL ES initialization did not complete; using software presentation");
+                eprintln!(
+                    "Aceris Android startup: previous OpenGL ES initialization did not complete; using software presentation"
+                );
                 return fallback;
             }
             "software" => return GraphicsBackend::Software,
@@ -786,7 +790,10 @@ fn create_android_gpu_presenter(
     if let Err(error) = std::fs::write(recovery_file, android_backend_name(backend)) {
         eprintln!("Could not persist Android GPU recovery state: {error}");
     }
-    eprintln!("Aceris Android startup: initializing {:?} presentation", backend);
+    eprintln!(
+        "Aceris Android startup: initializing {:?} presentation",
+        backend
+    );
     let window = NonNull::new(window)?;
     // SAFETY: this is called while the shared native-window lock is held.
     unsafe { ANativeWindow_acquire(window.as_ptr()) };
@@ -983,9 +990,13 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
                 eprintln!("Aceris Android: opening optional AAudio output after first game frame");
                 audio = AAudioOutput::open();
                 if audio.is_none() {
-                    eprintln!("Aceris Android: AAudio unavailable; game audio remains disabled, UI/emulation continue");
+                    eprintln!(
+                        "Aceris Android: AAudio unavailable; game audio remains disabled, UI/emulation continue"
+                    );
                 } else {
-                    eprintln!("Aceris Android: attaching optional JNI helpers after audio initialization");
+                    eprintln!(
+                        "Aceris Android: attaching optional JNI helpers after audio initialization"
+                    );
                     media_monitor = AttachedMediaMonitor::attach(
                         host.java_vm,
                         host.activity_global,
@@ -994,10 +1005,9 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
                     if let Some(monitor) = media_monitor.as_ref() {
                         monitor.set_volume_control_stream();
                     }
-                    let media_detection_available = audio
-                        .as_ref()
-                        .is_some_and(AAudioOutput::uses_game_usage)
-                        && media_monitor.is_some();
+                    let media_detection_available =
+                        audio.as_ref().is_some_and(AAudioOutput::uses_game_usage)
+                            && media_monitor.is_some();
                     app.set_external_media_detection_available(media_detection_available);
                 }
             }
@@ -1257,15 +1267,14 @@ fn render(
         let presentation_started = performance_monitor.as_ref().map(|_| Instant::now());
         if gpu_presenter.is_none() && *attempted_gpu_window != window {
             *attempted_gpu_window = window;
-            *gpu_presenter =
-                create_android_gpu_presenter(
-                    window.get(),
-                    width,
-                    height,
-                    sdk_version,
-                    cache_directory,
-                    recovery_file,
-                );
+            *gpu_presenter = create_android_gpu_presenter(
+                window.get(),
+                width,
+                height,
+                sdk_version,
+                cache_directory,
+                recovery_file,
+            );
         }
 
         let gpu_result = gpu_presenter.as_mut().map(|gpu| {
