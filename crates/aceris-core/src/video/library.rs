@@ -6260,7 +6260,7 @@ fn landscape_grid_visible_rows(logical_height: f32) -> usize {
         / ui::library::GRID_STEP_Y)
         .floor() as i32
         + 1)
-        .max(1) as usize
+    .max(1) as usize
 }
 
 fn cover_palette(title: &str) -> (u32, u32, u32) {
@@ -6727,28 +6727,12 @@ fn render_library_tile(
     let cover_y = y + 8.0;
     if let Some(icon) = smdh_icon {
         draw_smdh_icon(
-            frame,
-            width,
-            height,
-            scale,
-            cover_x,
-            cover_y,
-            COVER_SIZE,
-            COVER_SIZE,
-            icon,
+            frame, width, height, scale, cover_x, cover_y, COVER_SIZE, COVER_SIZE, icon,
         );
     } else {
         let (base, accent, highlight) = cover_palette(&entry.title);
         responsive_panel(
-            frame,
-            width,
-            height,
-            cover_x,
-            cover_y,
-            COVER_SIZE,
-            COVER_SIZE,
-            scale,
-            base,
+            frame, width, height, cover_x, cover_y, COVER_SIZE, COVER_SIZE, scale, base,
         );
         responsive_fill(
             frame,
@@ -8268,14 +8252,26 @@ mod tests {
         let second_x = (ui::library::GRID_ORIGIN_X + ui::library::GRID_STEP_X + 6.0) as i32;
         let third_x = (ui::library::GRID_ORIGIN_X + 2.0 * ui::library::GRID_STEP_X + 6.0) as i32;
 
-        assert_eq!(library.click_responsive(second_x, y, 1000, 600), ClickResult::Selected);
+        assert_eq!(
+            library.click_responsive(second_x, y, 1000, 600),
+            ClickResult::Selected
+        );
         assert_eq!(library.selected_index(), 1);
-        assert_eq!(library.click_responsive(third_x, y, 1000, 600), ClickResult::Selected);
+        assert_eq!(
+            library.click_responsive(third_x, y, 1000, 600),
+            ClickResult::Selected
+        );
         assert_eq!(library.selected_index(), 2);
-        assert_eq!(library.click_responsive(third_x, y, 1000, 600), ClickResult::Activated);
+        assert_eq!(
+            library.click_responsive(third_x, y, 1000, 600),
+            ClickResult::Activated
+        );
 
         // The detail rail remains outside the card hit area.
-        assert_eq!(library.click_responsive(750, y, 1000, 600), ClickResult::Ignored);
+        assert_eq!(
+            library.click_responsive(750, y, 1000, 600),
+            ClickResult::Ignored
+        );
     }
 
     #[test]
