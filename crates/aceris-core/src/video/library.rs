@@ -4600,6 +4600,40 @@ impl Library {
         );
         out
     }
+
+    fn draw_empty(&self, out: &mut [u8]) {
+        let text = rgb(brand::TEXT);
+        let lines = [
+            "NENHUM JOGO ENCONTRADO".to_string(),
+            "COLOQUE .3DS, .CCI OU .3DSX EM:".to_string(),
+        ];
+        for (i, line) in lines.iter().enumerate() {
+            draw_text(
+                out,
+                WIDTH,
+                HEIGHT,
+                MARGIN,
+                LIST_TOP + 20 + i as i32 * 24,
+                1,
+                line,
+                text,
+            );
+        }
+        let path = tail(
+            &self.directory_label,
+            (WIDTH - 2 * MARGIN as usize) / font::ADVANCE,
+        );
+        draw_text(
+            out,
+            WIDTH,
+            HEIGHT,
+            MARGIN,
+            LIST_TOP + 68,
+            1,
+            &path,
+            rgb(brand::ACCENT_GREEN_LIGHT),
+        );
+    }
 }
 
 fn landscape_grid_visible_rows(logical_height: f32) -> usize {
