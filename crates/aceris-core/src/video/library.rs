@@ -7974,6 +7974,7 @@ mod tests {
     fn landscape_home_uses_five_square_cover_hitboxes() {
         let mut library = library(6);
         library.select_page(LibraryPage::Home);
+        library.recent.clear();
         let fifth_x = (ui::home::CAROUSEL_X
             + 4.0 * ui::home::GAME_CARD_STEP
             + ui::home::GAME_CARD_WIDTH * 0.5) as i32;
@@ -7983,7 +7984,7 @@ mod tests {
             library.click_responsive(fifth_x, y, 1000, 600),
             ClickResult::Selected
         );
-        assert_eq!(library.selected_entry().unwrap().title, "Game 5");
+        assert_eq!(library.selected_entry().unwrap().title, "Game 4");
         assert_eq!(
             library.click_responsive(fifth_x, y, 1000, 600),
             ClickResult::Activated
@@ -7994,6 +7995,7 @@ mod tests {
     fn ultrawide_landscape_home_keeps_five_cards_and_details_actions_visible() {
         let mut library = library(6);
         library.select_page(LibraryPage::Home);
+        library.recent.clear();
         let fifth_x = (ui::home::CAROUSEL_X
             + 4.0 * ui::home::GAME_CARD_STEP
             + ui::home::GAME_CARD_WIDTH * 0.5) as i32;
@@ -8002,7 +8004,7 @@ mod tests {
             library.click_responsive(fifth_x, home_y, 1000, 450),
             ClickResult::Selected
         );
-        assert_eq!(library.selected_entry().unwrap().title, "Game 5");
+        assert_eq!(library.selected_entry().unwrap().title, "Game 4");
 
         library.select_page(LibraryPage::Games);
         let favorite_y = (ui::library::details_button_top(1, 450.0)
@@ -8469,6 +8471,7 @@ mod tests {
     fn landscape_grid_hitboxes_follow_three_column_card_geometry() {
         let mut library = library(9);
         library.select_page(LibraryPage::Games);
+        library.view_mode = LibraryViewMode::Grid;
         library.move_selection(-100);
         let y = (ui::library::GRID_TOP + 6.0) as i32;
         let second_x = (ui::library::GRID_ORIGIN_X + ui::library::GRID_STEP_X + 6.0) as i32;
