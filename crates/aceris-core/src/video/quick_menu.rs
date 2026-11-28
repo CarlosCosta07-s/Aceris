@@ -1067,7 +1067,14 @@ pub fn render_gamepad_axis_editor(
         [245, 238, 248],
         format,
     );
-    blend_rect(frame, width as usize, geometry.scope, [54, 36, 70], 245, format);
+    blend_rect(
+        frame,
+        width as usize,
+        geometry.scope,
+        [54, 36, 70],
+        245,
+        format,
+    );
     draw_text_for_format(
         frame,
         width as usize,
@@ -1099,8 +1106,20 @@ pub fn render_gamepad_axis_editor(
             format,
         );
         let value = match index {
-            0 => if settings.invert_x() { "SIM" } else { "NAO" },
-            1 => if settings.invert_y() { "SIM" } else { "NAO" },
+            0 => {
+                if settings.invert_x() {
+                    "SIM"
+                } else {
+                    "NAO"
+                }
+            }
+            1 => {
+                if settings.invert_y() {
+                    "SIM"
+                } else {
+                    "NAO"
+                }
+            }
             _ => "",
         };
         if index < 2 {
@@ -1108,7 +1127,10 @@ pub fn render_gamepad_axis_editor(
                 frame,
                 width as usize,
                 height as usize,
-                row.x + row.width.saturating_sub(font::text_width(value.chars().count(), text_scale))
+                row.x
+                    + row
+                        .width
+                        .saturating_sub(font::text_width(value.chars().count(), text_scale))
                     - 9 * scale,
                 row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
                 text_scale,
@@ -1696,7 +1718,10 @@ mod tests {
                     1 => GamepadAxisEditorHit::InvertY,
                     _ => GamepadAxisEditorHit::SensitivityDown,
                 };
-                assert_eq!(hit_test_gamepad_axis_editor(width, height, x, y), Some(expected));
+                assert_eq!(
+                    hit_test_gamepad_axis_editor(width, height, x, y),
+                    Some(expected)
+                );
             }
             let sensitivity = geometry.rows[2];
             assert_eq!(

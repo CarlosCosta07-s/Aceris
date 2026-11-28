@@ -360,9 +360,7 @@ impl App {
         // bits, so convert before comparing against input::pad constants.
         let pad_bit = pad_from_frontend_buttons(bit);
         match self.screen {
-            Screen::Game
-                if self.gamepad_mapping_editor && self.gamepad_axis_editor && pressed =>
-            {
+            Screen::Game if self.gamepad_mapping_editor && self.gamepad_axis_editor && pressed => {
                 match pad_bit {
                     pad::UP => self.toggle_gamepad_axis_invert_x(),
                     pad::DOWN => self.toggle_gamepad_axis_invert_y(),
@@ -1208,7 +1206,9 @@ impl App {
     fn adjust_gamepad_axis_sensitivity(&mut self, delta: i8) {
         let mut settings = self.gamepad_axis_settings;
         let next = if delta < 0 {
-            settings.sensitivity_percent().saturating_sub(delta.unsigned_abs())
+            settings
+                .sensitivity_percent()
+                .saturating_sub(delta.unsigned_abs())
         } else {
             settings.sensitivity_percent().saturating_add(delta as u8)
         };
