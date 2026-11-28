@@ -475,10 +475,15 @@ mod tests {
     #[test]
     fn drawing_sets_pixels_and_clips_at_the_edges() {
         let mut canvas = vec![0u8; 8 * 8 * 4];
-        draw_text(&mut canvas, 8, 8, 0, 0, 1, "I", [9, 8, 7]);
-        // The rounded typeface keeps I's side bearings; outer corner pixels are softened.
-        assert!(canvas[4] > 180 && canvas[4] < 255);
-        assert_eq!(&canvas[7..10], &[9, 8, 7]);
+        draw_text(&mut canvas, 8, 8, 0, 0, 1, "I", [255, 255, 255]);
+        // The rounded typeface keeps I's side bearings and softens exposed corners.
+        let softened = (0usize * 8 + 1) * 4;
+        assert!(canvas[softened] > 180 && canvas[softened] < 255);
+        assert_eq!(canvas[softened], canvas[softened + 1]);
+        assert_eq!(canvas[softened + 1], canvas[softened + 2]);
+        assert_eq!(canvas[softened + 3], 255);
+        let solid = (0usize * 8 + 2) * 4;
+        assert_eq!(&canvas[solid..solid + 4], &[255, 255, 255, 255]);
         assert_eq!(&canvas[0..3], &[0, 0, 0]);
         // Far outside and negative origins must not panic.
         draw_text(&mut canvas, 8, 8, -100, 100, 2, "ABC", [1, 1, 1]);
