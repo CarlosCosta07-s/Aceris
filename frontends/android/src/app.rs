@@ -3218,17 +3218,29 @@ mod tests {
         app.resize(1000, 600);
         app.screen = Screen::Library;
 
-        assert!(app.key(19, true), "D-pad Up moves focus to the navigation rail");
-        assert!(app.key(20, true), "D-pad Down selects the Games destination");
+        assert!(
+            app.key(19, true),
+            "D-pad Up moves focus to the navigation rail"
+        );
+        assert!(
+            app.key(20, true),
+            "D-pad Down selects the Games destination"
+        );
         assert!(app.key(22, true), "D-pad Right enters the game shelf");
         assert!(app.key(20, true), "D-pad Down moves to the command strip");
         assert!(app.key(22, true), "D-pad Right focuses Add Favorite");
         assert!(app.key(96, true), "A activates the focused favorite action");
         assert_eq!(app.library.favorite_count(), 1);
 
-        assert!(app.key(19, true), "D-pad Up returns from the command strip to games");
+        assert!(
+            app.key(19, true),
+            "D-pad Up returns from the command strip to games"
+        );
         assert!(app.key(19, true), "D-pad Up returns to the navigation rail");
-        assert!(app.key(20, true), "D-pad Down moves to the Games destination");
+        assert!(
+            app.key(20, true),
+            "D-pad Down moves to the Games destination"
+        );
         assert!(app.key(20, true), "D-pad Down moves to Import");
         assert!(app.key(96, true), "A opens the folder path fallback");
         assert_eq!(app.library.page(), library::LibraryPage::Settings);
