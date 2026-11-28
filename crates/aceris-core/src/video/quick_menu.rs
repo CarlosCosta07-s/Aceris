@@ -67,7 +67,7 @@ pub fn move_selection(
         return 0;
     }
     let selected = selected.min(action_count - 1);
-    let columns = columns_for_surface(width, height);
+    let columns = columns_for_surface(width as u32, height as u32);
     let row = selected / columns;
     let column = selected % columns;
 
