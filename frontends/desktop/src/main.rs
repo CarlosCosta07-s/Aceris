@@ -412,6 +412,24 @@ fn play_intro(
         {
             return Err("could not allocate the startup animation frame".to_string());
         }
+        if diagnostics_visible && !menu_open {
+            let unhandled = system.unhandled_requests();
+            let host_performance = performance
+                .as_ref()
+                .and_then(DesktopPerformanceMonitor::latest_report);
+            if !quick_menu::render_diagnostics_overlay(
+                &mut frame,
+                frame_width as u32,
+                frame_height as u32,
+                MenuPixelFormat::Bgrx8,
+                system.cpu().pc(),
+                unhandled.len(),
+                unhandled.first().map(String::as_str),
+                host_performance,
+            ) {
+                return Err("could not render the diagnostics overlay".to_string());
+            }
+        }
         let composition_elapsed = composition_started
             .map(|composition_started| composition_started.elapsed())
             .unwrap_or_default();
@@ -771,6 +789,7 @@ fn emulate(
     let mut frame = Vec::new();
     let mut menu_open = false;
     let mut menu_selected = 0usize;
+    let mut diagnostics_visible = false;
     let mut layout_profile = layout_preferences.profile_for_game(
         system.game_identity(),
         window::GAME_CANVAS_WIDTH as u32,
@@ -902,6 +921,14 @@ fn emulate(
                         }
                     }
                     6 => capture_screenshot = true,
+                    7 => {
+                        diagnostics_visible = !diagnostics_visible;
+                        menu_open = false;
+                        keyboard.reset(system.input_mut());
+                        if let Some(performance) = performance.as_mut() {
+                            performance.reset_after_pause();
+                        }
+                    }
                     _ => {}
                 },
                 window::WindowEvent::Click { x, y } if pending_confirmation.is_some() => {
@@ -1010,6 +1037,14 @@ fn emulate(
                                 }
                             }
                             6 => capture_screenshot = true,
+                            7 => {
+                                diagnostics_visible = !diagnostics_visible;
+                                menu_open = false;
+                                keyboard.reset(system.input_mut());
+                                if let Some(performance) = performance.as_mut() {
+                                    performance.reset_after_pause();
+                                }
+                            }
                             _ => {}
                         }
                     }
