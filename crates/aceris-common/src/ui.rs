@@ -85,19 +85,11 @@ pub mod library {
     }
 
     pub fn details_title_y(logical_height: f32) -> f32 {
-        if logical_height < 520.0 {
-            256.0
-        } else {
-            292.0
-        }
+        if logical_height < 520.0 { 256.0 } else { 292.0 }
     }
 
     pub fn details_metadata_y(logical_height: f32) -> f32 {
-        if logical_height < 520.0 {
-            274.0
-        } else {
-            310.0
-        }
+        if logical_height < 520.0 { 274.0 } else { 310.0 }
     }
 
     pub fn details_button_height(logical_height: f32) -> f32 {
