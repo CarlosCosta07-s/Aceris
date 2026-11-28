@@ -3,7 +3,7 @@
 //! This module only holds state and draws RGBA frames; frontends feed it
 //! keyboard, mouse or touch input and decide what "launch" means.
 
-use super::font::{self, draw_text};
+use super::font;
 use super::frontend::{VirtualControlPositions, VirtualControlPreset};
 use crate::game_identity::GameIdentity;
 use crate::loader::ncsd::NcsdImageReader;
@@ -14,6 +14,28 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+
+/// Draws legacy library text with the same hierarchy used by responsive screens.
+/// Headings and selected-size labels use the shared semibold weight; compact
+/// metadata remains regular so dense screens keep their original fit.
+#[allow(clippy::too_many_arguments)]
+fn draw_text(
+    canvas: &mut [u8],
+    width: usize,
+    height: usize,
+    x: i32,
+    y: i32,
+    scale: usize,
+    text: &str,
+    color: [u8; 3],
+) {
+    let weight = if scale >= 2 {
+        font::TextWeight::Semibold
+    } else {
+        font::TextWeight::Regular
+    };
+    font::draw_text_with_weight(canvas, width, height, x, y, scale, text, color, weight);
+}
 
 /// Canvas size the layout is designed for.
 pub const WIDTH: usize = 400;
