@@ -7193,7 +7193,7 @@ mod tests {
         assert_eq!(pixel(52, 20), [0x09, 0x0F, 0x15]);
         assert_eq!(pixel(10, 10), [0, 0, 0]);
         assert_eq!(pixel(14, 10), [0x39, 0x57, 0x6B]);
-        assert_eq!(pixel(15, 15), [0x19, 0x2B, 0x3A]);
+        assert_eq!(pixel(15, 15), brand::rgb(brand::SURFACE_PANEL));
         assert_eq!(pixel(18, 12), [0x6C, 0x91, 0xA5]);
         assert_eq!(pixel(18, 32), [0x17, 0x26, 0x35]);
     }
