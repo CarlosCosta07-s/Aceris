@@ -9230,13 +9230,37 @@ mod tests {
     }
 
     #[test]
+    fn console_home_renders_rail_and_selected_portrait_cover_in_brand_surfaces() {
+        let mut library = library(2);
+        library.select_page(LibraryPage::Home);
+        library.recent.clear();
+
+        let frame = library.render_responsive(1000, 562);
+        let pixel = |x: usize, y: usize| {
+            let offset = (y * 1000 + x) * 4;
+            &frame[offset..offset + 3]
+        };
+        assert_eq!(pixel(8, 8), &brand::rgb(brand::SURFACE_HEADER));
+        assert_eq!(pixel(90, 8), &brand::rgb(brand::SURFACE_BASE));
+
+        let focus_x = (ui::home::CAROUSEL_X - 2.0) as usize;
+        let focus_y = (ui::home::carousel_top(562.0) - 2.0) as usize;
+        assert_eq!(
+            pixel(focus_x, focus_y),
+            &brand::rgb(brand::ACCENT_RED_LIGHT)
+        );
+    }
+
+    #[test]
     fn landscape_home_uses_five_square_cover_hitboxes() {
         let mut library = library(6);
         library.select_page(LibraryPage::Home);
         library.recent.clear();
+        // The fifth portrait cover is intentionally clipped by the right edge;
+        // its visible portion remains a valid touch target.
         let fifth_x = (ui::home::CAROUSEL_X
             + 4.0 * ui::home::GAME_CARD_STEP
-            + ui::home::GAME_CARD_WIDTH * 0.5) as i32;
+            + 80.0) as i32;
         let y = (ui::home::carousel_top(600.0) + 40.0) as i32;
 
         assert_eq!(
@@ -9269,9 +9293,11 @@ mod tests {
         let mut library = Library::new(entries, dir.display().to_string());
         library.select_page(LibraryPage::Home);
         library.recent.clear();
+        // The fifth portrait cover is intentionally clipped by the right edge;
+        // its visible portion remains a valid touch target.
         let fifth_x = (ui::home::CAROUSEL_X
             + 4.0 * ui::home::GAME_CARD_STEP
-            + ui::home::GAME_CARD_WIDTH * 0.5) as i32;
+            + 80.0) as i32;
         let home_y = (ui::home::carousel_top(450.0) + 40.0) as i32;
         assert_eq!(
             library.click_responsive(fifth_x, home_y, 1000, 450),
@@ -9373,35 +9399,34 @@ mod tests {
     }
 
     #[test]
-    fn landscape_home_header_navigates_and_imports_from_the_console_bar() {
+    fn landscape_home_sidebar_navigates_and_imports_from_its_own_icon() {
         let dir =
-            std::env::temp_dir().join(format!("aceris-landscape-header-{}", std::process::id()));
+            std::env::temp_dir().join(format!("aceris-landscape-sidebar-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let mut library = Library::new(Vec::new(), dir.display().to_string());
 
-        for (x, expected) in [
-            (60, LibraryPage::Home),
-            (188, LibraryPage::Home),
-            (288, LibraryPage::Recent),
-            (392, LibraryPage::Games),
-            (507, LibraryPage::Favorites),
-            (640, LibraryPage::Homebrew),
-            (924, LibraryPage::Settings),
+        for (slot, expected) in [
+            (0, LibraryPage::Home),
+            (1, LibraryPage::Games),
+            (3, LibraryPage::Favorites),
+            (4, LibraryPage::Recent),
+            (5, LibraryPage::Homebrew),
+            (6, LibraryPage::Settings),
         ] {
             library.select_page(LibraryPage::Home);
-            assert_eq!(
-                library.click_responsive(x, 32, 1000, 600),
-                ClickResult::Ignored
-            );
+            let y = ui::home::sidebar_item_center_y(slot, 600.0) as i32;
+            assert_eq!(library.click_responsive(38, y, 1000, 600), ClickResult::Ignored);
             assert_eq!(library.page(), expected);
         }
 
         library.select_page(LibraryPage::Home);
+        let import_y = ui::home::sidebar_item_center_y(2, 600.0) as i32;
         assert_eq!(
-            library.click_responsive(793, 32, 1000, 600),
+            library.click_responsive(38, import_y, 1000, 600),
             ClickResult::Ignored
         );
         assert!(library.take_folder_picker_request());
+        assert_eq!(library.page(), LibraryPage::Settings);
 
         fs::remove_dir_all(dir).unwrap();
     }
@@ -9487,7 +9512,7 @@ mod tests {
     }
 
     #[test]
-    fn home_controller_focus_reaches_actions_and_navigation_landscape() {
+    fn home_controller_focus_navigates_the_vertical_rail_and_command_strip() {
         let dir = std::env::temp_dir().join(format!(
             "aceris-home-focus-landscape-{}",
             std::process::id()
@@ -9505,6 +9530,14 @@ mod tests {
         );
 
         library.move_selection_responsive(-1, 1000, 600);
+        assert_eq!(library.home_focus, HomeFocus::Navigation);
+        assert_eq!(library.home_navigation_selected, 0);
+        library.move_selection_responsive(2, 1000, 600);
+        assert_eq!(library.home_navigation_selected, 2);
+        library.move_selection_horizontal_responsive(1, 1000, 600);
+        assert_eq!(library.home_focus, HomeFocus::Games);
+
+        library.move_selection_responsive(1, 1000, 600);
         assert_eq!(library.home_focus, HomeFocus::Actions);
         library.move_selection_horizontal_responsive(1, 1000, 600);
         assert_eq!(
@@ -9513,21 +9546,9 @@ mod tests {
         );
         assert_eq!(library.favorite_count(), 1);
 
-        library.move_selection_responsive(1, 1000, 600);
-        assert_eq!(library.home_focus, HomeFocus::Games);
-        library.move_selection_responsive(1, 1000, 600);
-        assert_eq!(library.home_focus, HomeFocus::Navigation);
-        library.move_selection_horizontal_responsive(1, 1000, 600);
-        assert_eq!(
-            library.activate_home_selection(1000, 600),
-            ClickResult::Ignored
-        );
-        assert_eq!(library.page(), LibraryPage::Games);
-
         library.select_page(LibraryPage::Home);
         library.move_selection_responsive(-1, 1000, 600);
-        library.move_selection_horizontal_responsive(1, 1000, 600);
-        library.move_selection_horizontal_responsive(1, 1000, 600);
+        library.move_selection_responsive(2, 1000, 600);
         assert_eq!(
             library.activate_home_selection(1000, 600),
             ClickResult::Ignored
@@ -9577,7 +9598,7 @@ mod tests {
     }
 
     #[test]
-    fn landscape_home_action_row_launches_favorites_import_and_refresh() {
+    fn landscape_home_command_strip_activates_game_favorite_options_and_library() {
         let dir = std::env::temp_dir().join(format!("aceris-home-actions-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("home-game.3ds");
@@ -9589,27 +9610,27 @@ mod tests {
         let mut library = Library::new(vec![entry], dir.display().to_string());
 
         assert_eq!(
-            library.click_responsive(280, 240, 1000, 600),
+            library.click_responsive(538, 120, 1000, 600),
             ClickResult::Activated
         );
         assert_eq!(
-            library.click_responsive(460, 240, 1000, 600),
+            library.click_responsive(450, 570, 1000, 600),
             ClickResult::Ignored
         );
         assert_eq!(library.favorite_count(), 1);
 
         assert_eq!(
-            library.click_responsive(640, 240, 1000, 600),
+            library.click_responsive(640, 570, 1000, 600),
             ClickResult::Ignored
         );
-        assert!(library.take_folder_picker_request());
+        assert_eq!(library.page(), LibraryPage::Settings);
 
         library.select_page(LibraryPage::Home);
         assert_eq!(
-            library.click_responsive(830, 240, 1000, 600),
+            library.click_responsive(830, 570, 1000, 600),
             ClickResult::Ignored
         );
-        assert_eq!(library.page(), LibraryPage::Home);
+        assert_eq!(library.page(), LibraryPage::Games);
 
         fs::remove_dir_all(dir).unwrap();
     }
