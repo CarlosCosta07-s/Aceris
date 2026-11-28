@@ -1123,8 +1123,8 @@ impl App {
                     .set_active_game_identity(system.game_identity());
                 self.system = Some(system);
                 self.key_mask = 0;
-        self.gamepad_extra_key_mask = 0;
-        self.gamepad_trigger_axis_mask = 0;
+                self.gamepad_extra_key_mask = 0;
+                self.gamepad_trigger_axis_mask = 0;
                 self.pointers.clear();
                 self.menu_tap = None;
                 self.menu_button_pointer = None;
@@ -1211,8 +1211,8 @@ impl App {
                 self.system = Some(system);
                 self.current_game_path = Some(path);
                 self.key_mask = 0;
-        self.gamepad_extra_key_mask = 0;
-        self.gamepad_trigger_axis_mask = 0;
+                self.gamepad_extra_key_mask = 0;
+                self.gamepad_trigger_axis_mask = 0;
                 self.quick_menu_selected = 0;
                 self.screen = Screen::Game;
                 self.apply_game_input();
