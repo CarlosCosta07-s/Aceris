@@ -2941,7 +2941,15 @@ impl Library {
                 brand::TEXT_MUTED,
             );
             responsive_panel(
-                frame, width, height, 20.0, 250.0, 360.0, 184.0, scale, brand::SURFACE_PANEL,
+                frame,
+                width,
+                height,
+                20.0,
+                250.0,
+                360.0,
+                184.0,
+                scale,
+                brand::SURFACE_PANEL,
             );
             if self.home_focus == HomeFocus::Actions {
                 responsive_panel(
