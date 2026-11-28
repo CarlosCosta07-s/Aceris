@@ -1,6 +1,7 @@
 //! Shared, host-independent rendering and hit testing for the in-game quick menu.
 
 use super::font;
+use aceris_common::brand;
 use crate::input_mapping::{GamepadAxisSettings, GamepadControl, GamepadMapping, PadButton};
 
 pub const ACTION_COUNT: usize = 12;
@@ -174,7 +175,7 @@ pub fn render_menu_button(frame: &mut [u8], width: u32, height: u32, format: Pix
         frame,
         width as usize,
         button,
-        [32, 55, 73],
+        brand::rgb(brand::SURFACE_BUTTON),
         232,
         7 * scale,
         format,
@@ -188,7 +189,7 @@ pub fn render_menu_button(frame: &mut [u8], width: u32, height: u32, format: Pix
         button.y + (button.height.saturating_sub(7 * scale * 2)) / 2,
         scale * 2,
         "MENU",
-        [255, 255, 255],
+        brand::rgb(brand::TEXT),
         format,
     );
     true
@@ -249,7 +250,7 @@ pub fn render_control_editor_hint(
         frame,
         width as usize,
         panel,
-        [17, 29, 44],
+        brand::rgb(brand::SURFACE_PANEL),
         238,
         9 * scale,
         format,
@@ -263,7 +264,7 @@ pub fn render_control_editor_hint(
         panel.y + 5 * scale,
         scale,
         "ARRASTE: MOVER",
-        [245, 238, 248],
+        brand::rgb(brand::TEXT),
         format,
     );
     draw_text_for_format(
@@ -274,7 +275,7 @@ pub fn render_control_editor_hint(
         panel.y + 18 * scale,
         scale,
         "PINCA: TAMANHO",
-        [245, 238, 248],
+        brand::rgb(brand::TEXT),
         format,
     );
     draw_text_for_format(
@@ -285,7 +286,7 @@ pub fn render_control_editor_hint(
         panel.y + 31 * scale,
         scale,
         "VOLTAR: SALVAR",
-        [190, 225, 203],
+        brand::rgb(brand::ACCENT_GREEN_LIGHT),
         format,
     );
     true
@@ -326,7 +327,7 @@ pub fn render_control_editor_guides(
                 width: thickness,
                 height: dash.min(height as usize - top),
             },
-            [76, 220, 224],
+            brand::rgb(brand::ACCENT_RED_LIGHT),
             184,
             format,
         );
@@ -341,7 +342,7 @@ pub fn render_control_editor_guides(
                 width: dash.min(width as usize - left),
                 height: thickness,
             },
-            [76, 220, 224],
+            brand::rgb(brand::ACCENT_RED_LIGHT),
             184,
             format,
         );
@@ -357,7 +358,7 @@ pub fn render_control_editor_guides(
             width: marker_size.min(width as usize),
             height: marker_size.min(height as usize),
         },
-        [245, 238, 248],
+        brand::rgb(brand::TEXT),
         235,
         format,
     );
@@ -421,17 +422,17 @@ pub fn render_diagnostics_overlay(
         frame,
         width as usize,
         panel,
-        [15, 26, 40],
+        brand::rgb(brand::SURFACE_BASE),
         236,
         8 * scale,
         format,
     );
-    draw_colored_border(frame, width as usize, panel, scale, [55, 94, 118], format);
+    draw_colored_border(frame, width as usize, panel, scale, brand::rgb(brand::BORDER), format);
     let accent = Rect {
         height: (3 * scale).min(panel.height),
         ..panel
     };
-    blend_rect(frame, width as usize, accent, [54, 193, 220], 255, format);
+    blend_rect(frame, width as usize, accent, brand::rgb(brand::ACCENT_RED), 255, format);
     draw_text_for_format(
         frame,
         width as usize,
@@ -440,7 +441,7 @@ pub fn render_diagnostics_overlay(
         panel.y + 6 * scale,
         scale,
         "ACERIS | DIAGNOSTICO",
-        [245, 238, 248],
+        brand::rgb(brand::TEXT),
         format,
     );
     for (index, line) in lines.iter().enumerate() {
@@ -452,7 +453,7 @@ pub fn render_diagnostics_overlay(
             panel.y + (18 + index * 10) * scale,
             scale,
             line,
-            [190, 225, 203],
+            brand::rgb(brand::ACCENT_GREEN_LIGHT),
             format,
         );
     }
@@ -503,7 +504,7 @@ pub fn render_confirmation_overlay(
         width: width as usize,
         height: height as usize,
     };
-    blend_rect(frame, width as usize, canvas, [6, 13, 22], 176, format);
+    blend_rect(frame, width as usize, canvas, brand::rgb(brand::SURFACE_BASE), 176, format);
     draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
 
     let title = match action {
@@ -519,7 +520,7 @@ pub fn render_confirmation_overlay(
         geometry.panel.y + 12 * scale,
         text_scale,
         title,
-        [245, 238, 248],
+        brand::rgb(brand::TEXT),
         format,
     );
     draw_text_for_format(
@@ -530,7 +531,7 @@ pub fn render_confirmation_overlay(
         geometry.panel.y + 42 * scale,
         text_scale,
         "Progresso não salvo",
-        [230, 220, 236],
+        brand::rgb(brand::TEXT),
         format,
     );
     draw_text_for_format(
@@ -541,7 +542,7 @@ pub fn render_confirmation_overlay(
         geometry.panel.y + 58 * scale,
         text_scale,
         "pode ser perdido.",
-        [230, 220, 236],
+        brand::rgb(brand::TEXT),
         format,
     );
 
@@ -553,9 +554,9 @@ pub fn render_confirmation_overlay(
             width as usize,
             *row,
             if is_selected {
-                [22, 91, 122]
+                brand::rgb(brand::SURFACE_SELECTED)
             } else {
-                [31, 46, 62]
+                brand::rgb(brand::SURFACE_CARD)
             },
             if is_selected { 250 } else { 230 },
             7 * scale,
@@ -571,7 +572,7 @@ pub fn render_confirmation_overlay(
                     width: (3 * scale).min(row.width),
                     height: row.height,
                 },
-                [92, 220, 237],
+                brand::rgb(brand::ACCENT_RED_LIGHT),
                 255,
                 format,
             );
@@ -587,7 +588,7 @@ pub fn render_confirmation_overlay(
             text_y,
             text_scale,
             labels[index],
-            [255, 255, 255],
+            brand::rgb(brand::TEXT),
             format,
         );
     }
@@ -781,7 +782,7 @@ pub fn render_gamepad_mapping_editor(
         width: width as usize,
         height: height as usize,
     };
-    blend_rect(frame, width as usize, canvas, [6, 13, 22], 205, format);
+    blend_rect(frame, width as usize, canvas, brand::rgb(brand::SURFACE_BASE), 205, format);
     draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
     draw_text_for_format(
         frame,
@@ -795,14 +796,14 @@ pub fn render_gamepad_mapping_editor(
         } else {
             "MAPEAMENTO FISICO"
         },
-        [245, 238, 248],
+        brand::rgb(brand::TEXT),
         format,
     );
     blend_rounded_rect(
         frame,
         width as usize,
         geometry.scope,
-        [34, 58, 76],
+        brand::rgb(brand::SURFACE_RAISED),
         248,
         6 * scale,
         format,
@@ -815,7 +816,7 @@ pub fn render_gamepad_mapping_editor(
         geometry.scope.y + (geometry.scope.height.saturating_sub(7 * scale)) / 2,
         scale,
         scope_label,
-        [190, 225, 203],
+        brand::rgb(brand::ACCENT_GREEN_LIGHT),
         format,
     );
 
@@ -826,9 +827,9 @@ pub fn render_gamepad_mapping_editor(
             width as usize,
             *row,
             if is_selected {
-                [22, 91, 122]
+                brand::rgb(brand::SURFACE_SELECTED)
             } else {
-                [31, 46, 62]
+                brand::rgb(brand::SURFACE_CARD)
             },
             if is_selected { 250 } else { 232 },
             6 * scale,
@@ -844,7 +845,7 @@ pub fn render_gamepad_mapping_editor(
                     width: (3 * scale).min(row.width),
                     height: row.height,
                 },
-                [92, 220, 237],
+                brand::rgb(brand::ACCENT_RED_LIGHT),
                 255,
                 format,
             );
@@ -859,7 +860,7 @@ pub fn render_gamepad_mapping_editor(
                 width: scale,
                 height: row.height.saturating_sub(4 * scale),
             },
-            [63, 103, 127],
+            brand::rgb(brand::BORDER),
             180,
             format,
         );
@@ -872,7 +873,7 @@ pub fn render_gamepad_mapping_editor(
             text_y,
             text_scale,
             GamepadControl::ALL[index].label(),
-            [245, 238, 248],
+            brand::rgb(brand::TEXT),
             format,
         );
         let target_label = mapping
@@ -887,7 +888,7 @@ pub fn render_gamepad_mapping_editor(
             text_y,
             text_scale,
             target_label,
-            [190, 225, 203],
+            brand::rgb(brand::ACCENT_GREEN_LIGHT),
             format,
         );
     }
@@ -905,7 +906,7 @@ pub fn render_gamepad_mapping_editor(
             frame,
             width as usize,
             rect,
-            [34, 58, 76],
+            brand::rgb(brand::SURFACE_RAISED),
             248,
             6 * scale,
             format,
@@ -919,7 +920,7 @@ pub fn render_gamepad_mapping_editor(
             rect.y + (rect.height.saturating_sub(7 * scale)) / 2,
             scale,
             label,
-            [255, 255, 255],
+            brand::rgb(brand::TEXT),
             format,
         );
     }
@@ -1096,7 +1097,7 @@ pub fn render_gamepad_axis_editor(
         width: width as usize,
         height: height as usize,
     };
-    blend_rect(frame, width as usize, canvas, [6, 13, 22], 205, format);
+    blend_rect(frame, width as usize, canvas, brand::rgb(brand::SURFACE_BASE), 205, format);
     draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
     draw_text_for_format(
         frame,
@@ -1106,14 +1107,14 @@ pub fn render_gamepad_axis_editor(
         geometry.panel.y + 10 * scale,
         text_scale,
         "ANALOGICO",
-        [245, 238, 248],
+        brand::rgb(brand::TEXT),
         format,
     );
     blend_rounded_rect(
         frame,
         width as usize,
         geometry.scope,
-        [34, 58, 76],
+        brand::rgb(brand::SURFACE_RAISED),
         248,
         6 * scale,
         format,
@@ -1126,7 +1127,7 @@ pub fn render_gamepad_axis_editor(
         geometry.scope.y + (geometry.scope.height.saturating_sub(7 * scale)) / 2,
         scale,
         scope_label,
-        [190, 225, 203],
+        brand::rgb(brand::ACCENT_GREEN_LIGHT),
         format,
     );
 
@@ -1135,7 +1136,7 @@ pub fn render_gamepad_axis_editor(
             frame,
             width as usize,
             *row,
-            [31, 46, 62],
+            brand::rgb(brand::SURFACE_CARD),
             232,
             6 * scale,
             format,
@@ -1154,7 +1155,7 @@ pub fn render_gamepad_axis_editor(
             row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
             text_scale,
             label,
-            [245, 238, 248],
+            brand::rgb(brand::TEXT),
             format,
         );
         let value = match index {
@@ -1187,7 +1188,7 @@ pub fn render_gamepad_axis_editor(
                 row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
                 text_scale,
                 value,
-                [190, 225, 203],
+                brand::rgb(brand::ACCENT_GREEN_LIGHT),
                 format,
             );
         } else {
@@ -1199,7 +1200,7 @@ pub fn render_gamepad_axis_editor(
                 row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
                 text_scale,
                 "-",
-                [190, 225, 203],
+                brand::rgb(brand::ACCENT_GREEN_LIGHT),
                 format,
             );
             let center_value = if index == 2 {
@@ -1220,7 +1221,7 @@ pub fn render_gamepad_axis_editor(
                 row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
                 text_scale,
                 &center_value,
-                [190, 225, 203],
+                brand::rgb(brand::ACCENT_GREEN_LIGHT),
                 format,
             );
             draw_text_for_format(
@@ -1231,7 +1232,7 @@ pub fn render_gamepad_axis_editor(
                 row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
                 text_scale,
                 "+",
-                [190, 225, 203],
+                brand::rgb(brand::ACCENT_GREEN_LIGHT),
                 format,
             );
         }
@@ -1242,7 +1243,7 @@ pub fn render_gamepad_axis_editor(
             frame,
             width as usize,
             rect,
-            [34, 58, 76],
+            brand::rgb(brand::SURFACE_RAISED),
             248,
             6 * scale,
             format,
@@ -1256,7 +1257,7 @@ pub fn render_gamepad_axis_editor(
             rect.y + (rect.height.saturating_sub(7 * scale)) / 2,
             scale,
             label,
-            [255, 255, 255],
+            brand::rgb(brand::TEXT),
             format,
         );
     }
@@ -1396,7 +1397,7 @@ fn render_overlay_with_action_count(
         width: width as usize,
         height: height as usize,
     };
-    blend_rect(frame, width as usize, canvas, [6, 13, 22], 164, format);
+    blend_rect(frame, width as usize, canvas, brand::rgb(brand::SURFACE_BASE), 164, format);
     draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
 
     let title_x = geometry.panel.x + 18 * scale;
@@ -1409,7 +1410,7 @@ fn render_overlay_with_action_count(
         title_y,
         title_text_scale,
         "MENU DO JOGO",
-        [245, 238, 248],
+        brand::rgb(brand::TEXT),
         format,
     );
     draw_text_for_format(
@@ -1420,7 +1421,7 @@ fn render_overlay_with_action_count(
         geometry.panel.y + 28 * scale,
         scale,
         profile_label,
-        [190, 225, 203],
+        brand::rgb(brand::ACCENT_GREEN_LIGHT),
         format,
     );
     for (index, row) in geometry.rows.iter().take(geometry.action_count).enumerate() {
@@ -1430,9 +1431,9 @@ fn render_overlay_with_action_count(
             width as usize,
             *row,
             if is_selected {
-                [22, 91, 122]
+                brand::rgb(brand::SURFACE_SELECTED)
             } else {
-                [31, 46, 62]
+                brand::rgb(brand::SURFACE_CARD)
             },
             if is_selected { 250 } else { 230 },
             7 * scale,
@@ -1448,7 +1449,7 @@ fn render_overlay_with_action_count(
                     width: (3 * scale).min(row.width),
                     height: row.height,
                 },
-                [92, 220, 237],
+                brand::rgb(brand::ACCENT_RED_LIGHT),
                 255,
                 format,
             );
@@ -1468,7 +1469,7 @@ fn render_overlay_with_action_count(
             text_y,
             row_text_scale,
             label,
-            [255, 255, 255],
+            brand::rgb(brand::TEXT),
             format,
         );
     }
@@ -1527,26 +1528,26 @@ fn draw_panel_chrome(
         frame,
         width,
         near_shadow,
-        [6, 13, 22],
+        brand::rgb(brand::SURFACE_BASE),
         150,
         9 * scale,
         format,
     );
-    blend_rounded_rect(frame, width, panel, [55, 94, 118], 255, 9 * scale, format);
+    blend_rounded_rect(frame, width, panel, brand::rgb(brand::BORDER), 255, 9 * scale, format);
     let inner = Rect {
         x: panel.x.saturating_add(scale),
         y: panel.y.saturating_add(scale),
         width: panel.width.saturating_sub(2 * scale),
         height: panel.height.saturating_sub(2 * scale),
     };
-    blend_rounded_rect(frame, width, inner, [17, 29, 44], 250, 8 * scale, format);
+    blend_rounded_rect(frame, width, inner, brand::rgb(brand::SURFACE_PANEL), 250, 8 * scale, format);
     let accent = Rect {
         x: panel.x.saturating_add(9 * scale),
         y: panel.y.saturating_add(scale),
         width: panel.width.saturating_sub(18 * scale),
         height: (3 * scale).min(panel.height),
     };
-    blend_rounded_rect(frame, width, accent, [54, 193, 220], 255, 2 * scale, format);
+    blend_rounded_rect(frame, width, accent, brand::rgb(brand::ACCENT_RED), 255, 2 * scale, format);
 }
 
 /// Blends a rounded rectangle by drawing clipped row spans. The hit-test
@@ -1658,7 +1659,7 @@ fn draw_colored_border(
 }
 
 fn draw_border(frame: &mut [u8], width: usize, rect: Rect, thickness: usize, format: PixelFormat) {
-    draw_colored_border(frame, width, rect, thickness, [67, 137, 162], format);
+    draw_colored_border(frame, width, rect, thickness, brand::rgb(brand::BORDER), format);
 }
 
 fn blend_rect(
@@ -2148,14 +2149,14 @@ mod tests {
             + layout.panel.x
             + layout.panel.width / 2)
             * 4;
-        assert_eq!(&frame[accent_center..accent_center + 3], &[54, 193, 220]);
+        assert_eq!(&frame[accent_center..accent_center + 3], &brand::rgb(brand::ACCENT_RED));
 
         let selected = layout.rows[0];
         let marker = ((selected.y + selected.height / 2) * width as usize + selected.x) * 4;
-        assert_eq!(&frame[marker..marker + 3], &[92, 220, 237]);
+        assert_eq!(&frame[marker..marker + 3], &brand::rgb(brand::ACCENT_RED_LIGHT));
 
         let border = ((layout.panel.y + 12 * layout.scale) * width as usize + layout.panel.x) * 4;
-        assert_eq!(&frame[border..border + 3], &[55, 94, 118]);
+        assert_eq!(&frame[border..border + 3], &brand::rgb(brand::BORDER));
     }
 
     #[test]
