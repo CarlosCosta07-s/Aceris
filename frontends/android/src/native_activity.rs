@@ -111,6 +111,7 @@ unsafe extern "C" {
     fn AInputQueue_finishEvent(queue: *mut c_void, event: *mut c_void, handled: c_int);
 
     fn AInputEvent_getType(event: *const c_void) -> i32;
+    fn AInputEvent_getSource(event: *const c_void) -> i32;
     fn AKeyEvent_getAction(event: *const c_void) -> i32;
     fn AKeyEvent_getKeyCode(event: *const c_void) -> i32;
     fn AKeyEvent_getUnicodeChar(event: *const c_void) -> i32;
@@ -119,6 +120,7 @@ unsafe extern "C" {
     fn AMotionEvent_getPointerId(event: *const c_void, index: usize) -> i32;
     fn AMotionEvent_getX(event: *const c_void, index: usize) -> f32;
     fn AMotionEvent_getY(event: *const c_void, index: usize) -> f32;
+    fn AMotionEvent_getAxisValue(event: *const c_void, axis: i32, pointer_index: usize) -> f32;
 }
 
 const WINDOW_FORMAT_RGBA_8888: i32 = 1;
@@ -132,8 +134,12 @@ const MOTION_ACTION_MASK: i32 = 0xFF;
 const MOTION_ACTION_POINTER_INDEX_MASK: i32 = 0xFF00;
 const MOTION_ACTION_POINTER_INDEX_SHIFT: i32 = 8;
 const MOTION_ACTION_UP: i32 = 1;
+const MOTION_ACTION_MOVE: i32 = 2;
 const MOTION_ACTION_CANCEL: i32 = 3;
 const MOTION_ACTION_POINTER_UP: i32 = 6;
+const INPUT_SOURCE_CLASS_JOYSTICK: u32 = 0x0100_0000;
+const MOTION_AXIS_X: i32 = 0;
+const MOTION_AXIS_Y: i32 = 1;
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
 /// A raw pointer owned by the Android framework, stored as an address so it
@@ -987,12 +993,38 @@ unsafe fn handle_key(event: *mut c_void, app: &mut App) -> bool {
 /// `event` must be a live motion event.
 unsafe fn handle_motion(event: *mut c_void, app: &mut App, pointers: &mut Vec<Pointer>) {
     // SAFETY: caller guarantees a motion event; indices stay below the pointer count.
-    let (action, count) = unsafe {
+    let (source, action, count) = unsafe {
         (
+            AInputEvent_getSource(event as *const c_void) as u32,
             AMotionEvent_getAction(event),
             AMotionEvent_getPointerCount(event),
         )
     };
+
+    // Physical joysticks arrive as motion events, separate from touchscreen
+    // pointers. Use the primary stick only; digital gamepad buttons continue
+    // through the key-event path above.
+    if source & INPUT_SOURCE_CLASS_JOYSTICK == INPUT_SOURCE_CLASS_JOYSTICK {
+        pointers.clear();
+        match action & MOTION_ACTION_MASK {
+            MOTION_ACTION_MOVE => {
+                // SAFETY: joystick motion events expose at least one axis sample.
+                let (x, y) = unsafe {
+                    (
+                        AMotionEvent_getAxisValue(event, MOTION_AXIS_X, 0),
+                        AMotionEvent_getAxisValue(event, MOTION_AXIS_Y, 0),
+                    )
+                };
+                app.set_gamepad_axes(x, y);
+            }
+            MOTION_ACTION_CANCEL => {
+                app.set_gamepad_axes(0.0, 0.0);
+            }
+            _ => {}
+        }
+        return;
+    }
+
     pointers.clear();
     if action & MOTION_ACTION_MASK == MOTION_ACTION_CANCEL {
         app.set_pointers(&[]);
