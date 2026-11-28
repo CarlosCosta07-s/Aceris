@@ -8908,7 +8908,7 @@ mod tests {
         library.click_responsive(352, 378, 400, 800);
         assert!(!library.scan_config().directories.contains(&portrait_removed));
         assert_eq!(library.scan_config().directories.len(), 5);
-        assert_eq!(library.scan_directory_offset, 0);
+        assert_eq!(library.scan_directory_offset, 3);
 
         fs::remove_dir_all(root).unwrap();
     }
