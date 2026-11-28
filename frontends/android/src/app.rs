@@ -974,7 +974,10 @@ impl App {
             7 => self.toggle_virtual_control_edit_scope(),
             8 => self.begin_control_editor(),
             9 => self.capture_screenshot(),
-            10 => self.diagnostics_visible = !self.diagnostics_visible,
+            10 => {
+                self.diagnostics_visible = !self.diagnostics_visible;
+                self.resume_game();
+            }
             _ => {}
         }
     }
