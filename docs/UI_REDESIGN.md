@@ -22,16 +22,18 @@ Keep the existing Aceris color palette. Recreate the composition, hierarchy, spa
 
 Use the existing semantic tokens in `aceris-common::brand` as the only source of brand colors. Do not introduce a replacement palette or hard-code competing accent colors.
 
-Use a modern, readable sans-serif typography system with clear roles:
-- Display: featured game title and major page headings.
-- Heading: section titles and settings group titles.
+Use the original Aceris UI typeface from `crates/aceris-core/src/video/font.rs` with a clear scale hierarchy:
+- Display: featured game title and page headings.
+- Heading: section titles and settings groups.
 - Body: descriptions, navigation and actions.
 - Label: compact metadata, file format and status.
-- Numeric: aligned counters, progress and performance values.
+- Numeric: aligned counters and performance values.
 
-Typography must support Portuguese diacritics and Unicode. Avoid the current small, bitmap-like text treatment for primary navigation and page content. Keep text sizes responsive to the available surface.
+The custom typeface must remain legible at common landscape resolutions. Give primary titles room to breathe, use Semibold sparingly, maintain Portuguese accents and keep secondary labels visibly subordinate. Do not substitute a system font or introduce third-party font assets.
 
 Use a consistent spacing scale, predictable alignment, restrained borders, subtle elevation and rounded surfaces. Motion should be short, purposeful and optional; never make navigation depend on animation.
+
+The visual quality bar is a finished first-party console interface: precise alignment, consistent icon geometry, intentional empty space, clear active/focus states, carefully proportioned cover art, and quiet controller hints. Reuse Aceris colors and original symbols. The concept image defines the Home composition, while every artwork, icon and product mark remains Aceris-owned.
 
 ## Application shell
 
@@ -55,7 +57,7 @@ Use a consistent spacing scale, predictable alignment, restrained borders, subtl
 
 ## Core screens
 
-1. **Home** — featured/continue section, recently played, favorites or curated library highlights, and a prominent Import games action when the library is empty.
+1. **Home** — the approved console concept composition: selected-game identity centered at the top, one horizontal shelf of portrait game cards, five positions with the fifth clipped at the right edge, and a compact command strip. When the library is empty, show a clear import state without reverting to administration panels.
 2. **Games** — complete collection, search, format filters, sorting and grid/list presentation.
 3. **Favorites** — saved titles using the same card and list components.
 4. **Recent** — recently launched titles and clear empty state.
