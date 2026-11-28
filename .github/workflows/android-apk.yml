@@ -121,6 +121,7 @@ jobs:
           name: aceris-android-arm64-debug
           path: build/aceris-debug.apk
           if-no-files-found: error
+          retention-days: 14
 
       - name: Package isolated NativeActivity smoke-test APK
         shell: bash
@@ -178,5 +179,4 @@ jobs:
           name: aceris-android-startup-smoke-arm64
           path: build/aceris-startup-smoke.apk
           if-no-files-found: error
-          retention-days: 14
           retention-days: 14
