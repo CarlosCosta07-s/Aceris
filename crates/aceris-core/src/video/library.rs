@@ -6047,8 +6047,15 @@ impl Library {
         // duplicating its interactive controls.
         if self.page != LibraryPage::Home {
             if self.page == LibraryPage::Settings {
-                let (first_label, first_value, second_label, second_value, third_label, third_value, footer) =
-                    match self.settings_section {
+                let (
+                    first_label,
+                    first_value,
+                    second_label,
+                    second_value,
+                    third_label,
+                    third_value,
+                    footer,
+                ) = match self.settings_section {
                         SettingsSection::Library => (
                             "PASTAS MONITORADAS",
                             self.scan_config.directories.len().to_string(),
@@ -6062,14 +6069,22 @@ impl Library {
                                 } else {
                                     "LISTA"
                                 },
-                                if self.sort_descending { "Z–A" } else { "A–Z" }
+                                if self.sort_descending {
+                                    "Z–A"
+                                } else {
+                                    "A–Z"
+                                }
                             ),
                             "PASTAS E JOGOS LOCAIS",
                         ),
                         SettingsSection::Performance => (
                             "MODO DE DESEMPENHO",
-                            if self.performance_mode { "ATIVO" } else { "DESATIVADO" }
-                                .to_string(),
+                            if self.performance_mode {
+                                "ATIVO"
+                            } else {
+                                "DESATIVADO"
+                            }
+                            .to_string(),
                             "ZONA MORTA DO ANALÓGICO",
                             format!("{}%", self.gamepad_deadzone_percent),
                             "APLICAÇÃO",
@@ -6078,8 +6093,12 @@ impl Library {
                         ),
                         SettingsSection::Controls if self.touch_keyboard_enabled => (
                             "CONTROLES DE TOQUE",
-                            if self.virtual_controls_visible { "ATIVOS" } else { "OCULTOS" }
-                                .to_string(),
+                            if self.virtual_controls_visible {
+                                "ATIVOS"
+                            } else {
+                                "OCULTOS"
+                            }
+                            .to_string(),
                             "OPACIDADE / TAMANHO",
                             format!(
                                 "{}% / {}%",
@@ -6205,24 +6224,13 @@ impl Library {
                         brand::TEXT,
                     );
                 }
-                if self.settings_section != SettingsSection::Library {
+                if self.settings_section != SettingsSection::Library || logical_height >= 520.0 {
                     responsive_text(
                         frame,
                         width,
                         height,
                         780.0,
                         (bottom - 34.0).max(0.0),
-                        small_scale,
-                        footer,
-                        brand::TEXT_MUTED,
-                    );
-                } else {
-                    responsive_text(
-                        frame,
-                        width,
-                        height,
-                        780.0,
-                        438.0f32.min((bottom - 8.0).max(0.0)),
                         small_scale,
                         footer,
                         brand::TEXT_MUTED,
@@ -8357,10 +8365,8 @@ mod tests {
 
     #[test]
     fn settings_right_rail_summary_changes_with_active_category() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-settings-summary-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aceris-settings-summary-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let mut library = Library::new(Vec::new(), dir.display().to_string());
