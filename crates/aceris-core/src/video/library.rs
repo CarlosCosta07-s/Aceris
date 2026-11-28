@@ -6390,7 +6390,7 @@ fn render_home_game_tile(
         );
 
         let info_x = x + 99.0;
-        let info_scale = (title_scale / 2).max(small_scale).min(2);
+        let info_scale = title_scale.max(small_scale).min(2);
         responsive_text(
             frame,
             width,
