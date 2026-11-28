@@ -4449,6 +4449,11 @@ impl Library {
         }
     }
 
+    /// Draws the library as a 400x480 RGBA frame.
+    pub fn render(&self) -> Vec<u8> {
+        self.render_animated(0, None)
+    }
+
     pub fn render_animated(&self, frame_index: u64, background_frame: Option<&[u8]>) -> Vec<u8> {
         let (w, h) = (WIDTH, HEIGHT);
         let mut out = vec![255u8; w * h * 4];
