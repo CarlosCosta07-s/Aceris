@@ -4736,14 +4736,14 @@ impl Library {
                 height,
                 780.0,
                 174.0,
-                    small_scale,
-                    if self.page == LibraryPage::Settings {
-                        "BIBLIOTECA"
-                    } else {
-                        "SELECIONADO"
-                    },
-                    brand::ACCENT_GREEN_LIGHT,
-                );
+                small_scale,
+                if self.page == LibraryPage::Settings {
+                    "BIBLIOTECA"
+                } else {
+                    "SELECIONADO"
+                },
+                brand::ACCENT_GREEN_LIGHT,
+            );
             if let Some(entry) = selected_entry {
                 responsive_text(
                     frame,
@@ -4869,19 +4869,19 @@ impl Library {
                 brand::TEXT,
             );
 
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    780.0,
-                    (bottom - 34.0).max(0.0),
-                    small_scale,
-                    &format!(
-                        "{} PASTA(S) MONITORADA(S)",
-                        self.scan_config.directories.len()
-                    ),
-                    0xBBAFC7,
-                );
+            responsive_text(
+                frame,
+                width,
+                height,
+                780.0,
+                (bottom - 34.0).max(0.0),
+                small_scale,
+                &format!(
+                    "{} PASTA(S) MONITORADA(S)",
+                    self.scan_config.directories.len()
+                ),
+                0xBBAFC7,
+            );
         }
         if let Some(status) = &self.status {
             responsive_text(
