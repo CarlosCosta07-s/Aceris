@@ -16,6 +16,7 @@ path = "src/main.rs"
 aceris-common.workspace = true
 aceris-core.workspace = true
 aceris-graphics.workspace = true
+gilrs = "0.11.2"
 raw-window-handle.workspace = true
 
 [lints]
