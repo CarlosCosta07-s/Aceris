@@ -346,8 +346,7 @@ impl AttachedMediaMonitor {
         let Some(activity_class) = self.class_of(self.activity) else {
             return;
         };
-        let Some(method) =
-            self.method(activity_class, b"setVolumeControlStream\0", b"(I)V\0")
+        let Some(method) = self.method(activity_class, b"setVolumeControlStream\0", b"(I)V\0")
         else {
             self.delete_local(activity_class);
             return;
