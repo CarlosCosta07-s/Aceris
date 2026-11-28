@@ -2161,7 +2161,7 @@ mod tests {
         let (mut app, dir) = app_with_games(0);
         app.resize(400, 800);
         app.system = Some(System::new());
-        app.quick_menu_selected = quick_menu::ACTION_COUNT - 1;
+        app.quick_menu_selected = quick_menu::ACTION_EDIT_CONTROLS;
         app.activate_game_menu_action();
         assert!(app.controls_editor);
 
@@ -2308,7 +2308,7 @@ mod tests {
         let (mut app, dir) = app_with_games(0);
         app.resize(400, 800);
         app.system = Some(System::new());
-        app.quick_menu_selected = quick_menu::ACTION_COUNT - 1;
+        app.quick_menu_selected = quick_menu::ACTION_EDIT_CONTROLS;
         app.activate_game_menu_action();
         assert!(app.controls_editor);
 
