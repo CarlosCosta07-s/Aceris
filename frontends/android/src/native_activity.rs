@@ -1265,7 +1265,17 @@ fn render(
         }
 
         let presentation_started = performance_monitor.as_ref().map(|_| Instant::now());
-        if gpu_presenter.is_none() && *attempted_gpu_window != window {
+
+        // The launcher (including the startup animation and library) uses the
+        // original ANativeWindow CPU presenter. Host GPU initialization is not
+        // required to display the UI, so a device-driver failure must not keep
+        // the application from opening. Initialize the optional WGPU presenter
+        // only after a guest game is running.
+        let game_is_running = matches!(app.screen(), Screen::Game);
+        if !game_is_running {
+            gpu_presenter.take();
+            *attempted_gpu_window = Raw::default();
+        } else if gpu_presenter.is_none() && *attempted_gpu_window != window {
             *attempted_gpu_window = window;
             *gpu_presenter = create_android_gpu_presenter(
                 window.get(),
@@ -1277,12 +1287,16 @@ fn render(
             );
         }
 
-        let gpu_result = gpu_presenter.as_mut().map(|gpu| {
+        let gpu_result = if game_is_running {
+            gpu_presenter.as_mut().map(|gpu| {
             gpu.presenter
                 .as_mut()
                 .expect("Android GPU presenter is present while its owner is alive")
                 .present_rgba(frame, width, height)
-        });
+            })
+        } else {
+            None
+        };
         match gpu_result {
             Some(Ok(())) => {
                 let _ = std::fs::remove_file(recovery_file);
