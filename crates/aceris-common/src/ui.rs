@@ -132,10 +132,10 @@ pub mod home {
 
     pub const VISIBLE_GAME_CARDS: usize = 5;
     pub const CAROUSEL_X: f32 = 96.0;
-    pub const CAROUSEL_TOP: f32 = 206.0;
+    pub const CAROUSEL_TOP: f32 = 190.0;
     pub const GAME_CARD_WIDTH: f32 = 190.0;
-    pub const GAME_CARD_HEIGHT: f32 = 270.0;
-    pub const GAME_CARD_GAP: f32 = 14.0;
+    pub const GAME_CARD_HEIGHT: f32 = 280.0;
+    pub const GAME_CARD_GAP: f32 = 8.0;
     pub const GAME_CARD_STEP: f32 = GAME_CARD_WIDTH + GAME_CARD_GAP;
     // Kept temporarily for the legacy non-Home renderer while pages migrate.
     pub const SUMMARY_TOP: f32 = 492.0;
@@ -147,14 +147,14 @@ pub mod home {
 
     pub fn carousel_top(logical_height: f32) -> f32 {
         if logical_height < 520.0 {
-            logical_height * 0.40
+            logical_height * 0.34
         } else {
             CAROUSEL_TOP
         }
     }
 
     pub fn game_card_height(logical_height: f32) -> f32 {
-        (logical_height * 0.48).clamp(180.0, GAME_CARD_HEIGHT)
+        (logical_height * 0.50).clamp(200.0, GAME_CARD_HEIGHT)
     }
 
     pub fn command_bar_top(logical_height: f32) -> f32 {
