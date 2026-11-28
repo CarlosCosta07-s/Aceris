@@ -3,7 +3,7 @@
 use super::font;
 
 pub const ACTION_COUNT: usize = 11;
-/// Desktop exposes the six actions that do not depend on Android touch controls.
+/// Number of actions exposed by the desktop quick menu.
 pub const DESKTOP_ACTION_COUNT: usize = 8;
 
 /// A destructive action that must be confirmed before leaving the game session.
