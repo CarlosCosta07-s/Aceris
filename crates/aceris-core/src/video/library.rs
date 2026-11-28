@@ -2598,19 +2598,15 @@ impl Library {
             return ClickResult::Ignored;
         }
 
-        if self.page == LibraryPage::Settings
-            && (132.0..178.0).contains(&y)
-            && (28.0..730.0).contains(&x)
-        {
-            let section = if x < 262.0 {
-                SettingsSection::Library
-            } else if x < 496.0 {
-                SettingsSection::Performance
-            } else {
-                SettingsSection::Controls
-            };
-            self.select_settings_section(section);
-            return ClickResult::Ignored;
+        if self.page == LibraryPage::Settings {
+            if let Some(section) = ui::settings::section_index_at(x, y) {
+                self.select_settings_section(match section {
+                    0 => SettingsSection::Library,
+                    1 => SettingsSection::Performance,
+                    _ => SettingsSection::Controls,
+                });
+                return ClickResult::Ignored;
+            }
         }
 
         // The selected-game actions remain available regardless of the current tab.
@@ -4903,19 +4899,35 @@ impl Library {
                 brand::TEXT_MUTED,
             );
 
-            let settings_tabs = [
-                (40.0, 217.0, SettingsSection::Library),
-                (271.0, 217.0, SettingsSection::Performance),
-                (502.0, 217.0, SettingsSection::Controls),
+            let settings_sections = [
+                SettingsSection::Library,
+                SettingsSection::Performance,
+                SettingsSection::Controls,
             ];
-            for (x, tab_width, section) in settings_tabs {
+            for (index, section) in settings_sections.into_iter().enumerate() {
+                let x = ui::settings::tab_x(index);
                 let selected = self.settings_section == section;
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    x,
+                    ui::settings::TAB_TOP,
+                    ui::settings::TAB_WIDTH,
+                    ui::settings::TAB_HEIGHT,
+                    scale,
+                    if selected {
+                        brand::SURFACE_SELECTED
+                    } else {
+                        brand::SURFACE_CARD
+                    },
+                );
                 responsive_text_centered(
                     frame,
                     width,
                     height,
-                    x + tab_width * 0.5,
-                    151.0,
+                    x + ui::settings::TAB_WIDTH * 0.5,
+                    ui::settings::TAB_TEXT_Y,
                     text_scale,
                     section.label(),
                     if selected {
@@ -4929,9 +4941,9 @@ impl Library {
                         frame,
                         width as usize,
                         height as usize,
-                        x + tab_width * 0.22,
-                        171.0,
-                        tab_width * 0.56,
+                        x + ui::settings::TAB_WIDTH * 0.22,
+                        ui::settings::TAB_MARKER_TOP,
+                        ui::settings::TAB_WIDTH * 0.56,
                         2.0,
                         scale,
                         brand::ACCENT_RED,

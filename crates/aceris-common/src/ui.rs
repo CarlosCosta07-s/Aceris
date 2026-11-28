@@ -145,6 +145,36 @@ pub mod home {
     }
 }
 
+/// Shared geometry for landscape Settings navigation and its touch targets.
+pub mod settings {
+    pub const TAB_TOP: f32 = 132.0;
+    pub const TAB_HEIGHT: f32 = 44.0;
+    pub const TAB_TEXT_Y: f32 = 151.0;
+    pub const TAB_MARKER_TOP: f32 = 171.0;
+    pub const TAB_X: f32 = 40.0;
+    pub const TAB_WIDTH: f32 = 217.0;
+    pub const TAB_STEP: f32 = 231.0;
+    pub const HIT_LEFT: f32 = 28.0;
+    pub const HIT_TOP: f32 = 132.0;
+    pub const HIT_BOTTOM: f32 = 178.0;
+    pub const HIT_STEP: f32 = 234.0;
+    pub const HIT_RIGHT: f32 = 730.0;
+    pub const SECTION_COUNT: usize = 3;
+
+    pub fn tab_x(index: usize) -> f32 {
+        TAB_X + index as f32 * TAB_STEP
+    }
+
+    /// Maps the shared touch region to Library, Performance, or Controls.
+    pub fn section_index_at(x: f32, y: f32) -> Option<usize> {
+        if !(HIT_TOP..HIT_BOTTOM).contains(&y) || !(HIT_LEFT..HIT_RIGHT).contains(&x) {
+            return None;
+        }
+        let index = ((x - HIT_LEFT) / HIT_STEP).floor() as usize;
+        (index < SECTION_COUNT).then_some(index)
+    }
+}
+
 /// Consistent spacing steps in logical UI units (4-unit base grid).
 pub mod spacing {
     pub const XXS: f32 = 2.0;
@@ -266,6 +296,19 @@ mod tests {
         assert_eq!(portrait.logical_width, 400.0);
         assert_eq!(portrait.logical_height, 1920.0 / 2.7);
         assert_eq!(portrait.scale, 2.7);
+    }
+
+    #[test]
+    fn landscape_settings_tabs_share_their_render_and_touch_geometry() {
+        assert_eq!(settings::tab_x(0), 40.0);
+        assert_eq!(settings::tab_x(1), 271.0);
+        assert_eq!(settings::tab_x(2), 502.0);
+        assert_eq!(settings::section_index_at(100.0, 150.0), Some(0));
+        assert_eq!(settings::section_index_at(300.0, 150.0), Some(1));
+        assert_eq!(settings::section_index_at(600.0, 150.0), Some(2));
+        assert_eq!(settings::section_index_at(729.0, 150.0), Some(2));
+        assert_eq!(settings::section_index_at(730.0, 150.0), None);
+        assert_eq!(settings::section_index_at(100.0, 131.0), None);
     }
 
     #[test]
