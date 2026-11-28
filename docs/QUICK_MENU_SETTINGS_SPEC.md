@@ -76,7 +76,7 @@ Após cada função ser implementada, ela poderá ganhar um atalho configurável
 - Pausar/retomar.
 - Trocar a tela principal.
 - Salvar/carregar estado rápido, somente depois de save states validados.
-- Capturar screenshot, somente depois de captura e seleção de destino implementadas.
+- Capturar screenshot, já disponível no menu rápido; atalho configurável depende do editor de atalhos.
 
 A tela de atalhos deve indicar conflitos e oferecer restauração dos padrões.
 
