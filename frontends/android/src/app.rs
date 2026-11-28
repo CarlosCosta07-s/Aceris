@@ -1316,8 +1316,8 @@ mod gamepad_axis_tests {
         assert_eq!(gamepad_axis_to_circle_pad(f32::INFINITY, 16), 0);
         assert!(gamepad_axis_to_circle_pad(0.5, 16) > 0);
         assert!(gamepad_axis_to_circle_pad(-0.5, 16) < 0);
-        assert_eq!(gamepad_axis_to_circle_pad(0.10, 8), 0);
-        assert!(gamepad_axis_to_circle_pad(0.10, 8) > 0 || gamepad_axis_to_circle_pad(0.10, 8) == 0);
+        assert_eq!(gamepad_axis_to_circle_pad(0.07, 8), 0);
+        assert!(gamepad_axis_to_circle_pad(0.10, 8) > 0);
     }
 }
 
