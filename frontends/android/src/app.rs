@@ -1748,6 +1748,7 @@ fn gamepad_trigger_control_mask(left: f32, right: f32) -> u16 {
 #[cfg(test)]
 mod gamepad_axis_tests {
     use super::*;
+    use aceris_core::input::gamepad_axes_to_circle_pad;
 
     #[test]
     fn android_gamepad_keycodes_map_to_standardized_controls() {

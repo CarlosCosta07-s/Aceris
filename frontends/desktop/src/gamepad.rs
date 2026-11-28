@@ -259,7 +259,7 @@ fn button_mask(gamepad: &gilrs::Gamepad<'_>, mapping: &GamepadMapping) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aceris_core::input::pad;
+    use aceris_core::input::{gamepad_axes_to_circle_pad, pad};
     use aceris_core::input_mapping::PadButton;
 
     #[test]
