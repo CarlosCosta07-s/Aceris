@@ -5977,7 +5977,9 @@ mod tests {
         fs::write(dir.join("homebrew.smdh"), smdh).unwrap();
 
         library.reload();
-        let icon = library.smdh_icons.get(&game_path).unwrap();
+        assert_eq!(library.smdh_icons.len(), 1);
+        let scanned_game_path = &library.entries.first().unwrap().path;
+        let icon = library.smdh_icons.get(scanned_game_path).unwrap();
         assert_eq!((icon.width, icon.height), (48, 48));
         assert_eq!(&icon.pixels_rgba8[..4], &[255, 0, 0, 255]);
 
