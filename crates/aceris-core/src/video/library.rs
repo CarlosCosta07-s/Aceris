@@ -4756,7 +4756,7 @@ impl Library {
         let home_entries = self.home_entries();
         let center_x = (ui::home::SIDEBAR_WIDTH + 1000.0) * 0.5;
 
-        responsive_fill(
+        responsive_vertical_gradient(
             frame,
             width as usize,
             height as usize,
@@ -4765,6 +4765,7 @@ impl Library {
             1000.0,
             logical_height,
             scale,
+            brand::PURPLE_LIGHT,
             brand::SURFACE_BASE,
         );
         responsive_fill(
@@ -7890,71 +7891,145 @@ fn render_cover_art(
         scale,
         base,
     );
-    responsive_fill(
+    responsive_vertical_gradient(
         frame,
         width as usize,
         height as usize,
-        x + 4.0,
-        y + 4.0,
-        cover_width - 8.0,
-        cover_height - 8.0,
+        x + 1.0,
+        y + 1.0,
+        (cover_width - 2.0).max(0.0),
+        (cover_height - 2.0).max(0.0),
         scale,
+        accent,
         base,
     );
+
     if let Some(icon) = smdh_icon {
+        let icon_size = cover_width.min(cover_height) * 0.72;
+        let icon_x = x + (cover_width - icon_size) * 0.5;
+        let icon_y = y + (cover_height - icon_size) * 0.5;
+        responsive_rounded_fill(
+            frame,
+            width as usize,
+            height as usize,
+            icon_x - 5.0,
+            icon_y - 5.0,
+            icon_size + 10.0,
+            icon_size + 10.0,
+            scale,
+            10.0,
+            brand::SURFACE_RAISED,
+        );
         draw_smdh_icon(
             frame,
             width,
             height,
             scale,
-            x + 4.0,
-            y + 4.0,
-            cover_width - 8.0,
-            cover_height - 8.0,
+            icon_x,
+            icon_y,
+            icon_size,
+            icon_size,
             icon,
         );
         return;
     }
-    responsive_fill(
+
+    // A restrained, original geometric composition stands in for missing
+    // cover metadata. It uses the game's stable title hash to vary the layout,
+    // never downloaded or console-branded artwork.
+    let minimum = cover_width.min(cover_height);
+    let center_x = x + cover_width * 0.5;
+    let center_y = y + cover_height * 0.43;
+    let ring_radius = minimum * 0.27;
+    responsive_circle_outline(
         frame,
-        width as usize,
-        height as usize,
-        x + 10.0,
-        y + cover_height * 0.24,
-        cover_width - 20.0,
-        5.0,
-        scale,
-        accent,
-    );
-    responsive_fill(
-        frame,
-        width as usize,
-        height as usize,
-        x + cover_width * 0.18,
-        y + cover_height * 0.40,
-        cover_width * 0.64,
-        4.0,
+        width,
+        height,
+        center_x,
+        center_y,
+        ring_radius,
+        2.0,
         scale,
         highlight,
     );
-    responsive_fill(
+    responsive_circle_outline(
         frame,
-        width as usize,
-        height as usize,
-        x + cover_width * 0.34,
-        y + cover_height * 0.57,
-        cover_width * 0.32,
-        4.0,
+        width,
+        height,
+        center_x,
+        center_y,
+        ring_radius * 0.66,
+        1.4,
+        scale,
+        brand::TEXT_MUTED,
+    );
+
+    let mut hash = 2_166_136_261u32;
+    for byte in entry.title.bytes() {
+        hash = (hash ^ u32::from(byte)).wrapping_mul(16_777_619);
+    }
+    let direction = if hash & 1 == 0 { 1.0 } else { -1.0 };
+    let band_y = y + cover_height * (0.18 + (hash % 9) as f32 * 0.012);
+    responsive_line(
+        frame,
+        width,
+        height,
+        x - 8.0,
+        band_y,
+        x + cover_width + 8.0,
+        band_y + cover_height * 0.22 * direction,
+        minimum * 0.055,
         scale,
         accent,
+    );
+    responsive_line(
+        frame,
+        width,
+        height,
+        x - 6.0,
+        y + cover_height * 0.82,
+        x + cover_width + 6.0,
+        y + cover_height * 0.58,
+        minimum * 0.018,
+        scale,
+        highlight,
+    );
+
+    let monogram = entry
+        .title
+        .chars()
+        .find(|character| character.is_alphanumeric())
+        .map(|character| character.to_uppercase().to_string())
+        .unwrap_or_else(|| "A".to_string());
+    let monogram_scale = text_scale.saturating_mul(4).clamp(4, 10);
+    responsive_text_centered(
+        frame,
+        width,
+        height,
+        center_x,
+        center_y - (monogram_scale as f32 * 1.8),
+        monogram_scale,
+        &monogram,
+        brand::TEXT,
+    );
+    responsive_panel(
+        frame,
+        width,
+        height,
+        x + 8.0,
+        y + cover_height - 28.0,
+        42.0,
+        18.0,
+        scale,
+        brand::SURFACE_HEADER,
     );
     responsive_text_centered(
         frame,
         width,
         height,
-        x + cover_width * 0.5,
-        y + cover_height * 0.68,
-        text_scale,
+        x + 29.0,
+        y + cover_height - 23.0,
+        text_scale.max(1),
         "3DS",
         brand::TEXT,
     );
@@ -9527,6 +9602,64 @@ fn responsive_fill(
         return;
     }
     for row in top..bottom {
+        let start = (row * width + left) * 4;
+        let end = (row * width + right) * 4;
+        for rgba in frame[start..end].chunks_exact_mut(4) {
+            rgba.copy_from_slice(&pixel);
+        }
+    }
+}
+
+/// Fills a responsive vertical gradient using only the Aceris semantic palette.
+#[allow(clippy::too_many_arguments)]
+fn responsive_vertical_gradient(
+    frame: &mut [u8],
+    width: usize,
+    height: usize,
+    x: f32,
+    y: f32,
+    rect_width: f32,
+    rect_height: f32,
+    scale: f32,
+    top_color: u32,
+    bottom_color: u32,
+) {
+    if width == 0
+        || height == 0
+        || !scale.is_finite()
+        || scale <= 0.0
+        || !x.is_finite()
+        || !y.is_finite()
+        || !rect_width.is_finite()
+        || !rect_height.is_finite()
+        || rect_width <= 0.0
+        || rect_height <= 0.0
+        || frame.len() != width.saturating_mul(height).saturating_mul(4)
+    {
+        return;
+    }
+
+    let left = (x * scale).floor().max(0.0) as usize;
+    let top = (y * scale).floor().max(0.0) as usize;
+    let right = ((x + rect_width) * scale).ceil().min(width as f32) as usize;
+    let bottom = ((y + rect_height) * scale).ceil().min(height as f32) as usize;
+    if left >= right || top >= bottom {
+        return;
+    }
+
+    let rows = bottom - top;
+    for row in top..bottom {
+        let progress = if rows <= 1 {
+            0.0
+        } else {
+            (row - top) as f32 / (rows - 1) as f32
+        };
+        let channel = |shift: u32| {
+            let start = ((top_color >> shift) & 0xff) as f32;
+            let end = ((bottom_color >> shift) & 0xff) as f32;
+            (start + (end - start) * progress).round().clamp(0.0, 255.0) as u8
+        };
+        let pixel = [channel(16), channel(8), channel(0), 255];
         let start = (row * width + left) * 4;
         let end = (row * width + right) * 4;
         for rgba in frame[start..end].chunks_exact_mut(4) {
