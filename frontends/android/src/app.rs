@@ -994,9 +994,9 @@ impl App {
             5 => self.reset_game_layout(),
             6 => self.reset_virtual_controls_layout(),
             7 => self.toggle_virtual_control_edit_scope(),
-            8 => self.begin_control_editor(),
-            9 => self.capture_screenshot(),
-            10 => {
+            quick_menu::ACTION_EDIT_CONTROLS => self.begin_control_editor(),
+            quick_menu::ACTION_CAPTURE_SCREENSHOT => self.capture_screenshot(),
+            quick_menu::ACTION_DIAGNOSTICS => {
                 self.diagnostics_visible = !self.diagnostics_visible;
                 self.resume_game();
             }
