@@ -2144,9 +2144,11 @@ mod tests {
         ));
 
         let layout = geometry(width, height, ACTION_COUNT).unwrap();
-        let top_center =
-            ((layout.panel.y * width as usize) + layout.panel.x + layout.panel.width / 2) * 4;
-        assert_eq!(&frame[top_center..top_center + 3], &[54, 193, 220]);
+        let accent_center = (((layout.panel.y + layout.scale) * width as usize)
+            + layout.panel.x
+            + layout.panel.width / 2)
+            * 4;
+        assert_eq!(&frame[accent_center..accent_center + 3], &[54, 193, 220]);
 
         let selected = layout.rows[0];
         let marker = ((selected.y + selected.height / 2) * width as usize + selected.x) * 4;
