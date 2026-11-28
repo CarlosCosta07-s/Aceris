@@ -2386,6 +2386,24 @@ impl Library {
         }
     }
 
+    fn console_collection_first_visible(&self, visible_items: usize) -> usize {
+        let count = self.filtered_entries().len();
+        if count <= visible_items {
+            return 0;
+        }
+
+        let visible_items = visible_items.max(ui::library::GRID_COLUMNS);
+        let mut first_visible = self.first_visible.min(count - visible_items);
+        if self.selected < first_visible {
+            first_visible = (self.selected / ui::library::GRID_COLUMNS)
+                * ui::library::GRID_COLUMNS;
+        } else if self.selected >= first_visible + visible_items {
+            let needed = self.selected + 1 - visible_items;
+            first_visible = needed.div_ceil(ui::library::GRID_COLUMNS) * ui::library::GRID_COLUMNS;
+        }
+        first_visible.min(count - visible_items)
+    }
+
     fn home_first_visible(&self, visible_cards: usize) -> usize {
         let count = self.home_entries().len();
         if count <= visible_cards {
@@ -2503,6 +2521,119 @@ impl Library {
         }
     }
 
+    fn click_console_collection(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: u32,
+        height: u32,
+        logical_height: f32,
+    ) -> ClickResult {
+        if x < ui::home::SIDEBAR_WIDTH {
+            if let Some(slot) = (0..ui::home::SIDEBAR_ITEM_COUNT).find(|slot| {
+                let center_y = ui::home::sidebar_item_center_y(*slot, logical_height);
+                (center_y - 24.0..center_y + 24.0).contains(&y)
+            }) {
+                match slot {
+                    0 => self.select_page(LibraryPage::Home),
+                    1 => self.select_page(LibraryPage::Games),
+                    2 => self.request_folder_picker(),
+                    3 => self.select_page(LibraryPage::Favorites),
+                    4 => self.select_page(LibraryPage::Settings),
+                    _ => {}
+                }
+            }
+            return ClickResult::Ignored;
+        }
+
+        let command_top = ui::home::command_bar_top(logical_height);
+        if y >= command_top {
+            if (492.0..620.0).contains(&x) {
+                if self.selected_entry().is_some() {
+                    return ClickResult::Activated;
+                }
+                self.request_folder_picker();
+            } else if (630.0..770.0).contains(&x) {
+                self.toggle_selected_favorite();
+            } else if (774.0..892.0).contains(&x) {
+                self.select_page(LibraryPage::Settings);
+            } else if (892.0..1000.0).contains(&x) {
+                self.toggle_view_mode();
+            }
+            return ClickResult::Ignored;
+        }
+
+        if (78.0..116.0).contains(&y) {
+            if (96.0..182.0).contains(&x) {
+                self.select_page(LibraryPage::Games);
+            } else if (188.0..288.0).contains(&x) {
+                self.select_page(LibraryPage::Recent);
+            } else if (296.0..408.0).contains(&x) {
+                self.select_page(LibraryPage::Homebrew);
+            } else if (420.0..650.0).contains(&x) {
+                self.focus_search();
+            } else if (654.0..766.0).contains(&x) {
+                self.cycle_format_filter();
+            } else if (768.0..866.0).contains(&x) {
+                self.toggle_view_mode();
+            } else if (870.0..980.0).contains(&x) {
+                self.toggle_sort_order();
+            }
+            return ClickResult::Ignored;
+        }
+
+        let entries = self.filtered_entries();
+        if self.view_mode == LibraryViewMode::Grid {
+            let first_visible = self.console_collection_first_visible(
+                (ui::library::GRID_COLUMNS * 2).max(1),
+            );
+            let column = ((x - ui::library::GRID_ORIGIN_X) / ui::library::GRID_STEP_X)
+                .floor()
+                .max(0.0) as usize;
+            let row = ((y - ui::library::GRID_TOP) / ui::library::GRID_STEP_Y)
+                .floor()
+                .max(0.0) as usize;
+            if column < ui::library::GRID_COLUMNS
+                && x < ui::library::GRID_ORIGIN_X
+                    + column as f32 * ui::library::GRID_STEP_X
+                    + ui::library::GRID_CARD_WIDTH
+                && y >= ui::library::GRID_TOP
+                && y < command_top
+            {
+                let visible_rows = ((command_top - ui::library::GRID_TOP
+                    + ui::library::GRID_GAP_Y)
+                    / ui::library::GRID_STEP_Y)
+                    .floor()
+                    .max(1.0) as usize;
+                let first_visible = self.console_collection_first_visible(
+                    visible_rows * ui::library::GRID_COLUMNS,
+                );
+                let index = first_visible + row * ui::library::GRID_COLUMNS + column;
+                if index < entries.len() {
+                    if index == self.selected {
+                        return ClickResult::Activated;
+                    }
+                    self.selected = index;
+                    self.status = None;
+                    return ClickResult::Selected;
+                }
+            }
+        } else if (96.0..646.0).contains(&x) && y >= ui::library::GRID_TOP && y < command_top {
+            let row = ((y - ui::library::GRID_TOP) / 54.0).floor().max(0.0) as usize;
+            let index = self.first_visible + row;
+            if index < entries.len() {
+                if index == self.selected {
+                    return ClickResult::Activated;
+                }
+                self.selected = index;
+                self.status = None;
+                return ClickResult::Selected;
+            }
+        }
+        let _ = (width, height);
+        ClickResult::Ignored
+    }
+
     /// Handles the rail, shelf and command strip of the console-style Home.
     fn click_console_home(
         &mut self,
@@ -2596,6 +2727,17 @@ impl Library {
 
         if !portrait && self.page == LibraryPage::Home {
             return self.click_console_home(x, y, width, height, logical_height);
+        }
+        if !portrait
+            && matches!(
+                self.page,
+                LibraryPage::Games
+                    | LibraryPage::Favorites
+                    | LibraryPage::Recent
+                    | LibraryPage::Homebrew
+            )
+        {
+            return self.click_console_collection(x, y, width, height, logical_height);
         }
 
         if !portrait
@@ -4973,6 +5115,590 @@ impl Library {
         }
     }
 
+    fn console_collection_first_visible(&self, visible_items: usize) -> usize {
+        let count = self.filtered_entries().len();
+        if count <= visible_items {
+            return 0;
+        }
+
+        let visible_items = visible_items.max(ui::library::GRID_COLUMNS);
+        let mut first_visible = self.first_visible.min(count - visible_items);
+        if self.selected < first_visible {
+            first_visible = (self.selected / ui::library::GRID_COLUMNS)
+                * ui::library::GRID_COLUMNS;
+        } else if self.selected >= first_visible + visible_items {
+            let needed = self.selected + 1 - visible_items;
+            first_visible = needed.div_ceil(ui::library::GRID_COLUMNS) * ui::library::GRID_COLUMNS;
+        }
+        first_visible.min(count - visible_items)
+    }
+
+    /// Shared console collection view for Games, Favorites, Recent and Homebrew.
+    fn render_console_collection(
+        &self,
+        frame: &mut [u8],
+        width: u32,
+        height: u32,
+        scale: f32,
+        logical_height: f32,
+    ) {
+        let title_scale = ui::typography_scale(ui::TypographyRole::Display, scale).min(4);
+        let body_scale = ui::typography_scale(ui::TypographyRole::Body, scale);
+        let label_scale = ui::typography_scale(ui::TypographyRole::Caption, scale);
+        let entries = self.filtered_entries();
+        let selected_entry = entries.get(self.selected).copied();
+        let command_top = ui::home::command_bar_top(logical_height);
+        let grid_top = ui::library::GRID_TOP;
+        let visible_rows = ((command_top - grid_top + ui::library::GRID_GAP_Y)
+            / ui::library::GRID_STEP_Y)
+            .floor()
+            .max(1.0) as usize;
+        let visible_items = visible_rows * ui::library::GRID_COLUMNS;
+
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            0.0,
+            0.0,
+            1000.0,
+            logical_height,
+            scale,
+            brand::SURFACE_BASE,
+        );
+        render_console_sidebar(
+            frame,
+            width,
+            height,
+            scale,
+            logical_height,
+            self.page,
+        );
+
+        let (page_title, page_subtitle) = match self.page {
+            LibraryPage::Games => ("JOGOS", "Sua coleção completa"),
+            LibraryPage::Favorites => ("FAVORITOS", "Seus jogos favoritos"),
+            LibraryPage::Recent => ("RECENTES", "Continue de onde parou"),
+            LibraryPage::Homebrew => ("HOMEBREW", "Aplicativos e criações da comunidade"),
+            LibraryPage::Home | LibraryPage::Settings => ("BIBLIOTECA", "Sua coleção"),
+        };
+        responsive_text(
+            frame,
+            width,
+            height,
+            ui::home::SIDEBAR_WIDTH + 22.0,
+            29.0,
+            title_scale,
+            page_title,
+            brand::TEXT,
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            ui::home::SIDEBAR_WIDTH + 24.0,
+            55.0,
+            label_scale,
+            page_subtitle,
+            brand::TEXT_MUTED,
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            840.0,
+            39.0,
+            label_scale,
+            &format!("{} TÍTULO(S)", entries.len()),
+            brand::TEXT_MUTED,
+        );
+
+        // Section shortcuts, search and collection controls share one compact toolbar.
+        let tabs = [
+            (LibraryPage::Games, 96.0, 84.0, "JOGOS"),
+            (LibraryPage::Recent, 188.0, 100.0, "RECENTES"),
+            (LibraryPage::Homebrew, 296.0, 112.0, "HOMEBREW"),
+        ];
+        for (page, x, button_width, label) in tabs {
+            responsive_panel(
+                frame,
+                width,
+                height,
+                x,
+                78.0,
+                button_width,
+                34.0,
+                scale,
+                if self.page == page {
+                    brand::ACCENT_RED
+                } else {
+                    brand::SURFACE_CARD
+                },
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                x + button_width * 0.5,
+                90.0,
+                label_scale,
+                label,
+                brand::TEXT,
+            );
+        }
+
+        responsive_panel(
+            frame,
+            width,
+            height,
+            420.0,
+            78.0,
+            230.0,
+            34.0,
+            scale,
+            if self.search_focused {
+                brand::SURFACE_SELECTED
+            } else {
+                brand::SURFACE_RAISED
+            },
+        );
+        let search_label = if self.search_query.is_empty() {
+            "BUSCAR JOGO".to_string()
+        } else {
+            truncate(&self.search_query, 26)
+        };
+        responsive_text(
+            frame,
+            width,
+            height,
+            432.0,
+            90.0,
+            label_scale,
+            &search_label,
+            if self.search_focused {
+                brand::TEXT
+            } else {
+                brand::TEXT_MUTED
+            },
+        );
+        responsive_panel(
+            frame,
+            width,
+            height,
+            654.0,
+            78.0,
+            112.0,
+            34.0,
+            scale,
+            brand::SURFACE_CARD,
+        );
+        responsive_text_centered(
+            frame,
+            width,
+            height,
+            710.0,
+            90.0,
+            label_scale,
+            self.format_filter.label(),
+            brand::TEXT,
+        );
+        responsive_panel(
+            frame,
+            width,
+            height,
+            768.0,
+            78.0,
+            96.0,
+            34.0,
+            scale,
+            if self.view_mode == LibraryViewMode::Grid {
+                brand::SURFACE_SELECTED
+            } else {
+                brand::SURFACE_CARD
+            },
+        );
+        responsive_text_centered(
+            frame,
+            width,
+            height,
+            816.0,
+            90.0,
+            label_scale,
+            if self.view_mode == LibraryViewMode::Grid {
+                "GRADE"
+            } else {
+                "LISTA"
+            },
+            brand::TEXT,
+        );
+        responsive_panel(
+            frame,
+            width,
+            height,
+            870.0,
+            78.0,
+            110.0,
+            34.0,
+            scale,
+            brand::SURFACE_CARD,
+        );
+        responsive_text_centered(
+            frame,
+            width,
+            height,
+            925.0,
+            90.0,
+            label_scale,
+            if self.sort_descending { "Z–A" } else { "A–Z" },
+            brand::TEXT,
+        );
+
+        if entries.is_empty() {
+            responsive_panel(
+                frame,
+                width,
+                height,
+                96.0,
+                142.0,
+                550.0,
+                (command_top - 158.0).max(180.0),
+                scale,
+                brand::SURFACE_PANEL,
+            );
+            responsive_folder_icon(frame, width, height, 174.0, 266.0, scale);
+            let (empty_title, empty_subtitle) = match self.page {
+                LibraryPage::Favorites => (
+                    "Ainda não há favoritos",
+                    "Use X em um jogo para adicioná-lo aos favoritos.",
+                ),
+                LibraryPage::Recent => (
+                    "Nenhum jogo recente",
+                    "Os jogos iniciados aparecerão aqui.",
+                ),
+                LibraryPage::Homebrew => (
+                    "Nenhum homebrew encontrado",
+                    "Adicione arquivos .3dsx à biblioteca.",
+                ),
+                _ if !self.search_query.is_empty() => (
+                    "Nenhum resultado encontrado",
+                    "Altere a busca ou limpe os filtros.",
+                ),
+                _ => (
+                    "Sua biblioteca está vazia",
+                    "Importe uma pasta para adicionar seus jogos.",
+                ),
+            };
+            responsive_text(
+                frame,
+                width,
+                height,
+                246.0,
+                242.0,
+                title_scale,
+                empty_title,
+                brand::TEXT,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                248.0,
+                278.0,
+                body_scale,
+                empty_subtitle,
+                brand::TEXT_MUTED,
+            );
+        } else if self.view_mode == LibraryViewMode::Grid {
+            let first_visible = self.console_collection_first_visible(visible_items);
+            for (slot, entry) in entries
+                .iter()
+                .skip(first_visible)
+                .take(visible_items)
+                .enumerate()
+            {
+                let index = first_visible + slot;
+                let column = slot % ui::library::GRID_COLUMNS;
+                let row = slot / ui::library::GRID_COLUMNS;
+                let x = ui::library::GRID_ORIGIN_X
+                    + column as f32 * ui::library::GRID_STEP_X;
+                let y = grid_top + row as f32 * ui::library::GRID_STEP_Y;
+                render_home_game_tile(
+                    frame,
+                    width,
+                    height,
+                    scale,
+                    x,
+                    y,
+                    ui::library::GRID_CARD_WIDTH,
+                    ui::library::GRID_CARD_HEIGHT,
+                    entry,
+                    self.smdh_icons.get(&entry.path),
+                    index == self.selected,
+                    self.is_favorite(entry),
+                    self.is_recent(entry),
+                    label_scale,
+                    label_scale,
+                );
+            }
+        } else {
+            let list_top = grid_top;
+            let row_step = 54.0;
+            let row_height = 48.0;
+            let visible_list_rows = ((command_top - list_top - row_height + 8.0) / row_step)
+                .floor()
+                .max(1.0) as usize;
+            let first_visible = self.first_visible.min(entries.len().saturating_sub(1));
+            for (index, entry) in entries
+                .iter()
+                .enumerate()
+                .skip(first_visible)
+                .take(visible_list_rows)
+            {
+                let y = list_top + (index - first_visible) as f32 * row_step;
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    96.0,
+                    y,
+                    550.0,
+                    row_height,
+                    scale,
+                    if index == self.selected {
+                        brand::SURFACE_SELECTED
+                    } else {
+                        brand::SURFACE_CARD
+                    },
+                );
+                render_cover_art(
+                    frame,
+                    width,
+                    height,
+                    scale,
+                    104.0,
+                    y + 4.0,
+                    40.0,
+                    40.0,
+                    entry,
+                    self.smdh_icons.get(&entry.path),
+                    label_scale,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    156.0,
+                    y + 17.0,
+                    body_scale,
+                    &truncate(&entry.title, 44),
+                    brand::TEXT,
+                );
+                let extension = entry
+                    .path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("3ds");
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    580.0,
+                    y + 17.0,
+                    label_scale,
+                    &extension.to_ascii_uppercase(),
+                    brand::TEXT_MUTED,
+                );
+            }
+        }
+
+        // The details surface mirrors console software information without
+        // turning the collection into a desktop-style administration panel.
+        responsive_panel(
+            frame,
+            width,
+            height,
+            ui::library::DETAILS_PANEL_X,
+            ui::library::DETAILS_PANEL_TOP,
+            ui::library::DETAILS_PANEL_WIDTH,
+            ui::library::details_panel_height(logical_height),
+            scale,
+            brand::SURFACE_PANEL,
+        );
+        if let Some(entry) = selected_entry {
+            render_cover_art(
+                frame,
+                width,
+                height,
+                scale,
+                ui::library::DETAILS_ART_X,
+                ui::library::details_art_top(logical_height),
+                ui::library::details_art_size(logical_height),
+                ui::library::details_art_size(logical_height),
+                entry,
+                self.smdh_icons.get(&entry.path),
+                label_scale,
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                ui::library::DETAILS_CENTER_X,
+                ui::library::details_title_y(logical_height),
+                body_scale,
+                &truncate(&entry.title, 28),
+                brand::TEXT,
+            );
+            let extension = entry
+                .path
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("3ds");
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                ui::library::DETAILS_CENTER_X,
+                ui::library::details_metadata_y(logical_height),
+                label_scale,
+                &format!(".{}  ·  NINTENDO 3DS", extension.to_ascii_uppercase()),
+                brand::TEXT_MUTED,
+            );
+            let status = if self.is_recent(entry) {
+                "JOGADO RECENTEMENTE"
+            } else if self.is_favorite(entry) {
+                "NA LISTA DE FAVORITOS"
+            } else {
+                "NA SUA BIBLIOTECA"
+            };
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                ui::library::DETAILS_CENTER_X,
+                ui::library::details_metadata_y(logical_height) + 24.0,
+                label_scale,
+                status,
+                if self.is_favorite(entry) {
+                    brand::ACCENT_RED_LIGHT
+                } else {
+                    brand::TEXT_MUTED
+                },
+            );
+            responsive_fill(
+                frame,
+                width as usize,
+                height as usize,
+                ui::library::DETAILS_PANEL_X + 18.0,
+                ui::library::DETAILS_PANEL_TOP + 232.0,
+                ui::library::DETAILS_PANEL_WIDTH - 36.0,
+                1.0,
+                scale,
+                brand::BORDER,
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                ui::library::DETAILS_CENTER_X,
+                ui::library::DETAILS_PANEL_TOP + 255.0,
+                label_scale,
+                if self.is_recent(entry) {
+                    "A  CONTINUAR"
+                } else {
+                    "A  INICIAR JOGO"
+                },
+                brand::TEXT,
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                ui::library::DETAILS_CENTER_X,
+                ui::library::DETAILS_PANEL_TOP + 280.0,
+                label_scale,
+                "X  ADICIONAR FAVORITO",
+                brand::TEXT_MUTED,
+            );
+        } else {
+            responsive_folder_icon(
+                frame,
+                width,
+                height,
+                ui::library::DETAILS_CENTER_X - 30.0,
+                ui::library::DETAILS_PANEL_TOP + 110.0,
+                scale,
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                ui::library::DETAILS_CENTER_X,
+                ui::library::DETAILS_PANEL_TOP + 210.0,
+                label_scale,
+                "SELECIONE UM JOGO",
+                brand::TEXT_MUTED,
+            );
+        }
+
+        let command_y = command_top + 13.0;
+        let command_items = [
+            (
+                500.0,
+                "A",
+                if selected_entry.is_some() {
+                    if selected_entry.is_some_and(|entry| self.is_recent(entry)) {
+                        "CONTINUAR"
+                    } else {
+                        "JOGAR"
+                    }
+                } else {
+                    "IMPORTAR"
+                },
+                120.0,
+            ),
+            (640.0, "X", "FAVORITO", 126.0),
+            (782.0, "+", "AJUSTES", 110.0),
+            (
+                900.0,
+                "−",
+                if self.view_mode == LibraryViewMode::Grid {
+                    "LISTA"
+                } else {
+                    "GRADE"
+                },
+                100.0,
+            ),
+        ];
+        for (x, key, label, group_width) in command_items {
+            render_console_hint(
+                frame,
+                width,
+                height,
+                scale,
+                x,
+                command_y,
+                key,
+                label,
+                group_width,
+                false,
+                label_scale,
+            );
+        }
+
+        if let Some(status) = &self.status {
+            responsive_text(
+                frame,
+                width,
+                height,
+                ui::home::SIDEBAR_WIDTH + 22.0,
+                (command_top - 16.0).max(0.0),
+                label_scale,
+                &truncate(status, 92),
+                brand::TEXT_MUTED,
+            );
+        }
+    }
+
     fn render_landscape(
         &self,
         frame: &mut [u8],
@@ -5002,6 +5728,16 @@ impl Library {
 
         if self.page == LibraryPage::Home {
             self.render_console_home(frame, width, height, scale, logical_height);
+            return;
+        }
+        if matches!(
+            self.page,
+            LibraryPage::Games
+                | LibraryPage::Favorites
+                | LibraryPage::Recent
+                | LibraryPage::Homebrew
+        ) {
+            self.render_console_collection(frame, width, height, scale, logical_height);
             return;
         }
 
@@ -8458,6 +9194,140 @@ fn render_console_hint(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Shared five-destination rail used by all console-style collection screens.
+fn render_console_sidebar(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    scale: f32,
+    logical_height: f32,
+    page: LibraryPage,
+) {
+    responsive_fill(
+        frame,
+        width as usize,
+        height as usize,
+        0.0,
+        0.0,
+        ui::home::SIDEBAR_WIDTH,
+        logical_height,
+        scale,
+        brand::SURFACE_HEADER,
+    );
+    responsive_fill(
+        frame,
+        width as usize,
+        height as usize,
+        ui::home::SIDEBAR_WIDTH - 1.0,
+        0.0,
+        1.0,
+        logical_height,
+        scale,
+        brand::BORDER,
+    );
+    responsive_rounded_fill(
+        frame,
+        width as usize,
+        height as usize,
+        ui::home::SIDEBAR_BRAND_CENTER_X - 23.0,
+        ui::home::SIDEBAR_BRAND_CENTER_Y - 23.0,
+        46.0,
+        46.0,
+        scale,
+        23.0,
+        brand::ACCENT_RED,
+    );
+    render_console_nav_icon(
+        frame,
+        width,
+        height,
+        scale,
+        ui::home::SIDEBAR_BRAND_CENTER_X,
+        ui::home::SIDEBAR_BRAND_CENTER_Y,
+        8,
+        brand::TEXT,
+    );
+
+    let nav_pages = [
+        Some(LibraryPage::Home),
+        Some(LibraryPage::Games),
+        None,
+        Some(LibraryPage::Favorites),
+        Some(LibraryPage::Settings),
+    ];
+    for (slot, destination) in nav_pages.into_iter().enumerate() {
+        let center_y = ui::home::sidebar_item_center_y(slot, logical_height);
+        let selected = destination == Some(page)
+            || (slot == 1
+                && matches!(page, LibraryPage::Recent | LibraryPage::Homebrew));
+        if selected {
+            responsive_rounded_fill(
+                frame,
+                width as usize,
+                height as usize,
+                ui::home::SIDEBAR_BRAND_CENTER_X - 22.0,
+                center_y - 22.0,
+                44.0,
+                44.0,
+                scale,
+                22.0,
+                brand::ACCENT_RED,
+            );
+        } else {
+            responsive_rounded_fill(
+                frame,
+                width as usize,
+                height as usize,
+                ui::home::SIDEBAR_BRAND_CENTER_X - 21.0,
+                center_y - 21.0,
+                42.0,
+                42.0,
+                scale,
+                21.0,
+                brand::SURFACE_RAISED,
+            );
+        }
+        render_console_nav_icon(
+            frame,
+            width,
+            height,
+            scale,
+            ui::home::SIDEBAR_BRAND_CENTER_X,
+            center_y,
+            slot,
+            if selected {
+                brand::TEXT
+            } else {
+                brand::TEXT_MUTED
+            },
+        );
+    }
+
+    let power_y = ui::home::sidebar_power_center_y(logical_height);
+    responsive_rounded_fill(
+        frame,
+        width as usize,
+        height as usize,
+        ui::home::SIDEBAR_BRAND_CENTER_X - 21.0,
+        power_y - 21.0,
+        42.0,
+        42.0,
+        scale,
+        21.0,
+        brand::SURFACE_RAISED,
+    );
+    render_console_nav_icon(
+        frame,
+        width,
+        height,
+        scale,
+        ui::home::SIDEBAR_BRAND_CENTER_X,
+        power_y,
+        7,
+        brand::TEXT_MUTED,
+    );
+}
+
 fn render_console_game_card(
     frame: &mut [u8],
     width: u32,
