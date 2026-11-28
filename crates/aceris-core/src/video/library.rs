@@ -2549,8 +2549,7 @@ impl Library {
         if y < ui::chrome::HEADER_HEIGHT {
             let page = if (ui::chrome::BRAND_X..ui::chrome::BRAND_X + ui::chrome::BRAND_WIDTH)
                 .contains(&x)
-                || (ui::chrome::HOME_X..ui::chrome::HOME_X + ui::chrome::HOME_WIDTH)
-                    .contains(&x)
+                || (ui::chrome::HOME_X..ui::chrome::HOME_X + ui::chrome::HOME_WIDTH).contains(&x)
             {
                 Some(LibraryPage::Home)
             } else if (ui::chrome::RECENT_X..ui::chrome::RECENT_X + ui::chrome::RECENT_WIDTH)
@@ -2566,13 +2565,11 @@ impl Library {
                 .contains(&x)
             {
                 Some(LibraryPage::Favorites)
-            } else if (ui::chrome::HOMEBREW_X
-                ..ui::chrome::HOMEBREW_X + ui::chrome::HOMEBREW_WIDTH)
+            } else if (ui::chrome::HOMEBREW_X..ui::chrome::HOMEBREW_X + ui::chrome::HOMEBREW_WIDTH)
                 .contains(&x)
             {
                 Some(LibraryPage::Homebrew)
-            } else if (ui::chrome::SETTINGS_X
-                ..ui::chrome::SETTINGS_X + ui::chrome::SETTINGS_WIDTH)
+            } else if (ui::chrome::SETTINGS_X..ui::chrome::SETTINGS_X + ui::chrome::SETTINGS_WIDTH)
                 .contains(&x)
             {
                 Some(LibraryPage::Settings)
@@ -2581,8 +2578,7 @@ impl Library {
             };
             if let Some(page) = page {
                 self.select_page(page);
-            } else if (ui::chrome::IMPORT_X
-                ..ui::chrome::IMPORT_X + ui::chrome::IMPORT_WIDTH)
+            } else if (ui::chrome::IMPORT_X..ui::chrome::IMPORT_X + ui::chrome::IMPORT_WIDTH)
                 .contains(&x)
             {
                 self.request_folder_picker();
