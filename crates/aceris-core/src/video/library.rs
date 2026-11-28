@@ -2223,8 +2223,7 @@ impl Library {
                     SettingsSection::Library => {
                         for index in 0..self.scan_config.directories.len().min(3) {
                             let row_top = 332.0 + index as f32 * 32.0;
-                            if (row_top..row_top + 28.0).contains(&y)
-                                && (334.0..374.0).contains(&x)
+                            if (row_top..row_top + 28.0).contains(&y) && (334.0..374.0).contains(&x)
                             {
                                 self.remove_scan_directory_from_settings(index);
                                 return ClickResult::Ignored;
@@ -2255,9 +2254,7 @@ impl Library {
                             && self.touch_keyboard_enabled
                         {
                             self.toggle_virtual_controls_from_settings();
-                        } else if self.touch_keyboard_enabled
-                            && (410.0..464.0).contains(&y)
-                        {
+                        } else if self.touch_keyboard_enabled && (410.0..464.0).contains(&y) {
                             if (38.0..142.0).contains(&x) {
                                 self.cycle_virtual_controls_opacity_from_settings();
                             } else if (148.0..252.0).contains(&x) {
@@ -2354,7 +2351,8 @@ impl Library {
             }
             return ClickResult::Ignored;
         }
-        if self.page != LibraryPage::Home && self.page != LibraryPage::Settings
+        if self.page != LibraryPage::Home
+            && self.page != LibraryPage::Settings
             && (760.0..980.0).contains(&x)
         {
             if (238.0..282.0).contains(&y) {
@@ -2446,8 +2444,7 @@ impl Library {
                     SettingsSection::Library => {
                         for index in 0..self.scan_config.directories.len().min(3) {
                             let row_top = 226.0 + index as f32 * 28.0;
-                            if (row_top..row_top + 25.0).contains(&y)
-                                && (670.0..724.0).contains(&x)
+                            if (row_top..row_top + 25.0).contains(&y) && (670.0..724.0).contains(&x)
                             {
                                 self.remove_scan_directory_from_settings(index);
                                 return ClickResult::Ignored;
@@ -2482,9 +2479,7 @@ impl Library {
                             && (48.0..696.0).contains(&x)
                         {
                             self.toggle_virtual_controls_from_settings();
-                        } else if self.touch_keyboard_enabled
-                            && (338.0..430.0).contains(&y)
-                        {
+                        } else if self.touch_keyboard_enabled && (338.0..430.0).contains(&y) {
                             if (48.0..258.0).contains(&x) {
                                 self.cycle_virtual_controls_opacity_from_settings();
                             } else if (270.0..480.0).contains(&x) {
@@ -3101,10 +3096,15 @@ impl Library {
                         38.0,
                         310.0,
                         small_scale,
-                        &format!("PASTAS MONITORADAS ({})", self.scan_config.directories.len()),
+                        &format!(
+                            "PASTAS MONITORADAS ({})",
+                            self.scan_config.directories.len()
+                        ),
                         brand::ACCENT_GREEN_LIGHT,
                     );
-                    for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
+                    for (index, directory) in
+                        self.scan_config.directories.iter().take(3).enumerate()
+                    {
                         let row_y = 332.0 + index as f32 * 32.0;
                         responsive_panel(
                             frame, width, height, 34.0, row_y, 340.0, 28.0, scale, 0x2B4255,
@@ -3120,10 +3120,25 @@ impl Library {
                             brand::TEXT,
                         );
                         responsive_panel(
-                            frame, width, height, 334.0, row_y + 2.0, 36.0, 24.0, scale, 0x17485D,
+                            frame,
+                            width,
+                            height,
+                            334.0,
+                            row_y + 2.0,
+                            36.0,
+                            24.0,
+                            scale,
+                            0x17485D,
                         );
                         responsive_text_centered(
-                            frame, width, height, 352.0, row_y + 7.0, small_scale, "X", brand::TEXT,
+                            frame,
+                            width,
+                            height,
+                            352.0,
+                            row_y + 7.0,
+                            small_scale,
+                            "X",
+                            brand::TEXT,
                         );
                     }
                     if self.scan_config.directories.len() > 3 {
@@ -3134,7 +3149,10 @@ impl Library {
                             42.0,
                             430.0,
                             small_scale,
-                            &format!("+ {} outra(s) pasta(s)", self.scan_config.directories.len() - 3),
+                            &format!(
+                                "+ {} outra(s) pasta(s)",
+                                self.scan_config.directories.len() - 3
+                            ),
                             0xB6C7D5,
                         );
                     }
@@ -3147,7 +3165,11 @@ impl Library {
                         324.0,
                         44.0,
                         scale,
-                        if self.scan_config.options.recursive { 0x28543F } else { 0x23394B },
+                        if self.scan_config.options.recursive {
+                            0x28543F
+                        } else {
+                            0x23394B
+                        },
                     );
                     responsive_text_centered(
                         frame,
@@ -3172,7 +3194,11 @@ impl Library {
                         324.0,
                         44.0,
                         scale,
-                        if self.scan_path_input_focused { brand::ACCENT_RED } else { 0x23394B },
+                        if self.scan_path_input_focused {
+                            brand::ACCENT_RED
+                        } else {
+                            0x23394B
+                        },
                     );
                     responsive_text_centered(
                         frame,
@@ -3233,59 +3259,133 @@ impl Library {
                             283.0,
                             603.0,
                             small_scale,
-                            if self.sort_descending { "ORDEM: Z–A" } else { "ORDEM: A–Z" },
+                            if self.sort_descending {
+                                "ORDEM: Z–A"
+                            } else {
+                                "ORDEM: A–Z"
+                            },
                             brand::TEXT,
                         );
                     }
                 }
                 SettingsSection::Performance => {
                     responsive_text(
-                        frame, width, height, 38.0, 310.0, small_scale,
-                        "MODO DE EXECUÇÃO", brand::ACCENT_GREEN_LIGHT,
+                        frame,
+                        width,
+                        height,
+                        38.0,
+                        310.0,
+                        small_scale,
+                        "MODO DE EXECUÇÃO",
+                        brand::ACCENT_GREEN_LIGHT,
                     );
                     responsive_panel(
-                        frame, width, height, 38.0, 342.0, 324.0, 64.0, scale,
-                        if self.performance_mode { 0x28543F } else { 0x23394B },
+                        frame,
+                        width,
+                        height,
+                        38.0,
+                        342.0,
+                        324.0,
+                        64.0,
+                        scale,
+                        if self.performance_mode {
+                            0x28543F
+                        } else {
+                            0x23394B
+                        },
                     );
                     responsive_text(
-                        frame, width, height, 52.0, 354.0, small_scale,
-                        if self.performance_mode { "MODO DESEMPENHO: ATIVO" } else { "MODO DESEMPENHO: DESATIVADO" },
+                        frame,
+                        width,
+                        height,
+                        52.0,
+                        354.0,
+                        small_scale,
+                        if self.performance_mode {
+                            "MODO DESEMPENHO: ATIVO"
+                        } else {
+                            "MODO DESEMPENHO: DESATIVADO"
+                        },
                         brand::TEXT,
                     );
                     responsive_text(
-                        frame, width, height, 52.0, 380.0, small_scale,
+                        frame,
+                        width,
+                        height,
+                        52.0,
+                        380.0,
+                        small_scale,
                         "Aplicado ao iniciar o próximo jogo",
                         0xB6C7D5,
                     );
                     responsive_text(
-                        frame, width, height, 38.0, 426.0, small_scale,
-                        "CONTROLE FÍSICO", brand::ACCENT_GREEN_LIGHT,
+                        frame,
+                        width,
+                        height,
+                        38.0,
+                        426.0,
+                        small_scale,
+                        "CONTROLE FÍSICO",
+                        brand::ACCENT_GREEN_LIGHT,
                     );
                     responsive_panel(
                         frame, width, height, 38.0, 450.0, 324.0, 64.0, scale, 0x23394B,
                     );
                     responsive_text(
-                        frame, width, height, 52.0, 462.0, small_scale,
-                        "ZONA MORTA DO ANALÓGICO", brand::TEXT,
+                        frame,
+                        width,
+                        height,
+                        52.0,
+                        462.0,
+                        small_scale,
+                        "ZONA MORTA DO ANALÓGICO",
+                        brand::TEXT,
                     );
                     responsive_text(
-                        frame, width, height, 52.0, 488.0, small_scale,
+                        frame,
+                        width,
+                        height,
+                        52.0,
+                        488.0,
+                        small_scale,
                         &format!("{}%  ·  toque para alterar", self.gamepad_deadzone_percent),
                         0xB6C7D5,
                     );
                 }
                 SettingsSection::Controls => {
                     responsive_text(
-                        frame, width, height, 38.0, 310.0, small_scale,
-                        "CONTROLES VIRTUAIS", brand::ACCENT_GREEN_LIGHT,
+                        frame,
+                        width,
+                        height,
+                        38.0,
+                        310.0,
+                        small_scale,
+                        "CONTROLES VIRTUAIS",
+                        brand::ACCENT_GREEN_LIGHT,
                     );
                     if self.touch_keyboard_enabled {
                         responsive_panel(
-                            frame, width, height, 38.0, 342.0, 324.0, 56.0, scale,
-                            if self.virtual_controls_visible { 0x28543F } else { 0x23394B },
+                            frame,
+                            width,
+                            height,
+                            38.0,
+                            342.0,
+                            324.0,
+                            56.0,
+                            scale,
+                            if self.virtual_controls_visible {
+                                0x28543F
+                            } else {
+                                0x23394B
+                            },
                         );
                         responsive_text_centered(
-                            frame, width, height, 200.0, 360.0, small_scale,
+                            frame,
+                            width,
+                            height,
+                            200.0,
+                            360.0,
+                            small_scale,
                             if self.virtual_controls_visible {
                                 "CONTROLES DE TOQUE: ATIVOS"
                             } else {
@@ -3294,19 +3394,45 @@ impl Library {
                             brand::TEXT,
                         );
                         let control_options = [
-                            (38.0, "OPACIDADE", format!("{}%", self.virtual_controls_opacity_percent())),
-                            (148.0, "TAMANHO", format!("{}%", self.virtual_controls_size_percent())),
-                            (258.0, "LAYOUT", self.virtual_controls_preset.label().to_string()),
+                            (
+                                38.0,
+                                "OPACIDADE",
+                                format!("{}%", self.virtual_controls_opacity_percent()),
+                            ),
+                            (
+                                148.0,
+                                "TAMANHO",
+                                format!("{}%", self.virtual_controls_size_percent()),
+                            ),
+                            (
+                                258.0,
+                                "LAYOUT",
+                                self.virtual_controls_preset.label().to_string(),
+                            ),
                         ];
                         for (x, label, value) in control_options {
                             responsive_panel(
                                 frame, width, height, x, 424.0, 104.0, 64.0, scale, 0x23394B,
                             );
                             responsive_text_centered(
-                                frame, width, height, x + 52.0, 438.0, small_scale, label, 0xB6C7D5,
+                                frame,
+                                width,
+                                height,
+                                x + 52.0,
+                                438.0,
+                                small_scale,
+                                label,
+                                0xB6C7D5,
                             );
                             responsive_text_centered(
-                                frame, width, height, x + 52.0, 462.0, small_scale, &value, brand::TEXT,
+                                frame,
+                                width,
+                                height,
+                                x + 52.0,
+                                462.0,
+                                small_scale,
+                                &value,
+                                brand::TEXT,
                             );
                         }
                     } else {
@@ -3314,12 +3440,22 @@ impl Library {
                             frame, width, height, 38.0, 342.0, 324.0, 100.0, scale, 0x23394B,
                         );
                         responsive_text(
-                            frame, width, height, 52.0, 364.0, small_scale,
+                            frame,
+                            width,
+                            height,
+                            52.0,
+                            364.0,
+                            small_scale,
                             "Os controles de toque são disponibilizados",
                             brand::TEXT,
                         );
                         responsive_text(
-                            frame, width, height, 52.0, 390.0, small_scale,
+                            frame,
+                            width,
+                            height,
+                            52.0,
+                            390.0,
+                            small_scale,
                             "pelos frontends com suporte a tela sensível ao toque.",
                             0xB6C7D5,
                         );
@@ -4307,10 +4443,15 @@ impl Library {
                         48.0,
                         204.0,
                         text_scale,
-                        &format!("PASTAS MONITORADAS ({})", self.scan_config.directories.len()),
+                        &format!(
+                            "PASTAS MONITORADAS ({})",
+                            self.scan_config.directories.len()
+                        ),
                         brand::ACCENT_GREEN_LIGHT,
                     );
-                    for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
+                    for (index, directory) in
+                        self.scan_config.directories.iter().take(3).enumerate()
+                    {
                         let row_y = 226.0 + index as f32 * 28.0;
                         responsive_panel(
                             frame, width, height, 44.0, row_y, 620.0, 24.0, scale, 0x2B4255,
@@ -4326,10 +4467,25 @@ impl Library {
                             brand::TEXT,
                         );
                         responsive_panel(
-                            frame, width, height, 670.0, row_y + 1.0, 48.0, 22.0, scale, 0x17485D,
+                            frame,
+                            width,
+                            height,
+                            670.0,
+                            row_y + 1.0,
+                            48.0,
+                            22.0,
+                            scale,
+                            0x17485D,
                         );
                         responsive_text_centered(
-                            frame, width, height, 694.0, row_y + 6.0, small_scale, "REM", brand::TEXT,
+                            frame,
+                            width,
+                            height,
+                            694.0,
+                            row_y + 6.0,
+                            small_scale,
+                            "REM",
+                            brand::TEXT,
                         );
                     }
                     if self.scan_config.directories.len() > 3 {
@@ -4340,7 +4496,10 @@ impl Library {
                             54.0,
                             312.0,
                             small_scale,
-                            &format!("+ {} outra(s) pasta(s)", self.scan_config.directories.len() - 3),
+                            &format!(
+                                "+ {} outra(s) pasta(s)",
+                                self.scan_config.directories.len() - 3
+                            ),
                             0xB6C7D5,
                         );
                     }
@@ -4348,7 +4507,14 @@ impl Library {
                         frame, width, height, 44.0, 344.0, 322.0, 44.0, scale, 0x23394B,
                     );
                     responsive_text_centered(
-                        frame, width, height, 205.0, 358.0, small_scale, "IMPORTAR PASTA", brand::TEXT,
+                        frame,
+                        width,
+                        height,
+                        205.0,
+                        358.0,
+                        small_scale,
+                        "IMPORTAR PASTA",
+                        brand::TEXT,
                     );
                     responsive_panel(
                         frame,
@@ -4359,7 +4525,11 @@ impl Library {
                         322.0,
                         44.0,
                         scale,
-                        if self.scan_config.options.recursive { 0x28543F } else { 0x23394B },
+                        if self.scan_config.options.recursive {
+                            0x28543F
+                        } else {
+                            0x23394B
+                        },
                     );
                     responsive_text_centered(
                         frame,
@@ -4377,18 +4547,35 @@ impl Library {
                     );
                     if self.scan_path_input_focused {
                         responsive_text(
-                            frame, width, height, 48.0, 402.0, small_scale,
-                            &truncate(&self.search_query, 100), brand::ACCENT_GREEN_LIGHT,
+                            frame,
+                            width,
+                            height,
+                            48.0,
+                            402.0,
+                            small_scale,
+                            &truncate(&self.search_query, 100),
+                            brand::ACCENT_GREEN_LIGHT,
                         );
                         responsive_text(
-                            frame, width, height, 48.0, 426.0, small_scale,
+                            frame,
+                            width,
+                            height,
+                            48.0,
+                            426.0,
+                            small_scale,
                             "Digite o caminho completo e pressione Enter/OK.",
                             0xB6C7D5,
                         );
                     } else {
                         responsive_text(
-                            frame, width, height, 48.0, 402.0, small_scale,
-                            "PREFERÊNCIAS DA BIBLIOTECA", brand::ACCENT_GREEN_LIGHT,
+                            frame,
+                            width,
+                            height,
+                            48.0,
+                            402.0,
+                            small_scale,
+                            "PREFERÊNCIAS DA BIBLIOTECA",
+                            brand::ACCENT_GREEN_LIGHT,
                         );
                         responsive_panel(
                             frame, width, height, 44.0, 420.0, 322.0, 42.0, scale, 0x23394B,
@@ -4417,7 +4604,11 @@ impl Library {
                             543.0,
                             434.0,
                             small_scale,
-                            if self.sort_descending { "ORDEM: Z–A" } else { "ORDEM: A–Z" },
+                            if self.sort_descending {
+                                "ORDEM: Z–A"
+                            } else {
+                                "ORDEM: A–Z"
+                            },
                             brand::TEXT,
                         );
                     }
@@ -4442,7 +4633,11 @@ impl Library {
                         306.0,
                         118.0,
                         scale,
-                        if self.performance_mode { 0x28543F } else { 0x23394B },
+                        if self.performance_mode {
+                            0x28543F
+                        } else {
+                            0x23394B
+                        },
                     );
                     responsive_text_centered(
                         frame,
@@ -4451,7 +4646,11 @@ impl Library {
                         201.0,
                         270.0,
                         text_scale,
-                        if self.performance_mode { "DESEMPENHO ATIVO" } else { "DESEMPENHO DESATIVADO" },
+                        if self.performance_mode {
+                            "DESEMPENHO ATIVO"
+                        } else {
+                            "DESEMPENHO DESATIVADO"
+                        },
                         brand::TEXT,
                     );
                     responsive_text_centered(
@@ -4478,17 +4677,34 @@ impl Library {
                         frame, width, height, 390.0, 244.0, 306.0, 118.0, scale, 0x23394B,
                     );
                     responsive_text_centered(
-                        frame, width, height, 543.0, 270.0, text_scale,
-                        "ZONA MORTA DO ANALÓGICO", brand::TEXT,
+                        frame,
+                        width,
+                        height,
+                        543.0,
+                        270.0,
+                        text_scale,
+                        "ZONA MORTA DO ANALÓGICO",
+                        brand::TEXT,
                     );
                     responsive_text_centered(
-                        frame, width, height, 543.0, 306.0, text_scale,
+                        frame,
+                        width,
+                        height,
+                        543.0,
+                        306.0,
+                        text_scale,
                         &format!("{}%", self.gamepad_deadzone_percent),
                         brand::ACCENT_GREEN_LIGHT,
                     );
                     responsive_text_centered(
-                        frame, width, height, 543.0, 336.0, small_scale,
-                        "Toque para alterar o nível", 0xB6C7D5,
+                        frame,
+                        width,
+                        height,
+                        543.0,
+                        336.0,
+                        small_scale,
+                        "Toque para alterar o nível",
+                        0xB6C7D5,
                     );
                 }
                 SettingsSection::Controls => {
@@ -4512,7 +4728,11 @@ impl Library {
                             644.0,
                             72.0,
                             scale,
-                            if self.virtual_controls_visible { 0x28543F } else { 0x23394B },
+                            if self.virtual_controls_visible {
+                                0x28543F
+                            } else {
+                                0x23394B
+                            },
                         );
                         responsive_text_centered(
                             frame,
@@ -4529,19 +4749,45 @@ impl Library {
                             brand::TEXT,
                         );
                         let control_options = [
-                            (48.0, "OPACIDADE", format!("{}%", self.virtual_controls_opacity_percent())),
-                            (270.0, "TAMANHO", format!("{}%", self.virtual_controls_size_percent())),
-                            (492.0, "LAYOUT", self.virtual_controls_preset.label().to_string()),
+                            (
+                                48.0,
+                                "OPACIDADE",
+                                format!("{}%", self.virtual_controls_opacity_percent()),
+                            ),
+                            (
+                                270.0,
+                                "TAMANHO",
+                                format!("{}%", self.virtual_controls_size_percent()),
+                            ),
+                            (
+                                492.0,
+                                "LAYOUT",
+                                self.virtual_controls_preset.label().to_string(),
+                            ),
                         ];
                         for (x, label, value) in control_options {
                             responsive_panel(
                                 frame, width, height, x, 338.0, 210.0, 92.0, scale, 0x23394B,
                             );
                             responsive_text_centered(
-                                frame, width, height, x + 105.0, 360.0, small_scale, label, 0xB6C7D5,
+                                frame,
+                                width,
+                                height,
+                                x + 105.0,
+                                360.0,
+                                small_scale,
+                                label,
+                                0xB6C7D5,
                             );
                             responsive_text_centered(
-                                frame, width, height, x + 105.0, 394.0, text_scale, &value, brand::TEXT,
+                                frame,
+                                width,
+                                height,
+                                x + 105.0,
+                                394.0,
+                                text_scale,
+                                &value,
+                                brand::TEXT,
                             );
                         }
                     } else {
@@ -4549,12 +4795,22 @@ impl Library {
                             frame, width, height, 48.0, 244.0, 644.0, 112.0, scale, 0x23394B,
                         );
                         responsive_text_centered(
-                            frame, width, height, 370.0, 278.0, text_scale,
+                            frame,
+                            width,
+                            height,
+                            370.0,
+                            278.0,
+                            text_scale,
                             "CONTROLES DE TOQUE NÃO ESTÃO ATIVOS NESTE FRONTEND",
                             brand::TEXT,
                         );
                         responsive_text_centered(
-                            frame, width, height, 370.0, 312.0, small_scale,
+                            frame,
+                            width,
+                            height,
+                            370.0,
+                            312.0,
+                            small_scale,
                             "As opções aparecem nos frontends com suporte a toque.",
                             0xB6C7D5,
                         );
@@ -4888,10 +5144,24 @@ impl Library {
         if self.page != LibraryPage::Home {
             if self.page == LibraryPage::Settings {
                 responsive_text(
-                    frame, width, height, 780.0, 174.0, small_scale, "RESUMO", brand::ACCENT_GREEN_LIGHT,
+                    frame,
+                    width,
+                    height,
+                    780.0,
+                    174.0,
+                    small_scale,
+                    "RESUMO",
+                    brand::ACCENT_GREEN_LIGHT,
                 );
                 responsive_text(
-                    frame, width, height, 780.0, 205.0, small_scale, "PASTAS ATIVAS", 0xB6C7D5,
+                    frame,
+                    width,
+                    height,
+                    780.0,
+                    205.0,
+                    small_scale,
+                    "PASTAS ATIVAS",
+                    0xB6C7D5,
                 );
                 responsive_text(
                     frame,
@@ -4904,7 +5174,13 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_text(
-                    frame, width, height, 780.0, 266.0, small_scale, "JOGOS E HOMEBREW",
+                    frame,
+                    width,
+                    height,
+                    780.0,
+                    266.0,
+                    small_scale,
+                    "JOGOS E HOMEBREW",
                     0xB6C7D5,
                 );
                 responsive_text(
@@ -4918,7 +5194,14 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_text(
-                    frame, width, height, 780.0, 330.0, small_scale, "CATEGORIA ATUAL", 0xB6C7D5,
+                    frame,
+                    width,
+                    height,
+                    780.0,
+                    330.0,
+                    small_scale,
+                    "CATEGORIA ATUAL",
+                    0xB6C7D5,
                 );
                 responsive_text(
                     frame,
@@ -4934,7 +5217,14 @@ impl Library {
                     frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, 0x17485D,
                 );
                 responsive_text_centered(
-                    frame, width, height, 870.0, 398.0, small_scale, "ATUALIZAR BIBLIOTECA", brand::TEXT,
+                    frame,
+                    width,
+                    height,
+                    870.0,
+                    398.0,
+                    small_scale,
+                    "ATUALIZAR BIBLIOTECA",
+                    brand::TEXT,
                 );
                 responsive_text(
                     frame,
@@ -4947,161 +5237,161 @@ impl Library {
                     0xB6C7D5,
                 );
             } else {
-                
-            responsive_text(
-                frame,
-                width,
-                height,
-                780.0,
-                174.0,
-                small_scale,
-                if self.page == LibraryPage::Settings {
-                    "BIBLIOTECA"
-                } else {
-                    "SELECIONADO"
-                },
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            if let Some(entry) = selected_entry {
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    780.0,
-                    197.0,
-                    text_scale,
-                    &truncate(&entry.title, 26),
-                    brand::TEXT,
-                );
-                let extension = entry
-                    .path
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or("3ds");
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    782.0,
-                    220.0,
-                    small_scale,
-                    &format!(".{}", extension.to_ascii_uppercase()),
-                    0xB6C7D5,
-                );
-            } else {
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    780.0,
-                    199.0,
-                    small_scale,
-                    &format!("{} jogo(s)", game_count),
-                    brand::TEXT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    782.0,
-                    220.0,
-                    small_scale,
-                    &format!("{} homebrew(s)", homebrew_count),
-                    0xB6C7D5,
-                );
-            }
-            responsive_panel(
-                frame,
-                width,
-                height,
-                776.0,
-                238.0,
-                188.0,
-                42.0,
-                scale,
-                if selected_entry.is_some() {
-                    brand::ACCENT_RED
-                } else {
-                    0x23394B
-                },
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                870.0,
-                252.0,
-                small_scale,
-                "ABRIR JOGO",
-                brand::TEXT,
-            );
-            responsive_panel(
-                frame, width, height, 776.0, 286.0, 188.0, 42.0, scale, 0x23394B,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                870.0,
-                300.0,
-                small_scale,
-                if selected_entry.is_some_and(|entry| self.is_favorite(entry)) {
-                    "REMOVER FAVORITO"
-                } else {
-                    "ADICIONAR FAVORITO"
-                },
-                brand::TEXT,
-            );
-            responsive_panel(
-                frame,
-                width,
-                height,
-                776.0,
-                336.0,
-                188.0,
-                42.0,
-                scale,
-                brand::ACCENT_RED,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                870.0,
-                350.0,
-                small_scale,
-                "IMPORTAR PASTA",
-                brand::TEXT,
-            );
-            responsive_panel(
-                frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, 0x23394B,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                870.0,
-                398.0,
-                small_scale,
-                "ATUALIZAR",
-                brand::TEXT,
-            );
 
-            responsive_text(
-                frame,
-                width,
-                height,
-                780.0,
-                (bottom - 34.0).max(0.0),
-                small_scale,
-                &format!(
-                    "{} PASTA(S) MONITORADA(S)",
-                    self.scan_config.directories.len()
-                ),
-                0xB6C7D5,
-            );
-        
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    780.0,
+                    174.0,
+                    small_scale,
+                    if self.page == LibraryPage::Settings {
+                        "BIBLIOTECA"
+                    } else {
+                        "SELECIONADO"
+                    },
+                    brand::ACCENT_GREEN_LIGHT,
+                );
+                if let Some(entry) = selected_entry {
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        780.0,
+                        197.0,
+                        text_scale,
+                        &truncate(&entry.title, 26),
+                        brand::TEXT,
+                    );
+                    let extension = entry
+                        .path
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("3ds");
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        782.0,
+                        220.0,
+                        small_scale,
+                        &format!(".{}", extension.to_ascii_uppercase()),
+                        0xB6C7D5,
+                    );
+                } else {
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        780.0,
+                        199.0,
+                        small_scale,
+                        &format!("{} jogo(s)", game_count),
+                        brand::TEXT,
+                    );
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        782.0,
+                        220.0,
+                        small_scale,
+                        &format!("{} homebrew(s)", homebrew_count),
+                        0xB6C7D5,
+                    );
+                }
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    776.0,
+                    238.0,
+                    188.0,
+                    42.0,
+                    scale,
+                    if selected_entry.is_some() {
+                        brand::ACCENT_RED
+                    } else {
+                        0x23394B
+                    },
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    870.0,
+                    252.0,
+                    small_scale,
+                    "ABRIR JOGO",
+                    brand::TEXT,
+                );
+                responsive_panel(
+                    frame, width, height, 776.0, 286.0, 188.0, 42.0, scale, 0x23394B,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    870.0,
+                    300.0,
+                    small_scale,
+                    if selected_entry.is_some_and(|entry| self.is_favorite(entry)) {
+                        "REMOVER FAVORITO"
+                    } else {
+                        "ADICIONAR FAVORITO"
+                    },
+                    brand::TEXT,
+                );
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    776.0,
+                    336.0,
+                    188.0,
+                    42.0,
+                    scale,
+                    brand::ACCENT_RED,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    870.0,
+                    350.0,
+                    small_scale,
+                    "IMPORTAR PASTA",
+                    brand::TEXT,
+                );
+                responsive_panel(
+                    frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, 0x23394B,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    870.0,
+                    398.0,
+                    small_scale,
+                    "ATUALIZAR",
+                    brand::TEXT,
+                );
+
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    780.0,
+                    (bottom - 34.0).max(0.0),
+                    small_scale,
+                    &format!(
+                        "{} PASTA(S) MONITORADA(S)",
+                        self.scan_config.directories.len()
+                    ),
+                    0xB6C7D5,
+                );
             }
+
         }
         if let Some(status) = &self.status {
             responsive_text(
@@ -7201,10 +7491,8 @@ mod tests {
 
     #[test]
     fn settings_categories_switch_by_touch_and_horizontal_navigation() {
-        let root = std::env::temp_dir().join(format!(
-            "aceris-settings-sections-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("aceris-settings-sections-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let mut library = Library::new(Vec::new(), root.display().to_string());
         library.select_page(LibraryPage::Settings);
