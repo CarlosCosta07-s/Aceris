@@ -123,6 +123,64 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Package full Aceris startup test APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          mkdir -p build/fulltest-res build/fulltest-native/lib/arm64-v8a
+
+          cp -R frontends/android/res/. build/fulltest-res/
+          sed -i 's#<string name="app_name">Aceris</string>#<string name="app_name">Aceris Full Startup Test</string>#' build/fulltest-res/values/strings.xml
+          "$BUILD_TOOLS/aapt2" compile \
+            --dir build/fulltest-res \
+            -o build/aceris-fulltest-resources.zip
+
+          sed 's#package="org.aceris.emulator"#package="org.aceris.emulator.fulltest"#' \
+            frontends/android/AndroidManifest.xml > build/AndroidManifest-fulltest.xml
+
+          "$BUILD_TOOLS/aapt2" link \
+            -I "$ANDROID_HOME/platforms/android-35/android.jar" \
+            --manifest build/AndroidManifest-fulltest.xml \
+            --min-sdk-version 24 \
+            --target-sdk-version 34 \
+            --version-code 1 \
+            --version-name "0.0.1-fulltest" \
+            -o build/aceris-fulltest-unsigned.apk \
+            build/aceris-fulltest-resources.zip
+
+          install -m 0644 \
+            target/aarch64-linux-android/release/libaceris_android.so \
+            build/fulltest-native/lib/arm64-v8a/libaceris_android.so
+
+          (
+            cd build/fulltest-native
+            zip -q -0 ../aceris-fulltest-unsigned.apk lib/arm64-v8a/libaceris_android.so
+          )
+
+          "$BUILD_TOOLS/zipalign" -f -p 4 \
+            build/aceris-fulltest-unsigned.apk build/aceris-fulltest-aligned.apk
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks build/aceris-ci-debug.keystore \
+            --ks-key-alias androiddebugkey \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out build/aceris-full-startup-test.apk \
+            build/aceris-fulltest-aligned.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose build/aceris-full-startup-test.apk
+          "$BUILD_TOOLS/aapt" dump badging build/aceris-full-startup-test.apk | \
+            grep -F "package: name='org.aceris.emulator.fulltest'"
+          unzip -l build/aceris-full-startup-test.apk | grep -F "lib/arm64-v8a/libaceris_android.so"
+          sha256sum build/aceris-full-startup-test.apk
+
+      - name: Upload full Aceris startup test APK
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: aceris-android-full-startup-test-arm64
+          path: build/aceris-full-startup-test.apk
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Package isolated NativeActivity smoke-test APK
         shell: bash
         run: |
