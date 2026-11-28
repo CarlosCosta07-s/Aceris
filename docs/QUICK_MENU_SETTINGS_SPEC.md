@@ -67,7 +67,7 @@ O menu terá categorias curtas:
 
 A primeira versão deve expor somente as ações que tenham implementação completa. Continuar/Retomar é a saída principal; Reiniciar e Voltar à biblioteca precisam respeitar a política de salvamento e confirmar ações quando houver risco conhecido de perda de progresso.
 
-Não mostrar botões inativos para save state, rewind, screenshot, cheats, layouts avançados ou controles configuráveis antes de os respectivos subsistemas estarem prontos.
+Não mostrar botões inativos para save state, rewind, cheats ou controles configuráveis antes de os respectivos subsistemas estarem prontos. Screenshot já está disponível no menu rápido e usa uma pasta local padrão; seleção de destino e galeria permanecem pendentes.
 
 ### Atalhos rápidos
 
