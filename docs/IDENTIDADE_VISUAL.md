@@ -30,6 +30,7 @@ visual pode evoluir sem espalhar cores literais por cada tela.
 
 | Token | Cor | Aplicação |
 |---|---|---|
+| `SURFACE_SHADOW` | `#10071D` | sombra de painéis e cartões elevados |
 | `SURFACE_BASE` | `#1A0B2E` | fundo principal |
 | `SURFACE_HEADER` | `#211032` | cabeçalhos e barras |
 | `SURFACE_PANEL` | `#2A1240` | painéis e superfícies internas |

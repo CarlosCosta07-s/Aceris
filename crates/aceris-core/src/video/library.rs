@@ -6900,7 +6900,7 @@ fn responsive_panel(
         rect_height,
         scale,
         6.0,
-        0x090F15,
+        brand::SURFACE_SHADOW,
     );
     responsive_rounded_fill(
         frame,
@@ -7220,7 +7220,7 @@ mod tests {
             let offset = (y * width + x) * 4;
             [frame[offset], frame[offset + 1], frame[offset + 2]]
         };
-        assert_eq!(pixel(52, 20), [0x09, 0x0F, 0x15]);
+        assert_eq!(pixel(52, 20), brand::rgb(brand::SURFACE_SHADOW));
         assert_eq!(pixel(10, 10), [0, 0, 0]);
         assert_eq!(pixel(14, 10), brand::rgb(brand::BORDER));
         assert_eq!(pixel(15, 15), brand::rgb(brand::SURFACE_PANEL));

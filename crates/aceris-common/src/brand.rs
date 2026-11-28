@@ -27,6 +27,8 @@ pub const TEXT: u32 = 0xF5EEF8;
 
 /// Semantic launcher surfaces. These tokens keep the library, settings and
 /// in-game overlays on one Aceris palette across desktop and Android.
+/// Deep plum shadow used below floating cards and panels.
+pub const SURFACE_SHADOW: u32 = 0x10071D;
 pub const SURFACE_BASE: u32 = PURPLE_DARK;
 pub const SURFACE_HEADER: u32 = 0x211032;
 pub const SURFACE_PANEL: u32 = BACKGROUND;
@@ -59,6 +61,7 @@ mod tests {
     #[test]
     fn semantic_palette_uses_rgb_channel_order() {
         assert_eq!(rgb(ACCENT_RED), [0xE5, 0x17, 0x3F]);
+        assert_eq!(rgb(SURFACE_SHADOW), [0x10, 0x07, 0x1D]);
         assert_eq!(rgb(SURFACE_BASE), [0x1A, 0x0B, 0x2E]);
         assert_eq!(rgb(TEXT_MUTED), [0xC7, 0xB8, 0xD3]);
         assert_eq!(hex(SURFACE_SELECTED), "#4A1D5E");
