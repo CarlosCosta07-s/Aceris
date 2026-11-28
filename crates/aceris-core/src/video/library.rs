@@ -2276,8 +2276,7 @@ impl Library {
                 HomeFocus::Navigation => {
                     self.home_navigation_selected = (self.home_navigation_selected as i64
                         + i64::from(direction))
-                    .clamp(0, ui::home::SIDEBAR_ITEM_COUNT as i64 - 1)
-                        as usize;
+                    .clamp(0, ui::home::SIDEBAR_ITEM_COUNT as i64 - 1) as usize;
                 }
                 HomeFocus::Games if direction < 0 => {
                     self.home_focus = HomeFocus::Navigation;
@@ -7978,6 +7977,8 @@ fn draw_smdh_icon(
 // These low-level draw primitives intentionally accept a full rectangle and target buffer.
 /// Draws a line using the same responsive logical coordinate system as the UI.
 #[allow(clippy::too_many_arguments)]
+/// Draws a line using the same responsive logical coordinate system as the UI.
+#[allow(clippy::too_many_arguments)]
 fn responsive_line(
     frame: &mut [u8],
     width: u32,
@@ -8030,7 +8031,16 @@ fn responsive_circle_outline(
             center_y + angle.sin() * radius,
         );
         responsive_line(
-            frame, width, height, previous.0, previous.1, next.0, next.1, thickness, scale, color,
+            frame,
+            width,
+            height,
+            previous.0,
+            previous.1,
+            next.0,
+            next.1,
+            thickness,
+            scale,
+            color,
         );
         previous = next;
     }
@@ -8050,6 +8060,7 @@ fn render_console_nav_icon(
     let line = |frame: &mut [u8], x1: f32, y1: f32, x2: f32, y2: f32| {
         responsive_line(frame, width, height, x1, y1, x2, y2, 2.4, scale, color);
     };
+
     match kind {
         // Home.
         0 => {
@@ -8202,7 +8213,13 @@ fn render_console_nav_icon(
                 center_x + 12.0,
                 center_y + 10.0,
             );
-            line(frame, center_x, center_y - 12.0, center_x, center_y + 1.0);
+            line(
+                frame,
+                center_x,
+                center_y - 12.0,
+                center_x,
+                center_y + 1.0,
+            );
             line(
                 frame,
                 center_x - 6.0,
@@ -8241,8 +8258,68 @@ fn render_console_nav_icon(
                 );
             }
         }
-        // Settings.
+        // Recent activity.
         4 => {
+            responsive_circle_outline(
+                frame, width, height, center_x, center_y, 13.0, 2.4, scale, color,
+            );
+            line(frame, center_x, center_y, center_x, center_y - 8.0);
+            line(frame, center_x, center_y, center_x + 7.0, center_y + 4.0);
+        }
+        // Homebrew.
+        5 => {
+            line(
+                frame,
+                center_x - 4.0,
+                center_y - 13.0,
+                center_x + 4.0,
+                center_y - 13.0,
+            );
+            line(
+                frame,
+                center_x - 2.0,
+                center_y - 13.0,
+                center_x - 2.0,
+                center_y - 5.0,
+            );
+            line(
+                frame,
+                center_x + 2.0,
+                center_y - 13.0,
+                center_x + 2.0,
+                center_y - 5.0,
+            );
+            line(
+                frame,
+                center_x - 2.0,
+                center_y - 5.0,
+                center_x - 11.0,
+                center_y + 10.0,
+            );
+            line(
+                frame,
+                center_x + 2.0,
+                center_y - 5.0,
+                center_x + 11.0,
+                center_y + 10.0,
+            );
+            line(
+                frame,
+                center_x - 11.0,
+                center_y + 10.0,
+                center_x + 11.0,
+                center_y + 10.0,
+            );
+            line(
+                frame,
+                center_x - 7.0,
+                center_y + 3.0,
+                center_x + 7.0,
+                center_y + 3.0,
+            );
+        }
+        // Settings.
+        6 => {
             responsive_circle_outline(
                 frame, width, height, center_x, center_y, 11.0, 2.2, scale, color,
             );
