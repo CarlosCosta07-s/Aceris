@@ -7993,7 +7993,23 @@ mod tests {
 
     #[test]
     fn ultrawide_landscape_home_keeps_five_cards_and_details_actions_visible() {
-        let mut library = library(6);
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-ultrawide-home-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let entries: Vec<Entry> = (0..6)
+            .map(|index| {
+                let path = dir.join(format!("g{index}.3ds"));
+                fs::write(&path, b"fixture").unwrap();
+                Entry {
+                    title: format!("Game {index}"),
+                    path,
+                }
+            })
+            .collect();
+        let mut library = Library::new(entries, dir.display().to_string());
         library.select_page(LibraryPage::Home);
         library.recent.clear();
         let fifth_x = (ui::home::CAROUSEL_X
@@ -8018,8 +8034,9 @@ mod tests {
             ui::library::details_button_top(3, 450.0) + ui::library::details_button_height(450.0)
                 < 450.0
         );
-    }
 
+        fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn home_recent_cards_can_be_selected_and_activated() {
         let dir =
