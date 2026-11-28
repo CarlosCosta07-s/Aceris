@@ -13,6 +13,13 @@ use std::path::{Path, PathBuf};
 
 use crate::window::KeyboardInput;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GamepadAxisProfileScope {
+    Global,
+    Device,
+    Game,
+}
+
 pub(crate) struct GamepadManager {
     gilrs: Option<Gilrs>,
     active_gamepad: Option<GamepadId>,
@@ -156,31 +163,92 @@ impl GamepadManager {
         self.axis_settings = settings;
     }
 
-    pub(crate) fn load_global_axis_settings_for_editor(&self) -> GamepadAxisSettings {
-        GamepadAxisSettings::load_global(&self.settings_directory)
+    pub(crate) fn default_axis_profile_scope(&self) -> GamepadAxisProfileScope {
+        if self.game_identity.is_some() {
+            GamepadAxisProfileScope::Game
+        } else if self.active_device_uuid.is_some() {
+            GamepadAxisProfileScope::Device
+        } else {
+            GamepadAxisProfileScope::Global
+        }
     }
 
-    pub(crate) fn load_game_axis_settings_for_editor(&self) -> GamepadAxisSettings {
-        self.game_identity
-            .map(|identity| {
-                GamepadAxisSettings::load_for_game_or_global(&self.settings_directory, identity)
-            })
-            .unwrap_or_else(|| self.load_global_axis_settings_for_editor())
+    pub(crate) fn next_axis_profile_scope(
+        &self,
+        scope: GamepadAxisProfileScope,
+    ) -> GamepadAxisProfileScope {
+        match scope {
+            GamepadAxisProfileScope::Global if self.active_device_uuid.is_some() => {
+                GamepadAxisProfileScope::Device
+            }
+            GamepadAxisProfileScope::Global if self.game_identity.is_some() => {
+                GamepadAxisProfileScope::Game
+            }
+            GamepadAxisProfileScope::Global => GamepadAxisProfileScope::Global,
+            GamepadAxisProfileScope::Device if self.game_identity.is_some() => {
+                GamepadAxisProfileScope::Game
+            }
+            GamepadAxisProfileScope::Device => GamepadAxisProfileScope::Global,
+            GamepadAxisProfileScope::Game => GamepadAxisProfileScope::Global,
+        }
     }
 
-    pub(crate) fn save_axis_settings_for_editor(
+    pub(crate) fn load_axis_settings_for_editor_scope(
+        &self,
+        scope: GamepadAxisProfileScope,
+    ) -> GamepadAxisSettings {
+        match scope {
+            GamepadAxisProfileScope::Global => {
+                GamepadAxisSettings::load_global(&self.settings_directory)
+            }
+            GamepadAxisProfileScope::Device => self
+                .active_device_uuid
+                .map(|uuid| {
+                    GamepadAxisSettings::load_for_context(
+                        &self.settings_directory,
+                        Some(uuid),
+                        None,
+                    )
+                })
+                .unwrap_or_else(|| GamepadAxisSettings::load_global(&self.settings_directory)),
+            GamepadAxisProfileScope::Game => self
+                .game_identity
+                .map(|identity| {
+                    GamepadAxisSettings::load_for_context(
+                        &self.settings_directory,
+                        self.active_device_uuid,
+                        Some(identity),
+                    )
+                })
+                .unwrap_or_else(|| GamepadAxisSettings::load_global(&self.settings_directory)),
+        }
+    }
+
+    pub(crate) fn save_axis_settings_for_editor_scope(
         &mut self,
         settings: GamepadAxisSettings,
-        game_scope: bool,
+        scope: GamepadAxisProfileScope,
     ) -> std::io::Result<()> {
-        if game_scope {
-            if let Some(identity) = self.game_identity {
-                settings.save_for_game(&self.settings_directory, identity)?;
-            } else {
+        match scope {
+            GamepadAxisProfileScope::Global => {
                 settings.save_global(&self.settings_directory)?;
             }
-        } else {
-            settings.save_global(&self.settings_directory)?;
+            GamepadAxisProfileScope::Device => {
+                let Some(uuid) = self.active_device_uuid else {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotConnected,
+                        "no active controller model is available",
+                    ));
+                };
+                settings.save_for_device(&self.settings_directory, uuid)?;
+            }
+            GamepadAxisProfileScope::Game => {
+                if let Some(identity) = self.game_identity {
+                    settings.save_for_game(&self.settings_directory, identity)?;
+                } else {
+                    settings.save_global(&self.settings_directory)?;
+                }
+            }
         }
         self.axis_settings = settings;
         Ok(())

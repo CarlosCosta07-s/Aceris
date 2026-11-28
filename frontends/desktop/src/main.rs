@@ -24,7 +24,7 @@ use aceris_core::{
     },
 };
 use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
-use gamepad::GamepadManager;
+use gamepad::{GamepadAxisProfileScope, GamepadManager};
 use performance::{
     DesktopFrameKind, DesktopFrameTimings, DesktopPerformanceMonitor, performance_logging_enabled,
 };
@@ -780,6 +780,7 @@ fn emulate(
     let mut quick_menu_notice: Option<&'static str> = None;
     let mut gamepad_mapping_editor_open = false;
     let mut gamepad_axis_editor_open = false;
+    let mut gamepad_axis_profile_scope = GamepadAxisProfileScope::Global;
     let mut gamepad_mapping_selected = 0usize;
     let mut gamepad_mapping_game_scope = false;
     let mut layout_profile = layout_preferences.profile_for_game(
@@ -841,7 +842,7 @@ fn emulate(
                     let mut settings = *gamepad.axis_settings();
                     settings.set_invert_x(!settings.invert_x());
                     if let Err(error) =
-                        gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                        gamepad.save_axis_settings_for_editor_scope(settings, gamepad_axis_profile_scope)
                     {
                         eprintln!("could not save gamepad axis settings: {error}");
                     }
@@ -854,7 +855,7 @@ fn emulate(
                     let mut settings = *gamepad.axis_settings();
                     settings.set_invert_y(!settings.invert_y());
                     if let Err(error) =
-                        gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                        gamepad.save_axis_settings_for_editor_scope(settings, gamepad_axis_profile_scope)
                     {
                         eprintln!("could not save gamepad axis settings: {error}");
                     }
@@ -868,7 +869,7 @@ fn emulate(
                     settings
                         .set_sensitivity_percent(settings.sensitivity_percent().saturating_sub(10));
                     if let Err(error) =
-                        gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                        gamepad.save_axis_settings_for_editor_scope(settings, gamepad_axis_profile_scope)
                     {
                         eprintln!("could not save gamepad axis settings: {error}");
                     }
@@ -882,7 +883,7 @@ fn emulate(
                     settings
                         .set_sensitivity_percent(settings.sensitivity_percent().saturating_add(10));
                     if let Err(error) =
-                        gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                        gamepad.save_axis_settings_for_editor_scope(settings, gamepad_axis_profile_scope)
                     {
                         eprintln!("could not save gamepad axis settings: {error}");
                     }
@@ -892,13 +893,10 @@ fn emulate(
                         && gamepad_axis_editor_open
                         && !gamepad.mapping_capture_active() =>
                 {
-                    gamepad_mapping_game_scope =
-                        !gamepad_mapping_game_scope && system.game_identity().is_some();
-                    let settings = if gamepad_mapping_game_scope {
-                        gamepad.load_game_axis_settings_for_editor()
-                    } else {
-                        gamepad.load_global_axis_settings_for_editor()
-                    };
+                    gamepad_axis_profile_scope =
+                        gamepad.next_axis_profile_scope(gamepad_axis_profile_scope);
+                    let settings =
+                        gamepad.load_axis_settings_for_editor_scope(gamepad_axis_profile_scope);
                     gamepad.set_axis_settings_for_editor(settings);
                 }
                 window::WindowEvent::Key(window::Key::Backspace)
@@ -906,9 +904,9 @@ fn emulate(
                         && gamepad_axis_editor_open
                         && !gamepad.mapping_capture_active() =>
                 {
-                    if let Err(error) = gamepad.save_axis_settings_for_editor(
+                    if let Err(error) = gamepad.save_axis_settings_for_editor_scope(
                         aceris_core::input_mapping::GamepadAxisSettings::default(),
-                        gamepad_mapping_game_scope,
+                        gamepad_axis_profile_scope,
                     ) {
                         eprintln!("could not reset gamepad axis settings: {error}");
                     }
@@ -919,11 +917,9 @@ fn emulate(
                         && !gamepad.mapping_capture_active() =>
                 {
                     gamepad_axis_editor_open = true;
-                    let settings = if gamepad_mapping_game_scope {
-                        gamepad.load_game_axis_settings_for_editor()
-                    } else {
-                        gamepad.load_global_axis_settings_for_editor()
-                    };
+                    gamepad_axis_profile_scope = gamepad.default_axis_profile_scope();
+                    let settings =
+                        gamepad.load_axis_settings_for_editor_scope(gamepad_axis_profile_scope);
                     gamepad.set_axis_settings_for_editor(settings);
                 }
                 window::WindowEvent::Key(window::Key::Up)
@@ -984,12 +980,6 @@ fn emulate(
                         gamepad.load_global_mapping_for_editor()
                     };
                     gamepad.set_mapping_for_editor(mapping);
-                    let settings = if gamepad_mapping_game_scope {
-                        gamepad.load_game_axis_settings_for_editor()
-                    } else {
-                        gamepad.load_global_axis_settings_for_editor()
-                    };
-                    gamepad.set_axis_settings_for_editor(settings);
                 }
                 window::WindowEvent::Key(window::Key::Backspace)
                     if gamepad_mapping_editor_open
@@ -998,7 +988,7 @@ fn emulate(
                 {
                     if let Err(error) = gamepad.save_mapping_for_editor(
                         aceris_core::input_mapping::GamepadMapping::default(),
-                        gamepad_mapping_game_scope,
+                        gamepad_axis_profile_scope,
                     ) {
                         eprintln!("could not reset gamepad mapping: {error}");
                     }
@@ -1158,20 +1148,17 @@ fn emulate(
                         y,
                     ) {
                         Some(quick_menu::GamepadAxisEditorHit::Scope) => {
-                            gamepad_mapping_game_scope =
-                                !gamepad_mapping_game_scope && system.game_identity().is_some();
-                            let settings = if gamepad_mapping_game_scope {
-                                gamepad.load_game_axis_settings_for_editor()
-                            } else {
-                                gamepad.load_global_axis_settings_for_editor()
-                            };
+                            gamepad_axis_profile_scope =
+                                gamepad.next_axis_profile_scope(gamepad_axis_profile_scope);
+                            let settings = gamepad
+                                .load_axis_settings_for_editor_scope(gamepad_axis_profile_scope);
                             gamepad.set_axis_settings_for_editor(settings);
                         }
                         Some(quick_menu::GamepadAxisEditorHit::InvertX) => {
                             let mut settings = *gamepad.axis_settings();
                             settings.set_invert_x(!settings.invert_x());
                             if let Err(error) = gamepad
-                                .save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                                .save_axis_settings_for_editor_scope(settings, gamepad_axis_profile_scope)
                             {
                                 eprintln!("could not save gamepad axis settings: {error}");
                             }
@@ -1180,7 +1167,7 @@ fn emulate(
                             let mut settings = *gamepad.axis_settings();
                             settings.set_invert_y(!settings.invert_y());
                             if let Err(error) = gamepad
-                                .save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                                .save_axis_settings_for_editor_scope(settings, gamepad_axis_profile_scope)
                             {
                                 eprintln!("could not save gamepad axis settings: {error}");
                             }
@@ -1191,7 +1178,7 @@ fn emulate(
                                 settings.sensitivity_percent().saturating_sub(10),
                             );
                             if let Err(error) = gamepad
-                                .save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                                .save_axis_settings_for_editor_scope(settings, gamepad_axis_profile_scope)
                             {
                                 eprintln!("could not save gamepad axis settings: {error}");
                             }
@@ -1202,15 +1189,15 @@ fn emulate(
                                 settings.sensitivity_percent().saturating_add(10),
                             );
                             if let Err(error) = gamepad
-                                .save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
+                                .save_axis_settings_for_editor_scope(settings, gamepad_axis_profile_scope)
                             {
                                 eprintln!("could not save gamepad axis settings: {error}");
                             }
                         }
                         Some(quick_menu::GamepadAxisEditorHit::Reset) => {
-                            if let Err(error) = gamepad.save_axis_settings_for_editor(
+                            if let Err(error) = gamepad.save_axis_settings_for_editor_scope(
                                 aceris_core::input_mapping::GamepadAxisSettings::default(),
-                                gamepad_mapping_game_scope,
+                                gamepad_axis_profile_scope,
                             ) {
                                 eprintln!("could not reset gamepad axis settings: {error}");
                             }
@@ -1240,12 +1227,6 @@ fn emulate(
                                 gamepad.load_global_mapping_for_editor()
                             };
                             gamepad.set_mapping_for_editor(mapping);
-                            let settings = if gamepad_mapping_game_scope {
-                                gamepad.load_game_axis_settings_for_editor()
-                            } else {
-                                gamepad.load_global_axis_settings_for_editor()
-                            };
-                            gamepad.set_axis_settings_for_editor(settings);
                         }
                         Some(quick_menu::GamepadMappingEditorHit::Control(index)) => {
                             gamepad_mapping_selected = index;
@@ -1264,11 +1245,9 @@ fn emulate(
                         Some(quick_menu::GamepadMappingEditorHit::Axes) => {
                             gamepad.cancel_mapping_capture();
                             gamepad_axis_editor_open = true;
-                            let settings = if gamepad_mapping_game_scope {
-                                gamepad.load_game_axis_settings_for_editor()
-                            } else {
-                                gamepad.load_global_axis_settings_for_editor()
-                            };
+                            gamepad_axis_profile_scope = gamepad.default_axis_profile_scope();
+                            let settings = gamepad
+                                .load_axis_settings_for_editor_scope(gamepad_axis_profile_scope);
                             gamepad.set_axis_settings_for_editor(settings);
                         }
                         Some(quick_menu::GamepadMappingEditorHit::Capture) => {
@@ -1289,7 +1268,7 @@ fn emulate(
                             gamepad.cancel_mapping_capture();
                             if let Err(error) = gamepad.save_mapping_for_editor(
                                 aceris_core::input_mapping::GamepadMapping::default(),
-                                gamepad_mapping_game_scope,
+                                gamepad_axis_profile_scope,
                             ) {
                                 eprintln!("could not reset gamepad mapping: {error}");
                             }
@@ -1542,10 +1521,10 @@ fn emulate(
                         frame_height as u32,
                         MenuPixelFormat::Bgrx8,
                         gamepad.axis_settings(),
-                        if gamepad_mapping_game_scope {
-                            "ESCOPO: JOGO"
-                        } else {
-                            "ESCOPO: GLOBAL"
+                        match gamepad_axis_profile_scope {
+                            GamepadAxisProfileScope::Global => "ESCOPO: GLOBAL",
+                            GamepadAxisProfileScope::Device => "ESCOPO: MODELO",
+                            GamepadAxisProfileScope::Game => "ESCOPO: JOGO",
                         },
                     )
                 }
