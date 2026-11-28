@@ -1,6 +1,7 @@
 //! Types and utilities shared by every Aceris crate.
 
 pub mod brand;
+pub mod ui;
 pub mod error;
 
 pub use error::{Error, Result};
