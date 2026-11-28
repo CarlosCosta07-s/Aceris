@@ -3,6 +3,12 @@
 use super::font;
 
 pub const ACTION_COUNT: usize = 11;
+/// Stable index for the Android-only virtual control editor action.
+pub const ACTION_EDIT_CONTROLS: usize = 8;
+/// Stable index for the screenshot action shared by desktop and Android.
+pub const ACTION_CAPTURE_SCREENSHOT: usize = 9;
+/// Stable index for the Android diagnostics action.
+pub const ACTION_DIAGNOSTICS: usize = 10;
 /// Number of actions exposed by the desktop quick menu.
 pub const DESKTOP_ACTION_COUNT: usize = 8;
 
