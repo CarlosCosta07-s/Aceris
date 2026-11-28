@@ -2945,7 +2945,15 @@ impl Library {
             );
             if self.home_focus == HomeFocus::Actions {
                 responsive_panel(
-                    frame, width, height, 32.0, 374.0, 336.0, 50.0, scale, brand::ACCENT_RED_LIGHT,
+                    frame,
+                    width,
+                    height,
+                    32.0,
+                    374.0,
+                    336.0,
+                    50.0,
+                    scale,
+                    brand::ACCENT_RED_LIGHT,
                 );
             }
             if let Some(entry) = home_entries
@@ -3103,7 +3111,15 @@ impl Library {
             );
             if home_entries.is_empty() {
                 responsive_panel(
-                    frame, width, height, 20.0, 482.0, 360.0, 142.0, scale, brand::SURFACE_CARD,
+                    frame,
+                    width,
+                    height,
+                    20.0,
+                    482.0,
+                    360.0,
+                    142.0,
+                    scale,
+                    brand::SURFACE_CARD,
                 );
                 responsive_text_centered(
                     frame,
@@ -3185,7 +3201,17 @@ impl Library {
                         brand::ACCENT_RED_LIGHT,
                     );
                 }
-                responsive_panel(frame, width, height, x, 676.0, 88.0, 44.0, scale, brand::SURFACE_CARD);
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    x,
+                    676.0,
+                    88.0,
+                    44.0,
+                    scale,
+                    brand::SURFACE_CARD,
+                );
                 responsive_panel(
                     frame,
                     width,
@@ -3264,7 +3290,11 @@ impl Library {
                     tab_width,
                     42.0,
                     scale,
-                    if selected { brand::SURFACE_SELECTED } else { brand::SURFACE_CARD },
+                    if selected {
+                        brand::SURFACE_SELECTED
+                    } else {
+                        brand::SURFACE_CARD
+                    },
                 );
                 responsive_text_centered(
                     frame,
@@ -3274,7 +3304,11 @@ impl Library {
                     246.0,
                     small_scale,
                     section.label(),
-                    if selected { brand::TEXT } else { brand::TEXT_MUTED },
+                    if selected {
+                        brand::TEXT
+                    } else {
+                        brand::TEXT_MUTED
+                    },
                 );
             }
 
@@ -3310,7 +3344,15 @@ impl Library {
                     {
                         let row_y = 332.0 + index as f32 * 32.0;
                         responsive_panel(
-                            frame, width, height, 34.0, row_y, 340.0, 28.0, scale, brand::SURFACE_RAISED,
+                            frame,
+                            width,
+                            height,
+                            34.0,
+                            row_y,
+                            340.0,
+                            28.0,
+                            scale,
+                            brand::SURFACE_RAISED,
                         );
                         responsive_text(
                             frame,
@@ -3436,7 +3478,15 @@ impl Library {
                             brand::ACCENT_GREEN_LIGHT,
                         );
                         responsive_panel(
-                            frame, width, height, 38.0, 590.0, 156.0, 40.0, scale, brand::SURFACE_CARD,
+                            frame,
+                            width,
+                            height,
+                            38.0,
+                            590.0,
+                            156.0,
+                            40.0,
+                            scale,
+                            brand::SURFACE_CARD,
                         );
                         responsive_text_centered(
                             frame,
@@ -3453,7 +3503,15 @@ impl Library {
                             brand::TEXT,
                         );
                         responsive_panel(
-                            frame, width, height, 204.0, 590.0, 158.0, 40.0, scale, brand::SURFACE_CARD,
+                            frame,
+                            width,
+                            height,
+                            204.0,
+                            590.0,
+                            158.0,
+                            40.0,
+                            scale,
+                            brand::SURFACE_CARD,
                         );
                         responsive_text_centered(
                             frame,
@@ -3532,7 +3590,15 @@ impl Library {
                         brand::ACCENT_GREEN_LIGHT,
                     );
                     responsive_panel(
-                        frame, width, height, 38.0, 450.0, 324.0, 64.0, scale, brand::SURFACE_CARD,
+                        frame,
+                        width,
+                        height,
+                        38.0,
+                        450.0,
+                        324.0,
+                        64.0,
+                        scale,
+                        brand::SURFACE_CARD,
                     );
                     responsive_text(
                         frame,
@@ -3615,7 +3681,15 @@ impl Library {
                         ];
                         for (x, label, value) in control_options {
                             responsive_panel(
-                                frame, width, height, x, 424.0, 104.0, 64.0, scale, brand::SURFACE_CARD,
+                                frame,
+                                width,
+                                height,
+                                x,
+                                424.0,
+                                104.0,
+                                64.0,
+                                scale,
+                                brand::SURFACE_CARD,
                             );
                             responsive_text_centered(
                                 frame,
@@ -3640,7 +3714,15 @@ impl Library {
                         }
                     } else {
                         responsive_panel(
-                            frame, width, height, 38.0, 342.0, 324.0, 100.0, scale, brand::SURFACE_CARD,
+                            frame,
+                            width,
+                            height,
+                            38.0,
+                            342.0,
+                            324.0,
+                            100.0,
+                            scale,
+                            brand::SURFACE_CARD,
                         );
                         responsive_text(
                             frame,
@@ -3691,7 +3773,15 @@ impl Library {
                     | LibraryPage::Homebrew
             ) {
                 responsive_panel(
-                    frame, width, height, 20.0, 222.0, 360.0, 26.0, scale, brand::SURFACE_CARD,
+                    frame,
+                    width,
+                    height,
+                    20.0,
+                    222.0,
+                    360.0,
+                    26.0,
+                    scale,
+                    brand::SURFACE_CARD,
                 );
                 responsive_text_centered(
                     frame,
@@ -3705,7 +3795,15 @@ impl Library {
                 );
             }
             responsive_panel(
-                frame, width, height, 306.0, 170.0, 78.0, 44.0, scale, brand::SURFACE_CARD,
+                frame,
+                width,
+                height,
+                306.0,
+                170.0,
+                78.0,
+                44.0,
+                scale,
+                brand::SURFACE_CARD,
             );
             responsive_text(
                 frame,
@@ -3836,7 +3934,15 @@ impl Library {
                     brand::ACCENT_GREEN_LIGHT,
                 );
                 responsive_panel(
-                    frame, width, height, 38.0, path_y, 324.0, 48.0, scale, brand::SURFACE_CARD,
+                    frame,
+                    width,
+                    height,
+                    38.0,
+                    path_y,
+                    324.0,
+                    48.0,
+                    scale,
+                    brand::SURFACE_CARD,
                 );
                 responsive_text(
                     frame,
@@ -4050,7 +4156,15 @@ impl Library {
     ) {
         let top = search_keyboard_top(logical_height);
         responsive_panel(
-            frame, width, height, 128.0, top, 842.0, 174.0, scale, brand::SURFACE_PANEL,
+            frame,
+            width,
+            height,
+            128.0,
+            top,
+            842.0,
+            174.0,
+            scale,
+            brand::SURFACE_PANEL,
         );
         if self.scan_path_input_focused {
             responsive_text(
@@ -4080,7 +4194,17 @@ impl Library {
             let y = top + 8.0 + row as f32 * 40.0;
             for (column, character) in keys.chars().enumerate() {
                 let x = *start_x + column as f32 * 66.0;
-                responsive_panel(frame, width, height, x, y, 58.0, 34.0, scale, brand::SURFACE_RAISED);
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    x,
+                    y,
+                    58.0,
+                    34.0,
+                    scale,
+                    brand::SURFACE_RAISED,
+                );
                 let label = character.to_ascii_uppercase().to_string();
                 responsive_text_centered(
                     frame,
@@ -4236,7 +4360,11 @@ impl Library {
                     tab_width,
                     42.0,
                     scale,
-                    if selected { brand::SURFACE_SELECTED } else { brand::SURFACE_CARD },
+                    if selected {
+                        brand::SURFACE_SELECTED
+                    } else {
+                        brand::SURFACE_CARD
+                    },
                 );
                 if selected {
                     responsive_fill(
@@ -4259,7 +4387,11 @@ impl Library {
                     27.0,
                     text_scale,
                     label,
-                    if selected { brand::TEXT } else { brand::TEXT_MUTED },
+                    if selected {
+                        brand::TEXT
+                    } else {
+                        brand::TEXT_MUTED
+                    },
                 );
             }
             responsive_panel(
@@ -4374,7 +4506,15 @@ impl Library {
 
             if home_entries.is_empty() {
                 responsive_panel(
-                    frame, width, height, 28.0, 142.0, 924.0, 210.0, scale, brand::SURFACE_CARD,
+                    frame,
+                    width,
+                    height,
+                    28.0,
+                    142.0,
+                    924.0,
+                    210.0,
+                    scale,
+                    brand::SURFACE_CARD,
                 );
                 responsive_folder_icon(frame, width, height, 150.0, 250.0, scale);
                 responsive_text(
@@ -4580,7 +4720,11 @@ impl Library {
                     176.0,
                     52.0,
                     scale,
-                    if selected { brand::SURFACE_SELECTED } else { brand::SURFACE_CARD },
+                    if selected {
+                        brand::SURFACE_SELECTED
+                    } else {
+                        brand::SURFACE_CARD
+                    },
                 );
                 responsive_panel(
                     frame,
@@ -4615,7 +4759,11 @@ impl Library {
                     464.0,
                     small_scale,
                     label,
-                    if selected { brand::TEXT } else { brand::TEXT_MUTED },
+                    if selected {
+                        brand::TEXT
+                    } else {
+                        brand::TEXT_MUTED
+                    },
                 );
                 if focused {
                     responsive_fill(
@@ -4669,7 +4817,11 @@ impl Library {
                     tab_width,
                     38.0,
                     scale,
-                    if selected { brand::SURFACE_SELECTED } else { brand::SURFACE_CARD },
+                    if selected {
+                        brand::SURFACE_SELECTED
+                    } else {
+                        brand::SURFACE_CARD
+                    },
                 );
                 responsive_text_centered(
                     frame,
@@ -4679,7 +4831,11 @@ impl Library {
                     151.0,
                     text_scale,
                     section.label(),
-                    if selected { brand::TEXT } else { brand::TEXT_MUTED },
+                    if selected {
+                        brand::TEXT
+                    } else {
+                        brand::TEXT_MUTED
+                    },
                 );
             }
             responsive_panel(
@@ -4714,7 +4870,15 @@ impl Library {
                     {
                         let row_y = 226.0 + index as f32 * 28.0;
                         responsive_panel(
-                            frame, width, height, 44.0, row_y, 620.0, 24.0, scale, brand::SURFACE_RAISED,
+                            frame,
+                            width,
+                            height,
+                            44.0,
+                            row_y,
+                            620.0,
+                            24.0,
+                            scale,
+                            brand::SURFACE_RAISED,
                         );
                         responsive_text(
                             frame,
@@ -4764,7 +4928,15 @@ impl Library {
                         );
                     }
                     responsive_panel(
-                        frame, width, height, 44.0, 344.0, 322.0, 44.0, scale, brand::SURFACE_CARD,
+                        frame,
+                        width,
+                        height,
+                        44.0,
+                        344.0,
+                        322.0,
+                        44.0,
+                        scale,
+                        brand::SURFACE_CARD,
                     );
                     responsive_text_centered(
                         frame,
@@ -4838,7 +5010,15 @@ impl Library {
                             brand::ACCENT_GREEN_LIGHT,
                         );
                         responsive_panel(
-                            frame, width, height, 44.0, 420.0, 322.0, 42.0, scale, brand::SURFACE_CARD,
+                            frame,
+                            width,
+                            height,
+                            44.0,
+                            420.0,
+                            322.0,
+                            42.0,
+                            scale,
+                            brand::SURFACE_CARD,
                         );
                         responsive_text_centered(
                             frame,
@@ -4855,7 +5035,15 @@ impl Library {
                             brand::TEXT,
                         );
                         responsive_panel(
-                            frame, width, height, 382.0, 420.0, 322.0, 42.0, scale, brand::SURFACE_CARD,
+                            frame,
+                            width,
+                            height,
+                            382.0,
+                            420.0,
+                            322.0,
+                            42.0,
+                            scale,
+                            brand::SURFACE_CARD,
                         );
                         responsive_text_centered(
                             frame,
@@ -4934,7 +5122,15 @@ impl Library {
                         brand::ACCENT_GREEN_LIGHT,
                     );
                     responsive_panel(
-                        frame, width, height, 390.0, 244.0, 306.0, 118.0, scale, brand::SURFACE_CARD,
+                        frame,
+                        width,
+                        height,
+                        390.0,
+                        244.0,
+                        306.0,
+                        118.0,
+                        scale,
+                        brand::SURFACE_CARD,
                     );
                     responsive_text_centered(
                         frame,
@@ -5027,7 +5223,15 @@ impl Library {
                         ];
                         for (x, label, value) in control_options {
                             responsive_panel(
-                                frame, width, height, x, 338.0, 210.0, 92.0, scale, brand::SURFACE_CARD,
+                                frame,
+                                width,
+                                height,
+                                x,
+                                338.0,
+                                210.0,
+                                92.0,
+                                scale,
+                                brand::SURFACE_CARD,
                             );
                             responsive_text_centered(
                                 frame,
@@ -5052,7 +5256,15 @@ impl Library {
                         }
                     } else {
                         responsive_panel(
-                            frame, width, height, 48.0, 244.0, 644.0, 112.0, scale, brand::SURFACE_CARD,
+                            frame,
+                            width,
+                            height,
+                            48.0,
+                            244.0,
+                            644.0,
+                            112.0,
+                            scale,
+                            brand::SURFACE_CARD,
                         );
                         responsive_text_centered(
                             frame,
@@ -5106,7 +5318,15 @@ impl Library {
                 brand::TEXT_MUTED,
             );
             responsive_panel(
-                frame, width, height, 28.0, 126.0, 702.0, 32.0, scale, brand::SURFACE_PANEL,
+                frame,
+                width,
+                height,
+                28.0,
+                126.0,
+                702.0,
+                32.0,
+                scale,
+                brand::SURFACE_PANEL,
             );
             responsive_panel(
                 frame,
@@ -5143,7 +5363,15 @@ impl Library {
                 },
             );
             responsive_panel(
-                frame, width, height, 368.0, 130.0, 34.0, 24.0, scale, brand::SURFACE_SELECTED,
+                frame,
+                width,
+                height,
+                368.0,
+                130.0,
+                34.0,
+                24.0,
+                scale,
+                brand::SURFACE_SELECTED,
             );
             responsive_text_centered(
                 frame,
@@ -5156,7 +5384,15 @@ impl Library {
                 brand::TEXT,
             );
             responsive_panel(
-                frame, width, height, 410.0, 130.0, 108.0, 24.0, scale, brand::SURFACE_CARD,
+                frame,
+                width,
+                height,
+                410.0,
+                130.0,
+                108.0,
+                24.0,
+                scale,
+                brand::SURFACE_CARD,
             );
             responsive_text_centered(
                 frame,
@@ -5198,7 +5434,15 @@ impl Library {
                 brand::TEXT,
             );
             responsive_panel(
-                frame, width, height, 630.0, 130.0, 92.0, 24.0, scale, brand::SURFACE_CARD,
+                frame,
+                width,
+                height,
+                630.0,
+                130.0,
+                92.0,
+                24.0,
+                scale,
+                brand::SURFACE_CARD,
             );
             responsive_text_centered(
                 frame,
@@ -5256,7 +5500,14 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_text(
-                    frame, width, height, 232.0, 270.0, text_scale, first_line, brand::TEXT_MUTED,
+                    frame,
+                    width,
+                    height,
+                    232.0,
+                    270.0,
+                    text_scale,
+                    first_line,
+                    brand::TEXT_MUTED,
                 );
                 responsive_panel(
                     frame,
@@ -5474,7 +5725,15 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_panel(
-                    frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, brand::SURFACE_SELECTED,
+                    frame,
+                    width,
+                    height,
+                    776.0,
+                    384.0,
+                    188.0,
+                    42.0,
+                    scale,
+                    brand::SURFACE_SELECTED,
                 );
                 responsive_text_centered(
                     frame,
@@ -5585,7 +5844,15 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_panel(
-                    frame, width, height, 776.0, 286.0, 188.0, 42.0, scale, brand::SURFACE_CARD,
+                    frame,
+                    width,
+                    height,
+                    776.0,
+                    286.0,
+                    188.0,
+                    42.0,
+                    scale,
+                    brand::SURFACE_CARD,
                 );
                 responsive_text_centered(
                     frame,
@@ -5623,7 +5890,15 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_panel(
-                    frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, brand::SURFACE_CARD,
+                    frame,
+                    width,
+                    height,
+                    776.0,
+                    384.0,
+                    188.0,
+                    42.0,
+                    scale,
+                    brand::SURFACE_CARD,
                 );
                 responsive_text_centered(
                     frame,
@@ -6033,7 +6308,11 @@ fn render_home_game_tile(
         card_width,
         card_height,
         scale,
-        if selected { 0x173B4A } else { brand::SURFACE_CARD },
+        if selected {
+            0x173B4A
+        } else {
+            brand::SURFACE_CARD
+        },
     );
     responsive_fill(
         frame,
@@ -6044,7 +6323,11 @@ fn render_home_game_tile(
         card_width - 6.0,
         if selected { 3.0 } else { 1.0 },
         scale,
-        if selected { brand::ACCENT_RED_LIGHT } else { 0x344754 },
+        if selected {
+            brand::ACCENT_RED_LIGHT
+        } else {
+            0x344754
+        },
     );
     let cover_height = (card_height - 52.0).max(70.0);
     render_cover_art(
@@ -6156,7 +6439,11 @@ fn render_home_game_tile(
         y + card_height - 17.0,
         small_scale,
         &format!(".{}", extension.to_ascii_uppercase()),
-        if selected { brand::ACCENT_RED_LIGHT } else { 0x9EAFBA },
+        if selected {
+            brand::ACCENT_RED_LIGHT
+        } else {
+            0x9EAFBA
+        },
     );
 }
 
@@ -6186,7 +6473,11 @@ fn render_library_tile(
         card_width,
         card_height,
         scale,
-        if selected { brand::SURFACE_SELECTED } else { brand::SURFACE_PANEL },
+        if selected {
+            brand::SURFACE_SELECTED
+        } else {
+            brand::SURFACE_PANEL
+        },
     );
     if let Some(icon) = smdh_icon {
         draw_smdh_icon(
