@@ -65,6 +65,7 @@ pub(crate) const LIBRARY_NAV_DOWN: u8 = 1 << 1;
 pub(crate) const LIBRARY_NAV_LEFT: u8 = 1 << 2;
 pub(crate) const LIBRARY_NAV_RIGHT: u8 = 1 << 3;
 pub(crate) const LIBRARY_NAV_CONFIRM: u8 = 1 << 4;
+pub(crate) const LIBRARY_NAV_CANCEL: u8 = 1 << 5;
 
 impl GamepadManager {
     pub(crate) fn new(settings_directory: &Path, game_identity: Option<GameIdentity>) -> Self {
@@ -447,6 +448,7 @@ fn library_navigation_mask(mut is_pressed: impl FnMut(Button) -> bool) -> u8 {
         (Button::DPadRight, LIBRARY_NAV_RIGHT),
         (Button::South, LIBRARY_NAV_CONFIRM),
         (Button::Start, LIBRARY_NAV_CONFIRM),
+        (Button::East, LIBRARY_NAV_CANCEL),
     ];
     controls
         .into_iter()

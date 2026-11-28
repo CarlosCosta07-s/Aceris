@@ -18,14 +18,14 @@ use aceris_core::{
         DualScreenDisplay,
         frontend::{ScreenLayoutMode, screen_layout_canvas_size},
         intro,
-        layout_preferences::ScreenLayoutPreferences,
+        layout_preferences::{ScreenLayoutPreferences, ScreenLayoutProfile},
         library::{ClickResult, Library, VISIBLE_ROWS},
         quick_menu::{self, PixelFormat as MenuPixelFormat},
     },
 };
 use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
 use gamepad::{
-    GamepadAxisProfileScope, GamepadManager, LIBRARY_NAV_CONFIRM, LIBRARY_NAV_DOWN,
+    GamepadAxisProfileScope, GamepadManager, LIBRARY_NAV_CANCEL, LIBRARY_NAV_CONFIRM, LIBRARY_NAV_DOWN,
     LIBRARY_NAV_LEFT, LIBRARY_NAV_RIGHT, LIBRARY_NAV_UP,
 };
 use performance::{
@@ -1177,6 +1177,116 @@ fn report_unhandled(system: &System) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn activate_desktop_quick_menu_action(
+    action: usize,
+    system: &mut System,
+    window: &mut window::Window,
+    scale: usize,
+    keyboard: &mut window::KeyboardInput,
+    performance: &mut Option<DesktopPerformanceMonitor>,
+    menu_open: &mut bool,
+    pending_confirmation: &mut Option<quick_menu::ConfirmationAction>,
+    confirmation_selected: &mut usize,
+    layout_profile: &mut ScreenLayoutProfile,
+    layout_preferences: &mut ScreenLayoutPreferences,
+    settings_directory: &Path,
+    capture_screenshot: &mut bool,
+    diagnostics_visible: &mut bool,
+    gamepad_mapping_editor_open: &mut bool,
+    gamepad: &mut GamepadManager,
+    gamepad_mapping_selected: &mut usize,
+    gamepad_mapping_game_scope: &mut bool,
+) -> Result<(), String> {
+    match action {
+        0 => {
+            *menu_open = false;
+            keyboard.reset(system.input_mut());
+            if let Some(performance) = performance.as_mut() {
+                performance.reset_after_pause();
+            }
+        }
+        1 => {
+            *pending_confirmation = Some(quick_menu::ConfirmationAction::Restart);
+            *confirmation_selected = 0;
+        }
+        2 => {
+            *pending_confirmation = Some(quick_menu::ConfirmationAction::BackToLibrary);
+            *confirmation_selected = 0;
+        }
+        3 => {
+            layout_profile.mode = layout_profile.mode.next();
+            let (width, height) = screen_layout_canvas_size(layout_profile.mode);
+            window
+                .resize(width as usize * scale, height as usize * scale)
+                .map_err(|error| format!("could not resize the gameplay layout: {error}"))?;
+            layout_preferences.set_profile_for_game(
+                system.game_identity(),
+                window::GAME_CANVAS_WIDTH as u32,
+                window::GAME_CANVAS_HEIGHT as u32,
+                *layout_profile,
+            );
+            if let Err(error) = layout_preferences.save(settings_directory) {
+                eprintln!("could not save screen layout preferences: {error}");
+            }
+        }
+        4 => {
+            layout_profile.swap_screens = !layout_profile.swap_screens;
+            layout_preferences.set_profile_for_game(
+                system.game_identity(),
+                window::GAME_CANVAS_WIDTH as u32,
+                window::GAME_CANVAS_HEIGHT as u32,
+                *layout_profile,
+            );
+            if let Err(error) = layout_preferences.save(settings_directory) {
+                eprintln!("could not save screen layout preferences: {error}");
+            }
+        }
+        5 => {
+            if let Some(identity) = system.game_identity() {
+                if layout_preferences.reset_game_overrides(identity) {
+                    *layout_profile = layout_preferences.profile_for_surface(
+                        window::GAME_CANVAS_WIDTH as u32,
+                        window::GAME_CANVAS_HEIGHT as u32,
+                    );
+                    let (width, height) = screen_layout_canvas_size(layout_profile.mode);
+                    window
+                        .resize(width as usize * scale, height as usize * scale)
+                        .map_err(|error| {
+                            format!("could not restore the global gameplay layout: {error}")
+                        })?;
+                    if let Err(error) = layout_preferences.save(settings_directory) {
+                        eprintln!("could not save screen layout preferences: {error}");
+                    }
+                }
+            }
+        }
+        6 => *capture_screenshot = true,
+        7 => {
+            *diagnostics_visible = !*diagnostics_visible;
+            *menu_open = false;
+            keyboard.reset(system.input_mut());
+            if let Some(performance) = performance.as_mut() {
+                performance.reset_after_pause();
+            }
+        }
+        8 => {
+            *gamepad_mapping_editor_open = true;
+            gamepad.cancel_mapping_capture();
+            *gamepad_mapping_selected = 0;
+            *gamepad_mapping_game_scope = system.game_identity().is_some();
+            let mapping = if *gamepad_mapping_game_scope {
+                gamepad.load_game_mapping_for_editor()
+            } else {
+                gamepad.load_global_mapping_for_editor()
+            };
+            gamepad.set_mapping_for_editor(mapping);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// Runs frames at roughly 60 Hz until the window closes or Esc is pressed.
 fn emulate(
     system: &mut System,
@@ -1479,101 +1589,26 @@ fn emulate(
                 window::WindowEvent::Key(window::Key::Enter)
                     if menu_open && !gamepad_mapping_editor_open =>
                 {
-                    match menu_selected {
-                        0 => {
-                            menu_open = false;
-                            keyboard.reset(system.input_mut());
-                            if let Some(performance) = performance.as_mut() {
-                                performance.reset_after_pause();
-                            }
-                        }
-                        1 => {
-                            pending_confirmation = Some(quick_menu::ConfirmationAction::Restart);
-                            confirmation_selected = 0;
-                        }
-                        2 => {
-                            pending_confirmation =
-                                Some(quick_menu::ConfirmationAction::BackToLibrary);
-                            confirmation_selected = 0;
-                        }
-                        3 => {
-                            layout_profile.mode = layout_profile.mode.next();
-                            let (width, height) = screen_layout_canvas_size(layout_profile.mode);
-                            window
-                                .resize(width as usize * scale, height as usize * scale)
-                                .map_err(|error| {
-                                    format!("could not resize the gameplay layout: {error}")
-                                })?;
-                            layout_preferences.set_profile_for_game(
-                                system.game_identity(),
-                                window::GAME_CANVAS_WIDTH as u32,
-                                window::GAME_CANVAS_HEIGHT as u32,
-                                layout_profile,
-                            );
-                            if let Err(error) = layout_preferences.save(settings_directory) {
-                                eprintln!("could not save screen layout preferences: {error}");
-                            }
-                        }
-                        4 => {
-                            layout_profile.swap_screens = !layout_profile.swap_screens;
-                            layout_preferences.set_profile_for_game(
-                                system.game_identity(),
-                                window::GAME_CANVAS_WIDTH as u32,
-                                window::GAME_CANVAS_HEIGHT as u32,
-                                layout_profile,
-                            );
-                            if let Err(error) = layout_preferences.save(settings_directory) {
-                                eprintln!("could not save screen layout preferences: {error}");
-                            }
-                        }
-                        5 => {
-                            if let Some(identity) = system.game_identity() {
-                                if layout_preferences.reset_game_overrides(identity) {
-                                    layout_profile = layout_preferences.profile_for_surface(
-                                        window::GAME_CANVAS_WIDTH as u32,
-                                        window::GAME_CANVAS_HEIGHT as u32,
-                                    );
-                                    let (width, height) =
-                                        screen_layout_canvas_size(layout_profile.mode);
-                                    window
-                                        .resize(width as usize * scale, height as usize * scale)
-                                        .map_err(|error| {
-                                            format!(
-                                                "could not restore the global gameplay layout: {error}"
-                                            )
-                                        })?;
-                                    if let Err(error) = layout_preferences.save(settings_directory)
-                                    {
-                                        eprintln!(
-                                            "could not save screen layout preferences: {error}"
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        6 => capture_screenshot = true,
-                        7 => {
-                            diagnostics_visible = !diagnostics_visible;
-                            menu_open = false;
-                            keyboard.reset(system.input_mut());
-                            if let Some(performance) = performance.as_mut() {
-                                performance.reset_after_pause();
-                            }
-                        }
-                        8 => {
-                            gamepad_mapping_editor_open = true;
-                            gamepad.cancel_mapping_capture();
-                            gamepad_mapping_selected = 0;
-                            gamepad_mapping_game_scope = system.game_identity().is_some();
-                            let mapping = if gamepad_mapping_game_scope {
-                                gamepad.load_game_mapping_for_editor()
-                            } else {
-                                gamepad.load_global_mapping_for_editor()
-                            };
-                            gamepad.set_mapping_for_editor(mapping);
-                        }
-                        _ => {}
-                    }
+                    activate_desktop_quick_menu_action(
+                        menu_selected,
+                        system,
+                        window,
+                        scale,
+                        &mut keyboard,
+                        performance,
+                        &mut menu_open,
+                        &mut pending_confirmation,
+                        &mut confirmation_selected,
+                        &mut layout_profile,
+                        layout_preferences,
+                        settings_directory,
+                        &mut capture_screenshot,
+                        &mut diagnostics_visible,
+                        &mut gamepad_mapping_editor_open,
+                        &mut gamepad,
+                        &mut gamepad_mapping_selected,
+                        &mut gamepad_mapping_game_scope,
+                    )?;
                 }
                 window::WindowEvent::Click { x, y } if pending_confirmation.is_some() => {
                     let (canvas_width, canvas_height) =
@@ -1899,6 +1934,80 @@ fn emulate(
                 }
                 window::WindowEvent::FocusLost => keyboard.reset(system.input_mut()),
                 _ => {}
+            }
+        }
+        if menu_open && !gamepad_mapping_editor_open {
+            let navigation = gamepad.poll_library_navigation();
+            let (canvas_width, canvas_height) = screen_layout_canvas_size(layout_profile.mode);
+            let surface_width = canvas_width * scale as u32;
+            let surface_height = canvas_height * scale as u32;
+            if navigation & LIBRARY_NAV_UP != 0 {
+                menu_selected = quick_menu::move_selection(
+                    surface_width,
+                    surface_height,
+                    menu_selected,
+                    0,
+                    -1,
+                    quick_menu::DESKTOP_ACTION_COUNT,
+                );
+            }
+            if navigation & LIBRARY_NAV_DOWN != 0 {
+                menu_selected = quick_menu::move_selection(
+                    surface_width,
+                    surface_height,
+                    menu_selected,
+                    0,
+                    1,
+                    quick_menu::DESKTOP_ACTION_COUNT,
+                );
+            }
+            if navigation & LIBRARY_NAV_LEFT != 0 {
+                menu_selected = quick_menu::move_selection(
+                    surface_width,
+                    surface_height,
+                    menu_selected,
+                    -1,
+                    0,
+                    quick_menu::DESKTOP_ACTION_COUNT,
+                );
+            }
+            if navigation & LIBRARY_NAV_RIGHT != 0 {
+                menu_selected = quick_menu::move_selection(
+                    surface_width,
+                    surface_height,
+                    menu_selected,
+                    1,
+                    0,
+                    quick_menu::DESKTOP_ACTION_COUNT,
+                );
+            }
+            if navigation & LIBRARY_NAV_CANCEL != 0 {
+                menu_open = false;
+                keyboard.reset(system.input_mut());
+                if let Some(performance) = performance.as_mut() {
+                    performance.reset_after_pause();
+                }
+            } else if navigation & LIBRARY_NAV_CONFIRM != 0 {
+                activate_desktop_quick_menu_action(
+                    menu_selected,
+                    system,
+                    window,
+                    scale,
+                    &mut keyboard,
+                    performance,
+                    &mut menu_open,
+                    &mut pending_confirmation,
+                    &mut confirmation_selected,
+                    &mut layout_profile,
+                    layout_preferences,
+                    settings_directory,
+                    &mut capture_screenshot,
+                    &mut diagnostics_visible,
+                    &mut gamepad_mapping_editor_open,
+                    &mut gamepad,
+                    &mut gamepad_mapping_selected,
+                    &mut gamepad_mapping_game_scope,
+                )?;
             }
         }
         if gamepad_mapping_editor_open {
