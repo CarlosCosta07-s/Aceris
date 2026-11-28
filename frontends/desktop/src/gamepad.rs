@@ -519,33 +519,15 @@ mod tests {
     #[test]
     fn launcher_navigation_accepts_the_left_stick_with_a_deadzone() {
         assert_eq!(library_stick_navigation_mask(0.59, 0.0), 0);
-        assert_eq!(
-            library_stick_navigation_mask(-0.60, 0.0),
-            LIBRARY_NAV_LEFT
-        );
-        assert_eq!(
-            library_stick_navigation_mask(0.65, 0.0),
-            LIBRARY_NAV_RIGHT
-        );
-        assert_eq!(
-            library_stick_navigation_mask(0.0, 0.61),
-            LIBRARY_NAV_UP
-        );
-        assert_eq!(
-            library_stick_navigation_mask(0.0, -0.61),
-            LIBRARY_NAV_DOWN
-        );
+        assert_eq!(library_stick_navigation_mask(-0.60, 0.0), LIBRARY_NAV_LEFT);
+        assert_eq!(library_stick_navigation_mask(0.65, 0.0), LIBRARY_NAV_RIGHT);
+        assert_eq!(library_stick_navigation_mask(0.0, 0.61), LIBRARY_NAV_UP);
+        assert_eq!(library_stick_navigation_mask(0.0, -0.61), LIBRARY_NAV_DOWN);
 
         // Diagonal input follows its dominant axis instead of moving two
         // focus groups at once.
-        assert_eq!(
-            library_stick_navigation_mask(0.8, 0.7),
-            LIBRARY_NAV_RIGHT
-        );
-        assert_eq!(
-            library_stick_navigation_mask(0.7, 0.8),
-            LIBRARY_NAV_UP
-        );
+        assert_eq!(library_stick_navigation_mask(0.8, 0.7), LIBRARY_NAV_RIGHT);
+        assert_eq!(library_stick_navigation_mask(0.7, 0.8), LIBRARY_NAV_UP);
         assert_eq!(library_stick_navigation_mask(f32::NAN, 0.0), 0);
     }
 
