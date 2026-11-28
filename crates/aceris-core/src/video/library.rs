@@ -4828,21 +4828,6 @@ impl Library {
             ];
             for (x, tab_width, section) in settings_tabs {
                 let selected = self.settings_section == section;
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    x,
-                    138.0,
-                    tab_width,
-                    38.0,
-                    scale,
-                    if selected {
-                        brand::SURFACE_SELECTED
-                    } else {
-                        brand::SURFACE_CARD
-                    },
-                );
                 responsive_text_centered(
                     frame,
                     width,
@@ -4857,6 +4842,19 @@ impl Library {
                         brand::TEXT_MUTED
                     },
                 );
+                if selected {
+                    responsive_fill(
+                        frame,
+                        width as usize,
+                        height as usize,
+                        x + tab_width * 0.22,
+                        171.0,
+                        tab_width * 0.56,
+                        2.0,
+                        scale,
+                        brand::ACCENT_RED,
+                    );
+                }
             }
             responsive_panel(
                 frame,
