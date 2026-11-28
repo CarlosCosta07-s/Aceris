@@ -1,8 +1,20 @@
 //! Original Aceris proportional UI typeface, rasterized from compact Rust glyph data.
 //!
 //! Covers ASCII letters (with dedicated lowercase), digits, Portuguese accents
-//! and launcher separators. Exposed glyph corners are softened during rendering;
-//! no operating-system font or external font asset is used.
+//! and launcher separators. Regular and semibold weights share one glyph source;
+//! exposed corners are softened during rendering. No OS font or external asset
+//! is required, so desktop and Android produce the same text.
+
+/// Name of the original, embedded Aceris interface typeface.
+pub const FAMILY_NAME: &str = "Aceris UI";
+
+/// Weight used by the shared launcher and in-game interface.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextWeight {
+    #[default]
+    Regular,
+    Semibold,
+}
 
 /// Glyph cell width in font pixels, without spacing.
 pub const GLYPH_WIDTH: usize = 5;
@@ -406,10 +418,23 @@ fn draw_rounded_cell(
     }
 }
 
-/// Draws text in the original Aceris proportional UI face into an RGBA canvas.
-/// Pixels outside the canvas are clipped; no system font or external asset is used.
+/// Measures the proportional width of a string using a selected type weight.
+pub fn measure_text_with_weight(text: &str, scale: usize, weight: TextWeight) -> usize {
+    let scale = scale.max(1);
+    let mut advances = 0usize;
+    for ch in text.chars() {
+        advances = advances.saturating_add(character_advance_with_weight(ch, weight));
+    }
+    let tracking = if text.is_empty() { 0 } else { 1 };
+    advances.saturating_sub(tracking).saturating_mul(scale)
+}
+
+/// Draws text with the chosen weight into an RGBA canvas.
+///
+/// Pixels outside the canvas are clipped. Regular is the compact reading face;
+/// semibold is reserved for headings, navigation and high-priority controls.
 #[allow(clippy::too_many_arguments)]
-pub fn draw_text(
+pub fn draw_text_with_weight(
     canvas: &mut [u8],
     width: usize,
     height: usize,
@@ -418,6 +443,7 @@ pub fn draw_text(
     scale: usize,
     text: &str,
     color: [u8; 3],
+    weight: TextWeight,
 ) {
     if scale == 0
         || width == 0
@@ -430,10 +456,10 @@ pub fn draw_text(
     let mut cursor = x;
     for ch in text.chars() {
         if ch == ' ' {
-            cursor = cursor.saturating_add((character_advance(ch) * scale) as i32);
+            cursor = cursor.saturating_add((character_advance_with_weight(ch, weight) * scale) as i32);
             continue;
         }
-        let rows = glyph(ch);
+        let rows = glyph_with_weight(ch, weight);
         let Some((minimum, maximum)) = glyph_bounds(&rows) else {
             cursor = cursor.saturating_add((ADVANCE * scale) as i32);
             continue;
@@ -464,8 +490,52 @@ pub fn draw_text(
                 );
             }
         }
-        cursor = cursor.saturating_add((character_advance(ch) * scale) as i32);
+        cursor = cursor.saturating_add((character_advance_with_weight(ch, weight) * scale) as i32);
     }
+}
+
+/// Draws the regular Aceris UI weight for compatibility with existing callers.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_text(
+    canvas: &mut [u8],
+    width: usize,
+    height: usize,
+    x: i32,
+    y: i32,
+    scale: usize,
+    text: &str,
+    color: [u8; 3],
+) {
+    draw_text_with_weight(
+        canvas,
+        width,
+        height,
+        x,
+        y,
+        scale,
+        text,
+        color,
+        TextWeight::Regular,
+    );
+}
+
+fn glyph_with_weight(ch: char, weight: TextWeight) -> [u8; GLYPH_HEIGHT] {
+    let rows = glyph(ch);
+    match weight {
+        TextWeight::Regular => rows,
+        // Extend each stroke one pixel to the right while keeping its original
+        // outline. This gives headings more presence without another font asset.
+        TextWeight::Semibold => rows.map(|bits| bits | (bits >> 1)),
+    }
+}
+
+fn character_advance_with_weight(ch: char, weight: TextWeight) -> usize {
+    if ch == ' ' {
+        return 4;
+    }
+    glyph_bounds(&glyph_with_weight(ch, weight))
+        .map(|(_, maximum)| maximum + 2)
+        .unwrap_or(ADVANCE)
 }
 
 #[cfg(test)]
@@ -521,6 +591,28 @@ mod tests {
         let at = (0usize * 8 + 1) * 4;
         assert!(canvas[at] > 180 && canvas[at] < 255);
         assert_eq!(canvas[at + 3], 255);
+    }
+
+    #[test]
+    fn semibold_weight_adds_stroke_presence_without_losing_portuguese_glyphs() {
+        assert!(measure_text_with_weight("Aceris UI", 2, TextWeight::Semibold)
+            >= measure_text("Aceris UI", 2));
+        assert_ne!(
+            glyph_with_weight('á', TextWeight::Semibold),
+            glyph_with_weight('á', TextWeight::Regular)
+        );
+
+        let mut regular = vec![0u8; 24 * 16 * 4];
+        let mut semibold = vec![0u8; 24 * 16 * 4];
+        draw_text_with_weight(
+            &mut regular, 24, 16, 0, 0, 2, "A", [255, 255, 255], TextWeight::Regular,
+        );
+        draw_text_with_weight(
+            &mut semibold, 24, 16, 0, 0, 2, "A", [255, 255, 255], TextWeight::Semibold,
+        );
+        let regular_pixels = regular.chunks_exact(4).filter(|pixel| pixel[0] > 0).count();
+        let semibold_pixels = semibold.chunks_exact(4).filter(|pixel| pixel[0] > 0).count();
+        assert!(semibold_pixels > regular_pixels);
     }
 
     #[test]
