@@ -1681,6 +1681,12 @@ impl App {
                 }
             }
         }
+        if self.library.take_folder_picker_request() {
+            // The pure-Rust NativeActivity host has no Activity.onActivityResult
+            // bridge for SAF. Keep path entry usable instead of opening a picker
+            // whose selected document URI the host would be unable to retain.
+            self.library.begin_add_folder_path();
+        }
     }
 
     fn launch_selected(&mut self) {

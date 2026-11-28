@@ -143,6 +143,7 @@ pub struct Library {
     search_query: String,
     search_focused: bool,
     scan_path_input_focused: bool,
+    folder_picker_requested: bool,
     touch_keyboard_enabled: bool,
     touch_keyboard_open: bool,
     virtual_controls_visible: bool,
@@ -822,6 +823,7 @@ impl Library {
             search_query: String::new(),
             search_focused: false,
             scan_path_input_focused: false,
+            folder_picker_requested: false,
             touch_keyboard_enabled: false,
             touch_keyboard_open: false,
             virtual_controls_visible,
@@ -1405,13 +1407,25 @@ impl Library {
 
     pub fn selected_entry(&self) -> Option<&Entry> {
         if self.page == LibraryPage::Home {
-            return self.recent.iter().find_map(|id| {
+            let recent = self.recent_entries();
+            return recent
+                .get(self.selected)
+                .or_else(|| recent.first())
+                .copied();
+        }
+        self.filtered_entries().get(self.selected).copied()
+    }
+
+    /// Returns valid recent entries in most-recently-launched order.
+    pub fn recent_entries(&self) -> Vec<&Entry> {
+        self.recent
+            .iter()
+            .filter_map(|id| {
                 self.entries
                     .iter()
                     .find(|entry| library_path_id(&entry.path).as_deref() == Some(id.as_str()))
-            });
-        }
-        self.filtered_entries().get(self.selected).copied()
+            })
+            .collect()
     }
 
     /// Number of entries shown by the current library section.
@@ -1448,6 +1462,8 @@ impl Library {
         self.recent.retain(|item| item != &id);
         self.recent.insert(0, id);
         self.recent.truncate(24);
+        self.selected = 0;
+        self.first_visible = 0;
         self.persist_library_ids("recent.txt", self.recent.iter().cloned());
         self.status = None;
     }
@@ -1462,14 +1478,7 @@ impl Library {
 
     /// Number of valid game entries kept in Recent.
     pub fn recent_count(&self) -> usize {
-        self.recent
-            .iter()
-            .filter(|id| {
-                self.entries
-                    .iter()
-                    .any(|entry| library_path_id(&entry.path).as_deref() == Some(id.as_str()))
-            })
-            .count()
+        self.recent_entries().len()
     }
 
     fn persist_view_preferences(&mut self) {
@@ -1579,11 +1588,27 @@ impl Library {
         self.status = Some("DIGITE O CAMINHO DA PASTA E CONFIRME".to_string());
     }
 
-    /// Opens the folder settings and focuses the existing Rust path-entry flow.
+    /// Queues a host-native directory chooser request from a user action.
     ///
-    /// This is not the Android SAF picker: the current NativeActivity callback
-    /// table cannot receive an activity result. The picker is deliberately not
-    /// launched until a result bridge exists, so a selection is never discarded.
+    /// Desktop resolves this through the operating-system folder dialog. The
+    /// Rust-only Android NativeActivity consumes it with the existing path-entry
+    /// fallback until an activity-result bridge is available.
+    pub fn request_folder_picker(&mut self) {
+        self.select_page(LibraryPage::Settings);
+        self.search_focused = false;
+        self.scan_path_input_focused = false;
+        self.search_query.clear();
+        self.touch_keyboard_open = false;
+        self.folder_picker_requested = true;
+        self.status = Some("SELECIONE UMA PASTA PARA ADICIONAR".to_string());
+    }
+
+    /// Returns and clears a pending native folder-picker request.
+    pub fn take_folder_picker_request(&mut self) -> bool {
+        std::mem::take(&mut self.folder_picker_requested)
+    }
+
+    /// Opens the folder settings and focuses the Rust path-entry fallback.
     pub fn begin_add_folder_path(&mut self) {
         self.select_page(LibraryPage::Settings);
         self.focus_scan_path();
@@ -1841,6 +1866,15 @@ impl Library {
         let Some((portrait, _scale, _, logical_height)) = responsive_metrics(width, height) else {
             return;
         };
+        if self.page == LibraryPage::Home {
+            let count = self.recent_count().min(3);
+            if count > 0 {
+                self.selected = (self.selected as i64 + i64::from(delta.signum()))
+                    .clamp(0, count as i64 - 1) as usize;
+                self.status = None;
+            }
+            return;
+        }
         if portrait {
             let visible = ((logical_height - 350.0).max(58.0) / 58.0).floor().max(1.0) as usize;
             self.move_selection_with_visible(delta, visible);
@@ -1893,6 +1927,15 @@ impl Library {
         let Some((portrait, _, _, logical_height)) = responsive_metrics(width, height) else {
             return;
         };
+        if self.page == LibraryPage::Home {
+            let count = self.recent_count().min(3);
+            if count > 0 {
+                self.selected = (self.selected as i64 + i64::from(delta.signum()))
+                    .clamp(0, count as i64 - 1) as usize;
+                self.status = None;
+            }
+            return;
+        }
         if portrait {
             let visible = ((logical_height - 350.0).max(58.0) / 58.0).floor().max(1.0) as usize;
             self.move_selection_with_visible(delta, visible);
@@ -1942,14 +1985,41 @@ impl Library {
         if portrait {
             // Portrait rendering remains a fallback for non-Android hosts.
             if (100.0..150.0).contains(&y) {
-                let page = if x < 134.0 {
+                let page = if x < 96.0 {
+                    LibraryPage::Home
+                } else if x < 192.0 {
                     LibraryPage::Games
-                } else if x < 266.0 {
+                } else if x < 298.0 {
                     LibraryPage::Homebrew
                 } else {
                     LibraryPage::Settings
                 };
                 self.select_page(page);
+                return ClickResult::Ignored;
+            }
+            if self.page == LibraryPage::Home {
+                if (250.0..420.0).contains(&y) && (20.0..380.0).contains(&x) {
+                    if self.recent_count() > 0 {
+                        return ClickResult::Activated;
+                    }
+                    self.request_folder_picker();
+                } else if (476.0..652.0).contains(&y) && (20.0..380.0).contains(&x) {
+                    let index = ((y - 476.0) / 60.0).floor() as usize;
+                    if index < self.recent_count().min(3) {
+                        if index == self.selected {
+                            return ClickResult::Activated;
+                        }
+                        self.selected = index;
+                        self.status = None;
+                        return ClickResult::Selected;
+                    }
+                } else if (676.0..720.0).contains(&y) {
+                    if (20.0..194.0).contains(&x) {
+                        self.select_page(LibraryPage::Favorites);
+                    } else if (202.0..380.0).contains(&x) {
+                        self.select_page(LibraryPage::Games);
+                    }
+                }
                 return ClickResult::Ignored;
             }
             if self.page == LibraryPage::Settings {
@@ -1968,7 +2038,7 @@ impl Library {
                 if (430.0..474.0).contains(&y) && (38.0..362.0).contains(&x) {
                     self.toggle_recursive_from_settings();
                 } else if (478.0..522.0).contains(&y) && (38.0..362.0).contains(&x) {
-                    self.focus_scan_path();
+                    self.request_folder_picker();
                 } else if (546.0..590.0).contains(&y) && (38.0..362.0).contains(&x) {
                     if self.touch_keyboard_enabled {
                         self.toggle_virtual_controls_from_settings();
@@ -2085,7 +2155,7 @@ impl Library {
                 }
                 return ClickResult::Ignored;
             } else if (336.0..378.0).contains(&y) {
-                self.begin_add_folder_path();
+                self.request_folder_picker();
                 return ClickResult::Ignored;
             } else if (384.0..426.0).contains(&y) {
                 self.reload();
@@ -2095,13 +2165,32 @@ impl Library {
 
         match self.page {
             LibraryPage::Home => {
+                if (450.0..550.0).contains(&y) {
+                    let index = if (28.0..248.0).contains(&x) {
+                        0
+                    } else if (258.0..478.0).contains(&x) {
+                        1
+                    } else if (488.0..730.0).contains(&x) {
+                        2
+                    } else {
+                        return ClickResult::Ignored;
+                    };
+                    if index >= self.recent_count().min(3) {
+                        return ClickResult::Ignored;
+                    }
+                    if index == self.selected {
+                        return ClickResult::Activated;
+                    }
+                    self.selected = index;
+                    self.status = None;
+                    return ClickResult::Selected;
+                }
                 if (132.0..298.0).contains(&y) && (28.0..730.0).contains(&x) {
                     if self.recent_count() > 0 {
-                        self.selected = 0;
                         return ClickResult::Activated;
                     }
                     if self.entries.is_empty() {
-                        self.begin_add_folder_path();
+                        self.request_folder_picker();
                     } else {
                         self.select_page(LibraryPage::Games);
                     }
@@ -2127,7 +2216,7 @@ impl Library {
 
                 if (280.0..322.0).contains(&y) {
                     if (28.0..245.0).contains(&x) {
-                        self.focus_scan_path();
+                        self.request_folder_picker();
                     } else if (255.0..475.0).contains(&x) {
                         self.toggle_recursive_from_settings();
                     } else if (485.0..595.0).contains(&x) {
@@ -2162,7 +2251,7 @@ impl Library {
                     && (500.0..692.0).contains(&x)
                     && (315.0..357.0).contains(&y)
                 {
-                    self.begin_add_folder_path();
+                    self.request_folder_picker();
                     return ClickResult::Ignored;
                 }
 
@@ -2336,6 +2425,7 @@ impl Library {
     ) {
         let font_scale = (scale * 1.7).round().max(2.0) as usize;
         let small_scale = (scale * 1.15).round().max(1.0) as usize;
+        let recent_entries = self.recent_entries();
 
         // Brand header.
         responsive_fill(
@@ -2381,11 +2471,12 @@ impl Library {
             0xBBAFC7,
         );
 
-        // Three clear sections: installed games, homebrew, and settings.
+        // Four compact destinations keep Home reachable on narrow phone screens.
         let tabs = [
-            (16.0, 116.0, LibraryPage::Games, "Jogos", 56.0),
-            (142.0, 116.0, LibraryPage::Homebrew, "Homebrew", 152.0),
-            (268.0, 116.0, LibraryPage::Settings, "Config.", 300.0),
+            (10.0, 86.0, LibraryPage::Home, "Início", 30.0),
+            (102.0, 86.0, LibraryPage::Games, "Jogos", 125.0),
+            (194.0, 102.0, LibraryPage::Homebrew, "Homebrew", 202.0),
+            (302.0, 88.0, LibraryPage::Settings, "Config.", 314.0),
         ];
         for (x, tab_width, page, label, text_x) in tabs {
             responsive_panel(
@@ -2434,7 +2525,206 @@ impl Library {
             brand::TEXT,
         );
 
-        if self.page == LibraryPage::Settings {
+        if self.page == LibraryPage::Home {
+            responsive_text(
+                frame,
+                width,
+                height,
+                22.0,
+                212.0,
+                small_scale,
+                "Sua coleção pessoal de Nintendo 3DS",
+                0xBBAFC7,
+            );
+            responsive_panel(
+                frame, width, height, 20.0, 250.0, 360.0, 184.0, scale, 0x251731,
+            );
+            if let Some(entry) = recent_entries
+                .get(self.selected)
+                .or_else(|| recent_entries.first())
+                .copied()
+            {
+                render_cover_art(
+                    frame, width, height, scale, 36.0, 270.0, 100.0, 120.0, entry, small_scale,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    150.0,
+                    284.0,
+                    small_scale,
+                    &truncate(&entry.title, 27),
+                    brand::TEXT,
+                );
+                let extension = entry
+                    .path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("3ds");
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    152.0,
+                    312.0,
+                    small_scale,
+                    &format!(".{}", extension.to_ascii_uppercase()),
+                    brand::ACCENT_GREEN_LIGHT,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    152.0,
+                    337.0,
+                    small_scale,
+                    "PRONTO PARA CONTINUAR",
+                    0xBBAFC7,
+                );
+                responsive_panel(
+                    frame, width, height, 36.0, 378.0, 328.0, 42.0, scale, brand::ACCENT_RED,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    200.0,
+                    391.0,
+                    small_scale,
+                    "CONTINUAR JOGANDO",
+                    brand::TEXT,
+                );
+            } else {
+                responsive_folder_icon(frame, width, height, 94.0, 320.0, scale);
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    170.0,
+                    300.0,
+                    small_scale,
+                    if self.entries.is_empty() {
+                        "Sua coleção começa aqui"
+                    } else {
+                        "Sua biblioteca está pronta"
+                    },
+                    brand::TEXT,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    172.0,
+                    328.0,
+                    small_scale,
+                    if self.entries.is_empty() {
+                        "Importe a pasta dos seus jogos."
+                    } else {
+                        "Explore os jogos disponíveis."
+                    },
+                    0xBBAFC7,
+                );
+                responsive_panel(
+                    frame, width, height, 36.0, 378.0, 328.0, 42.0, scale, brand::ACCENT_RED,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    200.0,
+                    391.0,
+                    small_scale,
+                    if self.entries.is_empty() {
+                        "IMPORTAR PASTA"
+                    } else {
+                        "VER BIBLIOTECA"
+                    },
+                    brand::TEXT,
+                );
+            }
+
+            responsive_text(
+                frame,
+                width,
+                height,
+                22.0,
+                462.0,
+                small_scale,
+                "JOGADOS RECENTEMENTE",
+                brand::ACCENT_GREEN_LIGHT,
+            );
+            if recent_entries.is_empty() {
+                responsive_panel(
+                    frame, width, height, 20.0, 482.0, 360.0, 58.0, scale, 0x21152F,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    36.0,
+                    504.0,
+                    small_scale,
+                    "Os jogos que você abrir aparecerão aqui.",
+                    0xBBAFC7,
+                );
+            } else {
+                for (index, entry) in recent_entries.iter().take(3).enumerate() {
+                    let y = 482.0 + index as f32 * 60.0;
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        20.0,
+                        y,
+                        360.0,
+                        52.0,
+                        scale,
+                        if index == self.selected { 0x422038 } else { 0x21152F },
+                    );
+                    render_cover_art(
+                        frame, width, height, scale, 28.0, y + 6.0, 46.0, 40.0, entry, small_scale,
+                    );
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        88.0,
+                        y + 19.0,
+                        small_scale,
+                        &truncate(&entry.title, 31),
+                        brand::TEXT,
+                    );
+                    let extension = entry
+                        .path
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("3ds");
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        332.0,
+                        y + 19.0,
+                        small_scale,
+                        &extension.to_ascii_uppercase(),
+                        brand::ACCENT_GREEN_LIGHT,
+                    );
+                }
+            }
+            responsive_panel(
+                frame, width, height, 20.0, 676.0, 174.0, 44.0, scale, 0x21152F,
+            );
+            responsive_text_centered(
+                frame, width, height, 107.0, 690.0, small_scale, "FAVORITOS", brand::TEXT,
+            );
+            responsive_panel(
+                frame, width, height, 202.0, 676.0, 178.0, 44.0, scale, 0x21152F,
+            );
+            responsive_text_centered(
+                frame, width, height, 291.0, 690.0, small_scale, "VER BIBLIOTECA", brand::TEXT,
+            );
+        } else if self.page == LibraryPage::Settings {
             responsive_text(
                 frame,
                 width,
@@ -2576,7 +2866,7 @@ impl Library {
                 200.0,
                 492.0,
                 small_scale,
-                "ADICIONAR PASTA POR CAMINHO",
+                "IMPORTAR PASTA",
                 brand::TEXT,
             );
             if self.scan_path_input_focused {
@@ -3268,6 +3558,7 @@ impl Library {
             .count();
         let game_count = self.entries.len().saturating_sub(homebrew_count);
         let selected_entry = self.selected_entry();
+        let recent_entries = self.recent_entries();
 
         // Full-width top navigation inspired by modern console dashboards.
         responsive_fill(
@@ -3447,7 +3738,7 @@ impl Library {
                 28.0,
                 84.0,
                 title_scale,
-                "SEU ESPAÇO DE JOGOS",
+                "BEM-VINDO DE VOLTA",
                 brand::TEXT,
             );
             responsive_text(
@@ -3457,11 +3748,33 @@ impl Library {
                 30.0,
                 109.0,
                 text_scale,
-                "Continue de onde parou ou explore sua coleção",
+                "Sua biblioteca, seus favoritos e os jogos que você já começou",
                 0xBBAFC7,
             );
             responsive_panel(
                 frame, width, height, 28.0, 132.0, 702.0, 166.0, scale, 0x251731,
+            );
+            responsive_fill(
+                frame,
+                width as usize,
+                height as usize,
+                665.0,
+                134.0,
+                62.0,
+                162.0,
+                scale,
+                0x39203D,
+            );
+            responsive_fill(
+                frame,
+                width as usize,
+                height as usize,
+                660.0,
+                134.0,
+                3.0,
+                162.0,
+                scale,
+                brand::ACCENT_GREEN_LIGHT,
             );
             responsive_text(
                 frame,
@@ -3480,9 +3793,9 @@ impl Library {
                     height,
                     scale,
                     58.0,
-                    178.0,
-                    112.0,
-                    98.0,
+                    176.0,
+                    124.0,
+                    104.0,
                     entry,
                     title_scale,
                 );
@@ -3490,8 +3803,8 @@ impl Library {
                     frame,
                     width,
                     height,
-                    194.0,
-                    187.0,
+                    202.0,
+                    186.0,
                     title_scale,
                     &truncate(&entry.title, 42),
                     brand::TEXT,
@@ -3505,7 +3818,7 @@ impl Library {
                     frame,
                     width,
                     height,
-                    196.0,
+                    204.0,
                     219.0,
                     text_scale,
                     &format!("FORMATO .{}", extension.to_ascii_uppercase()),
@@ -3515,10 +3828,14 @@ impl Library {
                     frame,
                     width,
                     height,
-                    196.0,
-                    245.0,
+                    204.0,
+                    247.0,
                     small_scale,
-                    "Seu último jogo aberto",
+                    if self.selected == 0 {
+                        "Sua retomada mais recente"
+                    } else {
+                        "Escolhido nos jogos recentes"
+                    },
                     0xBBAFC7,
                 );
                 responsive_panel(
@@ -3566,7 +3883,7 @@ impl Library {
                     223.0,
                     text_scale,
                     if self.entries.is_empty() {
-                        "Adicione uma pasta para encontrar seus jogos."
+                        "Importe uma pasta para adicionar seus jogos à biblioteca."
                     } else {
                         "Explore os jogos disponíveis na sua biblioteca."
                     },
@@ -3591,7 +3908,7 @@ impl Library {
                     238.0,
                     text_scale,
                     if self.entries.is_empty() {
-                        "ADICIONAR PASTA"
+                        "IMPORTAR PASTA"
                     } else {
                         "VER JOGOS"
                     },
@@ -3606,7 +3923,7 @@ impl Library {
                 28.0,
                 318.0,
                 text_scale,
-                "EXPLORE SUA BIBLIOTECA",
+                "ACESSO RÁPIDO",
                 brand::ACCENT_GREEN_LIGHT,
             );
             let cards = [
@@ -3648,6 +3965,100 @@ impl Library {
                     "EXPLORAR",
                     0xBBAFC7,
                 );
+            }
+
+            responsive_text(
+                frame,
+                width,
+                height,
+                28.0,
+                430.0,
+                text_scale,
+                "JOGADOS RECENTEMENTE",
+                brand::ACCENT_GREEN_LIGHT,
+            );
+            if recent_entries.is_empty() {
+                responsive_panel(
+                    frame, width, height, 28.0, 452.0, 702.0, 88.0, scale, 0x21152F,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    48.0,
+                    488.0,
+                    text_scale,
+                    "Seus jogos recentes aparecerão aqui.",
+                    0xBBAFC7,
+                );
+            } else {
+                for (index, entry) in recent_entries.iter().take(3).enumerate() {
+                    let (card_x, card_width) = match index {
+                        0 => (28.0, 220.0),
+                        1 => (258.0, 220.0),
+                        _ => (488.0, 242.0),
+                    };
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        card_x,
+                        452.0,
+                        card_width,
+                        88.0,
+                        scale,
+                        if index == self.selected { 0x422038 } else { 0x21152F },
+                    );
+                    render_cover_art(
+                        frame,
+                        width,
+                        height,
+                        scale,
+                        card_x + 10.0,
+                        460.0,
+                        68.0,
+                        72.0,
+                        entry,
+                        small_scale,
+                    );
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        card_x + 88.0,
+                        476.0,
+                        small_scale,
+                        &truncate(&entry.title, 23),
+                        brand::TEXT,
+                    );
+                    let extension = entry
+                        .path
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("3ds");
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        card_x + 90.0,
+                        504.0,
+                        small_scale,
+                        &format!(".{}", extension.to_ascii_uppercase()),
+                        brand::ACCENT_GREEN_LIGHT,
+                    );
+                    if self.is_favorite(entry) {
+                        responsive_text(
+                            frame,
+                            width,
+                            height,
+                            card_x + card_width - 22.0,
+                            504.0,
+                            small_scale,
+                            "F",
+                            brand::ACCENT_GREEN_LIGHT,
+                        );
+                    }
+                }
             }
         } else if self.page == LibraryPage::Settings {
             responsive_text(
@@ -3751,7 +4162,7 @@ impl Library {
                     28.0,
                     280.0,
                     217.0,
-                    "ADICIONAR PASTA",
+                    "IMPORTAR PASTA",
                     if self.scan_path_input_focused {
                         brand::ACCENT_RED
                     } else {
@@ -4135,7 +4546,7 @@ impl Library {
                     596.0,
                     329.0,
                     small_scale,
-                    "ADICIONAR PASTA",
+                    "IMPORTAR PASTA",
                     brand::TEXT,
                 );
             } else if self.view_mode == LibraryViewMode::List {
@@ -4381,7 +4792,7 @@ impl Library {
             870.0,
             350.0,
             small_scale,
-            "ADICIONAR PASTA",
+            "IMPORTAR PASTA",
             brand::TEXT,
         );
         responsive_panel(
@@ -5561,6 +5972,69 @@ mod tests {
     }
 
     #[test]
+    fn home_recent_cards_can_be_selected_and_activated() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-home-recent-cards-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let first = dir.join("first.3ds");
+        let second = dir.join("second.cci");
+        let third = dir.join("third.cia");
+        for path in [&first, &second, &third] {
+            fs::write(path, b"fixture").unwrap();
+        }
+        let entries = vec![
+            Entry { title: "First".into(), path: first.clone() },
+            Entry { title: "Second".into(), path: second.clone() },
+            Entry { title: "Third".into(), path: third.clone() },
+        ];
+        let mut library = Library::new(entries, dir.display().to_string());
+        library.mark_launched(&first);
+        library.mark_launched(&second);
+        library.mark_launched(&third);
+        assert_eq!(library.selected_entry().unwrap().title, "Third");
+
+        assert_eq!(library.click_responsive(300, 480, 1000, 600), ClickResult::Selected);
+        assert_eq!(library.selected_entry().unwrap().title, "Second");
+        assert_eq!(library.click_responsive(300, 480, 1000, 600), ClickResult::Activated);
+        library.move_selection_horizontal_responsive(-1, 1000, 600);
+        assert_eq!(library.selected_entry().unwrap().title, "Third");
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn portrait_home_shows_recent_games_and_quick_access_routes() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-portrait-home-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("recent.3ds");
+        fs::write(&path, b"fixture").unwrap();
+        let entry = Entry {
+            title: "Recent title".into(),
+            path: path.clone(),
+        };
+        let mut library = Library::new(vec![entry], dir.display().to_string());
+        library.mark_launched(&path);
+        library.select_page(LibraryPage::Games);
+
+        assert_eq!(library.click_responsive(50, 120, 400, 800), ClickResult::Ignored);
+        assert_eq!(library.page(), LibraryPage::Home);
+        assert_eq!(library.selected_entry().unwrap().title, "Recent title");
+        assert_eq!(library.click_responsive(100, 500, 400, 800), ClickResult::Activated);
+        library.click_responsive(100, 690, 400, 800);
+        assert_eq!(library.page(), LibraryPage::Favorites);
+        library.click_responsive(50, 120, 400, 800);
+        library.click_responsive(290, 690, 400, 800);
+        assert_eq!(library.page(), LibraryPage::Games);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn search_matches_titles_paths_and_ignores_case_and_accents() {
         let entries = vec![
             Entry {
@@ -6259,6 +6733,8 @@ mod tests {
         assert!(library.scan_config().options.recursive);
 
         library.click_responsive(136, 301, 1000, 600);
+        assert!(library.take_folder_picker_request());
+        library.begin_add_folder_path();
         assert!(library.search_is_focused());
         for character in secondary.to_string_lossy().chars() {
             assert!(library.input_search_char(character));
@@ -6287,7 +6763,7 @@ mod tests {
     }
 
     #[test]
-    fn console_home_add_folder_action_opens_path_entry() {
+    fn console_home_add_folder_action_requests_host_picker() {
         let dir =
             std::env::temp_dir().join(format!("aceris-console-add-folder-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
@@ -6299,8 +6775,10 @@ mod tests {
             ClickResult::Ignored
         );
         assert_eq!(library.page(), LibraryPage::Settings);
-        assert!(library.search_is_focused());
-        assert!(library.touch_keyboard_is_open());
+        assert!(!library.search_is_focused());
+        assert!(!library.touch_keyboard_is_open());
+        assert!(library.take_folder_picker_request());
+        assert!(!library.take_folder_picker_request());
 
         fs::remove_dir_all(dir).unwrap();
     }
@@ -6315,6 +6793,8 @@ mod tests {
         let mut library = Library::new(Vec::new(), dir.display().to_string());
         library.select_page(LibraryPage::Settings);
         library.click_responsive(136, 301, 1000, 600);
+        assert!(library.take_folder_picker_request());
+        library.begin_add_folder_path();
         for character in "/path/that/does/not/exist".chars() {
             library.input_search_char(character);
         }
@@ -6338,6 +6818,8 @@ mod tests {
         library.set_touch_keyboard_enabled(true);
 
         library.click_responsive(136, 301, 1000, 600);
+        assert!(library.take_folder_picker_request());
+        library.begin_add_folder_path();
         assert!(library.touch_keyboard_is_open());
 
         let keyboard_top = search_keyboard_top(600.0);

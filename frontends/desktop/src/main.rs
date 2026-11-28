@@ -36,6 +36,9 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(target_os = "linux")]
+use std::process::Command;
+
 fn print_usage() {
     println!("{NAME} {VERSION}");
     println!();
@@ -679,6 +682,7 @@ fn browse_library(
                 window::WindowEvent::FocusLost => library.finish_search(),
                 window::WindowEvent::Game { .. } | window::WindowEvent::Pointer { .. } => {}
             }
+            service_folder_picker_request(library);
             if activate {
                 if let Some(path) = library.selected_entry().map(|entry| entry.path.clone()) {
                     return Ok(Some(path));
@@ -730,6 +734,355 @@ fn browse_library(
             thread::sleep(rest);
         }
     }
+}
+
+/// Resolves a queued library-folder request using the desktop platform's native dialog.
+fn service_folder_picker_request(library: &mut Library) {
+    if !library.take_folder_picker_request() {
+        return;
+    }
+
+    match choose_library_folder() {
+        Ok(Some(directory)) if directory.is_dir() => match library.add_scan_directory(directory) {
+            Ok(true) => {}
+            Ok(false) => library.set_status("ESSA PASTA JÁ ESTÁ NA BIBLIOTECA"),
+            Err(error) => library.set_status(format!("NÃO FOI POSSÍVEL SALVAR A PASTA: {error}")),
+        },
+        Ok(Some(_)) => library.set_status("A PASTA SELECIONADA NÃO ESTÁ DISPONÍVEL"),
+        Ok(None) => library.set_status("IMPORTAÇÃO DE PASTA CANCELADA"),
+        Err(error) => {
+            library.begin_add_folder_path();
+            library.set_status(format!("{error}. Informe o caminho da pasta manualmente."));
+        },
+    }
+}
+
+#[cfg(target_os = "linux")]
+/// Runs a Linux desktop folder dialog without embedding a non-Rust UI toolkit.
+fn run_directory_picker(program: &str, arguments: &[&str]) -> io::Result<Option<PathBuf>> {
+    use std::os::unix::ffi::OsStringExt;
+
+    let output = Command::new(program).args(arguments).output()?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let mut selected = output.stdout;
+    while selected
+        .last()
+        .is_some_and(|byte| *byte == b'\\n' || *byte == b'\\r')
+    {
+        selected.pop();
+    }
+    if selected.is_empty() {
+        return Ok(None);
+    }
+    let path = PathBuf::from(std::ffi::OsString::from_vec(selected));
+    if path.is_dir() {
+        Ok(Some(path))
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "the selected folder is no longer available",
+        ))
+    }
+}
+
+#[cfg(target_os = "windows")]
+/// Uses the Windows common item dialog with folder-only selection.
+fn choose_library_folder() -> Result<Option<PathBuf>, String> {
+    use std::{ffi::c_void, os::windows::ffi::OsStringExt, ptr};
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Guid {
+        data1: u32,
+        data2: u16,
+        data3: u16,
+        data4: [u8; 8],
+    }
+
+    const CLSID_FILE_OPEN_DIALOG: Guid = Guid {
+        data1: 0xDC1C5A9C,
+        data2: 0xE88A,
+        data3: 0x4DDE,
+        data4: [0xA5, 0xA1, 0x60, 0xF8, 0x2A, 0x20, 0xAE, 0xF7],
+    };
+    const IID_FILE_OPEN_DIALOG: Guid = Guid {
+        data1: 0xD57C7288,
+        data2: 0xD4AD,
+        data3: 0x4768,
+        data4: [0xBE, 0x02, 0x9D, 0x96, 0x95, 0x32, 0xD9, 0x60],
+    };
+    const CLSCTX_INPROC_SERVER: u32 = 1;
+    const COINIT_APARTMENTTHREADED: u32 = 2;
+    const FOS_PICKFOLDERS: u32 = 0x20;
+    const FOS_FORCEFILESYSTEM: u32 = 0x40;
+    const SIGDN_FILESYSPATH: u32 = 0x8005_8000;
+    const HRESULT_CANCELLED: i32 = 0x8007_04C7u32 as i32;
+
+    #[link(name = "ole32")]
+    unsafe extern "system" {
+        fn CoInitializeEx(reserved: *mut c_void, co_init: u32) -> i32;
+        fn CoUninitialize();
+        fn CoCreateInstance(
+            class_id: *const Guid,
+            outer: *mut c_void,
+            context: u32,
+            interface_id: *const Guid,
+            object: *mut *mut c_void,
+        ) -> i32;
+        fn CoTaskMemFree(memory: *mut c_void);
+    }
+
+    unsafe fn release_interface(object: *mut c_void) {
+        if object.is_null() {
+            return;
+        }
+        let vtable = unsafe { *(object as *mut *const *const c_void) };
+        let release = unsafe {
+            std::mem::transmute::<
+                *const c_void,
+                unsafe extern "system" fn(*mut c_void) -> u32,
+            >(*vtable.add(2))
+        };
+        unsafe {
+            release(object);
+        }
+    }
+
+    fn format_hresult(action: &str, result: i32) -> String {
+        format!("{action} falhou (HRESULT 0x{:08X})", result as u32)
+    }
+
+    let init_result = unsafe { CoInitializeEx(ptr::null_mut(), COINIT_APARTMENTTHREADED) };
+    if init_result < 0 {
+        return Err(format_hresult("Inicialização do seletor de pastas", init_result));
+    }
+
+    let mut dialog = ptr::null_mut();
+    let result = unsafe {
+        let created = CoCreateInstance(
+            &CLSID_FILE_OPEN_DIALOG,
+            ptr::null_mut(),
+            CLSCTX_INPROC_SERVER,
+            &IID_FILE_OPEN_DIALOG,
+            &mut dialog,
+        );
+        if created < 0 {
+            Err(format_hresult("Criação do seletor de pastas", created))
+        } else {
+            let vtable = *(dialog as *mut *const *const c_void);
+            let get_options = std::mem::transmute::<
+                *const c_void,
+                unsafe extern "system" fn(*mut c_void, *mut u32) -> i32,
+            >(*vtable.add(10));
+            let set_options = std::mem::transmute::<
+                *const c_void,
+                unsafe extern "system" fn(*mut c_void, u32) -> i32,
+            >(*vtable.add(9));
+            let show = std::mem::transmute::<
+                *const c_void,
+                unsafe extern "system" fn(*mut c_void, *mut c_void) -> i32,
+            >(*vtable.add(3));
+            let get_result = std::mem::transmute::<
+                *const c_void,
+                unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32,
+            >(*vtable.add(20));
+
+            let mut options = 0;
+            let options_result = get_options(dialog, &mut options);
+            if options_result < 0 {
+                Err(format_hresult("Leitura das opções do seletor", options_result))
+            } else {
+                let configured = set_options(
+                    dialog,
+                    options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM,
+                );
+                if configured < 0 {
+                    Err(format_hresult("Configuração do seletor", configured))
+                } else {
+                    let shown = show(dialog, ptr::null_mut());
+                    if shown == HRESULT_CANCELLED {
+                        Ok(None)
+                    } else if shown < 0 {
+                        Err(format_hresult("Abertura do seletor", shown))
+                    } else {
+                        let mut item = ptr::null_mut();
+                        let fetched = get_result(dialog, &mut item);
+                        if fetched < 0 {
+                            Err(format_hresult("Leitura da pasta selecionada", fetched))
+                        } else if item.is_null() {
+                            Err("O seletor não retornou uma pasta.".to_string())
+                        } else {
+                            let item_vtable = *(item as *mut *const *const c_void);
+                            let get_display_name = std::mem::transmute::<
+                                *const c_void,
+                                unsafe extern "system" fn(
+                                    *mut c_void,
+                                    u32,
+                                    *mut *mut u16,
+                                ) -> i32,
+                            >(*item_vtable.add(5));
+                            let mut display_name = ptr::null_mut();
+                            let named = get_display_name(
+                                item,
+                                SIGDN_FILESYSPATH,
+                                &mut display_name,
+                            );
+                            let path_result = if named < 0 || display_name.is_null() {
+                                Err(format_hresult("Leitura do caminho selecionado", named))
+                            } else {
+                                let mut length = 0usize;
+                                while *display_name.add(length) != 0 {
+                                    length += 1;
+                                }
+                                let wide = std::slice::from_raw_parts(display_name, length);
+                                let path = PathBuf::from(std::ffi::OsString::from_wide(wide));
+                                if path.is_dir() {
+                                    Ok(Some(path))
+                                } else {
+                                    Err("A pasta selecionada não está mais disponível.".to_string())
+                                }
+                            };
+                            if !display_name.is_null() {
+                                CoTaskMemFree(display_name.cast());
+                            }
+                            release_interface(item);
+                            path_result
+                        }
+                    }
+                }
+            }
+        }
+    };
+    unsafe {
+        release_interface(dialog);
+        CoUninitialize();
+    }
+    result
+}
+
+#[cfg(target_os = "macos")]
+/// Uses AppKit's native directory panel without a JavaScript/AppleScript helper.
+fn choose_library_folder() -> Result<Option<PathBuf>, String> {
+    use std::ffi::{CStr, c_char, c_void};
+
+    type Id = *mut c_void;
+    type Selector = *mut c_void;
+
+    #[link(name = "objc")]
+    unsafe extern "C" {
+        fn objc_getClass(name: *const c_char) -> Id;
+        fn sel_registerName(name: *const c_char) -> Selector;
+        fn objc_msgSend();
+    }
+
+    #[link(name = "AppKit", kind = "framework")]
+    unsafe extern "C" {
+        fn NSApplicationLoad() -> i8;
+    }
+
+    unsafe {
+        if NSApplicationLoad() == 0 {
+            return Err("Não foi possível inicializar o AppKit.".to_string());
+        }
+        let application_class = objc_getClass(b"NSApplication\0".as_ptr().cast());
+        if application_class.is_null() {
+            return Err("O aplicativo do macOS não está disponível.".to_string());
+        }
+        let selector = |name: &'static [u8]| sel_registerName(name.as_ptr().cast());
+        let send_id: unsafe extern "C" fn(Id, Selector) -> Id =
+            std::mem::transmute(objc_msgSend);
+        let _application = send_id(application_class, selector(b"sharedApplication\0"));
+        let class = objc_getClass(b"NSOpenPanel\0".as_ptr().cast());
+        if class.is_null() {
+            return Err("O painel de pastas do macOS não está disponível.".to_string());
+        }
+        let send_bool: unsafe extern "C" fn(Id, Selector, i8) =
+            std::mem::transmute(objc_msgSend);
+        let send_integer: unsafe extern "C" fn(Id, Selector) -> isize =
+            std::mem::transmute(objc_msgSend);
+        let send_count: unsafe extern "C" fn(Id, Selector) -> usize =
+            std::mem::transmute(objc_msgSend);
+        let send_index: unsafe extern "C" fn(Id, Selector, usize) -> Id =
+            std::mem::transmute(objc_msgSend);
+        let send_pointer: unsafe extern "C" fn(Id, Selector) -> *const c_char =
+            std::mem::transmute(objc_msgSend);
+
+        let panel = send_id(class, selector(b"openPanel\0"));
+        if panel.is_null() {
+            return Err("Não foi possível criar o painel de pastas do macOS.".to_string());
+        }
+        send_bool(panel, selector(b"setCanChooseFiles:\0"), 0);
+        send_bool(panel, selector(b"setCanChooseDirectories:\0"), 1);
+        send_bool(panel, selector(b"setAllowsMultipleSelection:\0"), 0);
+
+        if send_integer(panel, selector(b"runModal\0")) != 1 {
+            return Ok(None);
+        }
+        let urls = send_id(panel, selector(b"URLs\0"));
+        if urls.is_null() || send_count(urls, selector(b"count\0")) == 0 {
+            return Err("O painel não retornou uma pasta.".to_string());
+        }
+        let url = send_index(urls, selector(b"objectAtIndex:\0"), 0);
+        if url.is_null() {
+            return Err("O painel não retornou uma pasta.".to_string());
+        }
+        let path_object = send_id(url, selector(b"path\0"));
+        if path_object.is_null() {
+            return Err("Não foi possível obter o caminho da pasta selecionada.".to_string());
+        }
+        let path_pointer = send_pointer(path_object, selector(b"UTF8String\0"));
+        if path_pointer.is_null() {
+            return Err("Não foi possível ler o caminho selecionado.".to_string());
+        }
+        let path = PathBuf::from(CStr::from_ptr(path_pointer).to_string_lossy().into_owned());
+        if path.is_dir() {
+            Ok(Some(path))
+        } else {
+            Err("A pasta selecionada não está mais disponível.".to_string())
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+/// Uses an installed desktop portal helper for folder selection.
+fn choose_library_folder() -> Result<Option<PathBuf>, String> {
+    for (program, arguments) in [
+        (
+            "zenity",
+            vec![
+                "--file-selection",
+                "--directory",
+                "--title=Selecione a pasta de jogos do Aceris",
+            ],
+        ),
+        (
+            "kdialog",
+            vec![
+                "--getexistingdirectory",
+                ".",
+                "Selecione a pasta de jogos do Aceris",
+            ],
+        ),
+    ] {
+        match run_directory_picker(program, &arguments) {
+            Ok(selection) => return Ok(selection),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!("NÃO FOI POSSÍVEL ABRIR O SELETOR DE PASTAS: {error}"));
+            }
+        }
+    }
+    Err(
+        "Nenhum seletor de pastas foi encontrado. Instale zenity ou kdialog para importar uma pasta."
+            .to_string(),
+    )
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn choose_library_folder() -> Result<Option<PathBuf>, String> {
+    Err("A seleção nativa de pastas não está disponível nesta plataforma.".to_string())
 }
 
 /// Starts or moves a touch using the active layout's bottom-screen rectangle.
