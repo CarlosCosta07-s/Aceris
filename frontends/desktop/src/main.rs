@@ -988,7 +988,7 @@ fn emulate(
                 {
                     if let Err(error) = gamepad.save_mapping_for_editor(
                         aceris_core::input_mapping::GamepadMapping::default(),
-                        gamepad_axis_profile_scope,
+                        gamepad_mapping_game_scope,
                     ) {
                         eprintln!("could not reset gamepad mapping: {error}");
                     }
@@ -1268,7 +1268,7 @@ fn emulate(
                             gamepad.cancel_mapping_capture();
                             if let Err(error) = gamepad.save_mapping_for_editor(
                                 aceris_core::input_mapping::GamepadMapping::default(),
-                                gamepad_axis_profile_scope,
+                                gamepad_mapping_game_scope,
                             ) {
                                 eprintln!("could not reset gamepad mapping: {error}");
                             }
