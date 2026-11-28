@@ -116,12 +116,12 @@ pub mod home {
     pub const SIDEBAR_ICON_SIZE: f32 = 42.0;
     pub const SIDEBAR_BRAND_CENTER_X: f32 = SIDEBAR_WIDTH * 0.5;
     pub const SIDEBAR_BRAND_CENTER_Y: f32 = 38.0;
-    pub const SIDEBAR_FIRST_ITEM_Y: f32 = 94.0;
+    pub const SIDEBAR_FIRST_ITEM_Y: f32 = 100.0;
     pub const SIDEBAR_ITEM_COUNT: usize = 5;
-    pub const SIDEBAR_POWER_BOTTOM: f32 = 0.30;
+    pub const SIDEBAR_POWER_BOTTOM: f32 = 0.08;
 
     pub fn sidebar_item_center_y(index: usize, logical_height: f32) -> f32 {
-        let span = (logical_height * 0.43).clamp(180.0, 242.0);
+        let span = (logical_height - 210.0).clamp(180.0, 238.0);
         SIDEBAR_FIRST_ITEM_Y
             + span * index.min(SIDEBAR_ITEM_COUNT - 1) as f32 / (SIDEBAR_ITEM_COUNT - 1) as f32
     }
