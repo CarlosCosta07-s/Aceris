@@ -1,0 +1,82 @@
+name: Android emulator startup diagnostics
+
+on:
+  push:
+    branches: ["diag/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  emulator:
+    name: Launch on Android emulator (API ${{ matrix.api }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [30, 34]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install platform, build tools and NDK
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android,aarch64-linux-android
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+      - name: Build native libraries
+        run: cargo ndk -t x86_64 -t arm64-v8a build --locked -p aceris-android --release
+      - name: Inspect arm64 library
+        run: |
+          READELF=$(ls $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf)
+          SO=target/aarch64-linux-android/release/libaceris_android.so
+          ls -la $SO
+          $READELF -d $SO | grep -E "NEEDED|SONAME|FLAGS"
+          $READELF -lW $SO | grep -E "TLS|GNU_STACK|LOAD"
+          echo "--- undefined dynamic symbols"
+          $READELF --dyn-syms -W $SO | awk '$7=="UND"{print $8}' | sort -u | tr '\n' ' '
+          echo
+      - name: Package x86_64 APK
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          mkdir -p build/native/lib/x86_64
+          "$BT/aapt2" compile --dir frontends/android/res -o build/res.zip
+          "$BT/aapt2" link -I "$ANDROID_HOME/platforms/android-35/android.jar" \
+            --manifest frontends/android/AndroidManifest.xml \
+            --min-sdk-version 24 --target-sdk-version 34 --version-code 1 --version-name diag \
+            -o build/unsigned.apk build/res.zip
+          install -m 0644 target/x86_64-linux-android/release/libaceris_android.so build/native/lib/x86_64/
+          (cd build/native && zip -q -0 ../unsigned.apk lib/x86_64/libaceris_android.so)
+          "$BT/zipalign" -f -p 4 build/unsigned.apk build/aligned.apk
+          keytool -genkeypair -noprompt -keystore build/k.keystore -storepass android -keypass android \
+            -alias k -keyalg RSA -keysize 2048 -validity 1000 -dname "CN=diag"
+          "$BT/apksigner" sign --ks build/k.keystore --ks-key-alias k --ks-pass pass:android --key-pass pass:android \
+            --out build/diag.apk build/aligned.apk
+      - name: Run on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: google_apis
+          force-avd-creation: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash .github/scripts/android-emulator-diag.sh
