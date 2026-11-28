@@ -2634,7 +2634,7 @@ impl Library {
                     283.0,
                     608.0 + settings_offset,
                     small_scale,
-                    &format!("DEADZONE: {}%", self.gamepad_deadzone_percent),
+                    &format!("ZONA MORTA: {}%", self.gamepad_deadzone_percent),
                     brand::TEXT,
                 );
             }
@@ -4023,7 +4023,7 @@ impl Library {
                     877.0,
                     311.0,
                     text_scale,
-                    &format!("DEADZONE: {}%", self.gamepad_deadzone_percent),
+                    &format!("ZONA MORTA: {}%", self.gamepad_deadzone_percent),
                     brand::TEXT,
                 );
                 responsive_text(
