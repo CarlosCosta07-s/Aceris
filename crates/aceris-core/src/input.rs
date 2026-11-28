@@ -32,6 +32,30 @@ pub mod pad {
 
 /// Largest circle-pad deflection per axis.
 pub const CIRCLE_PAD_LIMIT: i16 = 156;
+
+/// Converts a physical analog-stick vector into the 3DS Circle Pad range.
+///
+/// A radial deadzone preserves the stick's direction near diagonals, unlike
+/// applying the same threshold independently to X and Y. Inputs are sanitized
+/// and clamped to the unit circle before the deadzone is normalized.
+pub fn gamepad_axes_to_circle_pad(x: f32, y: f32, deadzone_percent: u8) -> (i16, i16) {
+    let x = if x.is_finite() { x.clamp(-1.0, 1.0) } else { 0.0 };
+    let y = if y.is_finite() { y.clamp(-1.0, 1.0) } else { 0.0 };
+    let magnitude = x.hypot(y);
+    let deadzone = f32::from(deadzone_percent.min(99)) / 100.0;
+
+    if magnitude <= deadzone || magnitude == 0.0 {
+        return (0, 0);
+    }
+
+    let normalized_magnitude = (magnitude.min(1.0) - deadzone) / (1.0 - deadzone);
+    let scale = normalized_magnitude / magnitude;
+    let limit = f32::from(CIRCLE_PAD_LIMIT);
+    (
+        (x * scale * limit).round() as i16,
+        (y * scale * limit).round() as i16,
+    )
+}
 /// Bottom-screen touch resolution.
 pub const TOUCH_WIDTH: u16 = 320;
 pub const TOUCH_HEIGHT: u16 = 240;
@@ -188,6 +212,29 @@ mod tests {
         input.press(pad::B);
         input.release(pad::B);
         assert_eq!(input.snapshot(), InputSnapshot::default());
+    }
+
+    #[test]
+    fn physical_stick_uses_a_radial_deadzone_and_preserves_direction() {
+        assert_eq!(gamepad_axes_to_circle_pad(0.0, 0.0, 16), (0, 0));
+        assert_eq!(gamepad_axes_to_circle_pad(0.15, 0.0, 16), (0, 0));
+        assert_eq!(gamepad_axes_to_circle_pad(0.10, 0.10, 16), (0, 0));
+        assert_ne!(gamepad_axes_to_circle_pad(0.12, 0.12, 16), (0, 0));
+        assert_eq!(gamepad_axes_to_circle_pad(1.0, 0.0, 16), (156, 0));
+        assert_eq!(gamepad_axes_to_circle_pad(-1.0, 0.0, 16), (-156, 0));
+        assert_eq!(gamepad_axes_to_circle_pad(0.0, 1.0, 16), (0, 156));
+        assert_eq!(gamepad_axes_to_circle_pad(0.0, -1.0, 16), (0, -156));
+    }
+
+    #[test]
+    fn physical_stick_is_clamped_to_the_unit_circle_and_rejects_non_finite_axes() {
+        let diagonal = gamepad_axes_to_circle_pad(1.0, 1.0, 0);
+        assert_eq!(diagonal.0, diagonal.1);
+        assert!(diagonal.0 < CIRCLE_PAD_LIMIT);
+        assert!(diagonal.0 > 100);
+        assert_eq!(gamepad_axes_to_circle_pad(f32::NAN, 1.0, 16), (0, 156));
+        assert_eq!(gamepad_axes_to_circle_pad(1.0, f32::INFINITY, 16), (156, 0));
+        assert_eq!(gamepad_axes_to_circle_pad(1.0, 1.0, 100), diagonal);
     }
 
     #[test]

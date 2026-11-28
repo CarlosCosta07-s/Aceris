@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aceris_core::input::{
-    CIRCLE_PAD_LIMIT, pad, pad_from_frontend_buttons, touch_from_surface_point,
+    gamepad_axes_to_circle_pad, pad, pad_from_frontend_buttons, touch_from_surface_point,
 };
 use aceris_core::input_mapping::{GamepadControl, GamepadMapping};
 use aceris_core::video::frontend::{
@@ -213,10 +213,10 @@ impl App {
         let Some(system) = self.system.as_mut() else {
             return false;
         };
-        system.input_mut().set_circle_pad(
-            gamepad_axis_to_circle_pad(x, deadzone_percent),
-            -gamepad_axis_to_circle_pad(y, deadzone_percent),
-        );
+        let (circle_x, circle_y) = gamepad_axes_to_circle_pad(x, -y, deadzone_percent);
+        system
+            .input_mut()
+            .set_circle_pad(i32::from(circle_x), i32::from(circle_y));
         true
     }
 
@@ -1721,25 +1721,6 @@ pub fn pad_from_android_keycode(code: i32) -> Option<u32> {
     })
 }
 
-fn gamepad_axis_to_circle_pad(value: f32, deadzone_percent: u8) -> i32 {
-    if !value.is_finite() {
-        return 0;
-    }
-    let deadzone = f32::from(deadzone_percent.min(99)) / 100.0;
-    let clamped = value.clamp(-1.0, 1.0);
-    let magnitude = clamped.abs();
-    if magnitude <= deadzone {
-        return 0;
-    }
-    let scaled = (magnitude - deadzone) / (1.0 - deadzone);
-    let sign = if clamped.is_sign_negative() {
-        -1.0
-    } else {
-        1.0
-    };
-    (scaled * sign * f32::from(CIRCLE_PAD_LIMIT)).round() as i32
-}
-
 fn gamepad_trigger_control_mask(left: f32, right: f32) -> u16 {
     let is_pressed = |value: f32| value.is_finite() && value.clamp(0.0, 1.0) >= 0.5;
     (if is_pressed(left) {
@@ -1806,24 +1787,18 @@ mod gamepad_axis_tests {
     }
 
     #[test]
-    fn gamepad_axis_applies_deadzone_and_normalizes_to_circle_pad_range() {
-        assert_eq!(gamepad_axis_to_circle_pad(0.0, 16), 0);
-        assert_eq!(gamepad_axis_to_circle_pad(0.15, 16), 0);
-        assert_eq!(gamepad_axis_to_circle_pad(-0.16, 16), 0);
+    fn android_stick_uses_the_shared_radial_deadzone_mapping() {
+        assert_eq!(gamepad_axes_to_circle_pad(0.0, 0.0, 16), (0, 0));
+        assert_eq!(gamepad_axes_to_circle_pad(0.15, 0.0, 16), (0, 0));
         assert_eq!(
-            gamepad_axis_to_circle_pad(1.0, 16),
-            i32::from(CIRCLE_PAD_LIMIT)
+            gamepad_axes_to_circle_pad(1.0, 0.0, 16),
+            (aceris_core::input::CIRCLE_PAD_LIMIT, 0)
         );
         assert_eq!(
-            gamepad_axis_to_circle_pad(-1.0, 16),
-            -i32::from(CIRCLE_PAD_LIMIT)
+            gamepad_axes_to_circle_pad(0.0, 1.0, 16),
+            (0, aceris_core::input::CIRCLE_PAD_LIMIT)
         );
-        assert_eq!(gamepad_axis_to_circle_pad(f32::NAN, 16), 0);
-        assert_eq!(gamepad_axis_to_circle_pad(f32::INFINITY, 16), 0);
-        assert!(gamepad_axis_to_circle_pad(0.5, 16) > 0);
-        assert!(gamepad_axis_to_circle_pad(-0.5, 16) < 0);
-        assert_eq!(gamepad_axis_to_circle_pad(0.07, 8), 0);
-        assert!(gamepad_axis_to_circle_pad(0.10, 8) > 0);
+        assert_ne!(gamepad_axes_to_circle_pad(0.12, 0.12, 16), (0, 0));
     }
 }
 

@@ -5,7 +5,7 @@
 
 use aceris_core::{
     GameIdentity,
-    input::{CIRCLE_PAD_LIMIT, InputState},
+    input::{InputState, gamepad_axes_to_circle_pad},
     input_mapping::{GamepadControl, GamepadMapping},
 };
 use gilrs::{Axis, Button, EventType, GamepadId, Gilrs};
@@ -188,9 +188,10 @@ impl GamepadManager {
             );
         }
         let buttons = button_mask(&gamepad, &self.mapping);
-        let axes = (
-            axis_to_circle_pad(gamepad.value(Axis::LeftStickX), deadzone_percent),
-            axis_to_circle_pad(-gamepad.value(Axis::LeftStickY), deadzone_percent),
+        let axes = gamepad_axes_to_circle_pad(
+            gamepad.value(Axis::LeftStickX),
+            -gamepad.value(Axis::LeftStickY),
+            deadzone_percent,
         );
         (buttons, axes)
     }
@@ -237,25 +238,6 @@ fn gamepad_control_from_gilrs_button(button: Button) -> Option<GamepadControl> {
 
 fn button_mask(gamepad: &gilrs::Gamepad<'_>, mapping: &GamepadMapping) -> u32 {
     mapping.mask_from_pressed(|control| gamepad.is_pressed(gilrs_button(control)))
-}
-
-fn axis_to_circle_pad(value: f32, deadzone_percent: u8) -> i16 {
-    if !value.is_finite() {
-        return 0;
-    }
-    let deadzone = f32::from(deadzone_percent.min(99)) / 100.0;
-    let clamped = value.clamp(-1.0, 1.0);
-    let magnitude = clamped.abs();
-    if magnitude <= deadzone {
-        return 0;
-    }
-    let normalized = (magnitude - deadzone) / (1.0 - deadzone);
-    let sign = if clamped.is_sign_negative() {
-        -1.0
-    } else {
-        1.0
-    };
-    (normalized * sign * f32::from(CIRCLE_PAD_LIMIT)).round() as i16
 }
 
 #[cfg(test)]
@@ -309,15 +291,17 @@ mod tests {
     }
 
     #[test]
-    fn gamepad_stick_uses_deadzone_and_clamps_to_circle_pad_range() {
-        assert_eq!(axis_to_circle_pad(0.0, 16), 0);
-        assert_eq!(axis_to_circle_pad(0.15, 16), 0);
-        assert_eq!(axis_to_circle_pad(-0.16, 16), 0);
-        assert_eq!(axis_to_circle_pad(1.0, 16), CIRCLE_PAD_LIMIT);
-        assert_eq!(axis_to_circle_pad(-1.0, 16), -CIRCLE_PAD_LIMIT);
-        assert_eq!(axis_to_circle_pad(f32::NAN, 16), 0);
-        assert_eq!(axis_to_circle_pad(f32::INFINITY, 16), 0);
-        assert_eq!(axis_to_circle_pad(0.07, 8), 0);
-        assert!(axis_to_circle_pad(0.10, 8) > 0);
+    fn desktop_stick_uses_the_shared_radial_deadzone_mapping() {
+        assert_eq!(gamepad_axes_to_circle_pad(0.0, 0.0, 16), (0, 0));
+        assert_eq!(gamepad_axes_to_circle_pad(0.15, 0.0, 16), (0, 0));
+        assert_eq!(
+            gamepad_axes_to_circle_pad(1.0, 0.0, 16),
+            (aceris_core::input::CIRCLE_PAD_LIMIT, 0)
+        );
+        assert_eq!(
+            gamepad_axes_to_circle_pad(0.0, 1.0, 16),
+            (0, aceris_core::input::CIRCLE_PAD_LIMIT)
+        );
+        assert_eq!(gamepad_axes_to_circle_pad(1.0, f32::NAN, 16).1, 0);
     }
 }
