@@ -66,29 +66,27 @@ mod android {
     fn log(priority: c_int, message: &'static [u8]) {
         // SAFETY: both byte strings are static, NUL-terminated C strings.
         unsafe {
-            __android_log_write(
-                priority,
-                c"AcerisSmoke".as_ptr(),
-                message.as_ptr().cast(),
-            );
+            __android_log_write(priority, c"AcerisSmoke".as_ptr(), message.as_ptr().cast());
         }
     }
 
-    unsafe extern "C" fn on_native_window_created(
-        _activity: *mut c_void,
-        window: *mut c_void,
-    ) {
+    unsafe extern "C" fn on_native_window_created(_activity: *mut c_void, window: *mut c_void) {
         if window.is_null() {
-            log(ANDROID_LOG_ERROR, b"Native window callback received null window\0");
+            log(
+                ANDROID_LOG_ERROR,
+                b"Native window callback received null window\0",
+            );
             return;
         }
 
         // SAFETY: Android guarantees the window remains valid during this callback.
-        let geometry_result = unsafe {
-            ANativeWindow_setBuffersGeometry(window, 0, 0, WINDOW_FORMAT_RGBA_8888)
-        };
+        let geometry_result =
+            unsafe { ANativeWindow_setBuffersGeometry(window, 0, 0, WINDOW_FORMAT_RGBA_8888) };
         if geometry_result != 0 {
-            log(ANDROID_LOG_ERROR, b"ANativeWindow_setBuffersGeometry failed\0");
+            log(
+                ANDROID_LOG_ERROR,
+                b"ANativeWindow_setBuffersGeometry failed\0",
+            );
             return;
         }
 
@@ -165,7 +163,10 @@ mod android {
         // SAFETY: Android owns the activity and its callback table for its lifetime.
         let callbacks = unsafe { (*activity).callbacks };
         if callbacks.is_null() {
-            log(ANDROID_LOG_ERROR, b"NativeActivity callback table was null\0");
+            log(
+                ANDROID_LOG_ERROR,
+                b"NativeActivity callback table was null\0",
+            );
             return;
         }
 
