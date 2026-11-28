@@ -2276,7 +2276,8 @@ impl Library {
                 HomeFocus::Navigation => {
                     self.home_navigation_selected = (self.home_navigation_selected as i64
                         + i64::from(direction))
-                    .clamp(0, ui::home::SIDEBAR_ITEM_COUNT as i64 - 1) as usize;
+                    .clamp(0, ui::home::SIDEBAR_ITEM_COUNT as i64 - 1)
+                        as usize;
                 }
                 HomeFocus::Games if direction < 0 => {
                     self.home_focus = HomeFocus::Navigation;
@@ -2556,9 +2557,7 @@ impl Library {
             let offset = x - ui::home::CAROUSEL_X;
             let slot = (offset / ui::home::GAME_CARD_STEP).floor().max(0.0) as usize;
             let card_x = ui::home::CAROUSEL_X + slot as f32 * ui::home::GAME_CARD_STEP;
-            if slot < ui::home::VISIBLE_GAME_CARDS
-                && x < card_x + ui::home::GAME_CARD_WIDTH
-            {
+            if slot < ui::home::VISIBLE_GAME_CARDS && x < card_x + ui::home::GAME_CARD_WIDTH {
                 let index = self.home_first_visible(ui::home::VISIBLE_GAME_CARDS) + slot;
                 if index < home_entries.len() {
                     self.home_focus = HomeFocus::Games;
@@ -4701,8 +4700,8 @@ impl Library {
         for (slot, page) in nav_pages.into_iter().enumerate() {
             let center_y = ui::home::sidebar_item_center_y(slot, logical_height);
             let selected = page == Some(self.page);
-            let focused = self.home_focus == HomeFocus::Navigation
-                && self.home_navigation_selected == slot;
+            let focused =
+                self.home_focus == HomeFocus::Navigation && self.home_navigation_selected == slot;
             if selected || focused {
                 responsive_rounded_fill(
                     frame,
@@ -4875,16 +4874,7 @@ impl Library {
                 28.0,
                 brand::SURFACE_SELECTED,
             );
-            render_console_nav_icon(
-                frame,
-                width,
-                height,
-                scale,
-                center_x,
-                50.0,
-                8,
-                brand::TEXT,
-            );
+            render_console_nav_icon(frame, width, height, scale, center_x, 50.0, 8, brand::TEXT);
             responsive_text_centered(
                 frame,
                 width,
@@ -4950,7 +4940,17 @@ impl Library {
 
         let command_y = ui::home::command_bar_top(logical_height) + 13.0;
         let command_items = [
-            (220.0, "A", if home_entries.is_empty() { "IMPORTAR" } else { "JOGAR" }, 0usize, 112.0),
+            (
+                220.0,
+                "A",
+                if home_entries.is_empty() {
+                    "IMPORTAR"
+                } else {
+                    "JOGAR"
+                },
+                0usize,
+                112.0,
+            ),
             (405.0, "X", "FAVORITO", 1usize, 122.0),
             (595.0, "+", "OPÇÕES", 2usize, 112.0),
             (775.0, "−", "TODOS OS JOGOS", 3usize, 164.0),
@@ -7980,7 +7980,6 @@ fn draw_smdh_icon(
 }
 
 // These low-level draw primitives intentionally accept a full rectangle and target buffer.
-#[allow(clippy::too_many_arguments)]
 /// Draws a line using the same responsive logical coordinate system as the UI.
 #[allow(clippy::too_many_arguments)]
 fn responsive_line(
@@ -8058,42 +8057,178 @@ fn render_console_nav_icon(
     match kind {
         // Home.
         0 => {
-            line(frame, center_x - 13.0, center_y - 1.0, center_x, center_y - 12.0);
-            line(frame, center_x, center_y - 12.0, center_x + 13.0, center_y - 1.0);
-            line(frame, center_x - 9.0, center_y - 3.0, center_x - 9.0, center_y + 12.0);
-            line(frame, center_x + 9.0, center_y - 3.0, center_x + 9.0, center_y + 12.0);
-            line(frame, center_x - 9.0, center_y + 12.0, center_x + 9.0, center_y + 12.0);
-            line(frame, center_x - 2.0, center_y + 12.0, center_x - 2.0, center_y + 3.0);
-            line(frame, center_x + 3.0, center_y + 12.0, center_x + 3.0, center_y + 3.0);
+            line(
+                frame,
+                center_x - 13.0,
+                center_y - 1.0,
+                center_x,
+                center_y - 12.0,
+            );
+            line(
+                frame,
+                center_x,
+                center_y - 12.0,
+                center_x + 13.0,
+                center_y - 1.0,
+            );
+            line(
+                frame,
+                center_x - 9.0,
+                center_y - 3.0,
+                center_x - 9.0,
+                center_y + 12.0,
+            );
+            line(
+                frame,
+                center_x + 9.0,
+                center_y - 3.0,
+                center_x + 9.0,
+                center_y + 12.0,
+            );
+            line(
+                frame,
+                center_x - 9.0,
+                center_y + 12.0,
+                center_x + 9.0,
+                center_y + 12.0,
+            );
+            line(
+                frame,
+                center_x - 2.0,
+                center_y + 12.0,
+                center_x - 2.0,
+                center_y + 3.0,
+            );
+            line(
+                frame,
+                center_x + 3.0,
+                center_y + 12.0,
+                center_x + 3.0,
+                center_y + 3.0,
+            );
         }
         // Game library / cartridge.
         1 => {
-            line(frame, center_x - 13.0, center_y - 8.0, center_x + 13.0, center_y - 8.0);
-            line(frame, center_x + 13.0, center_y - 8.0, center_x + 13.0, center_y + 8.0);
-            line(frame, center_x + 13.0, center_y + 8.0, center_x - 13.0, center_y + 8.0);
-            line(frame, center_x - 13.0, center_y + 8.0, center_x - 13.0, center_y - 8.0);
-            line(frame, center_x - 8.0, center_y - 2.0, center_x - 8.0, center_y + 4.0);
-            line(frame, center_x - 11.0, center_y + 1.0, center_x - 5.0, center_y + 1.0);
-            responsive_rounded_fill(frame,width as usize,height as usize,center_x + 4.0,center_y - 4.0,4.0,4.0,scale,2.0,color);
-            responsive_rounded_fill(frame,width as usize,height as usize,center_x + 8.0,center_y + 2.0,4.0,4.0,scale,2.0,color);
+            line(
+                frame,
+                center_x - 13.0,
+                center_y - 8.0,
+                center_x + 13.0,
+                center_y - 8.0,
+            );
+            line(
+                frame,
+                center_x + 13.0,
+                center_y - 8.0,
+                center_x + 13.0,
+                center_y + 8.0,
+            );
+            line(
+                frame,
+                center_x + 13.0,
+                center_y + 8.0,
+                center_x - 13.0,
+                center_y + 8.0,
+            );
+            line(
+                frame,
+                center_x - 13.0,
+                center_y + 8.0,
+                center_x - 13.0,
+                center_y - 8.0,
+            );
+            line(
+                frame,
+                center_x - 8.0,
+                center_y - 2.0,
+                center_x - 8.0,
+                center_y + 4.0,
+            );
+            line(
+                frame,
+                center_x - 11.0,
+                center_y + 1.0,
+                center_x - 5.0,
+                center_y + 1.0,
+            );
+            responsive_rounded_fill(
+                frame,
+                width as usize,
+                height as usize,
+                center_x + 4.0,
+                center_y - 4.0,
+                4.0,
+                4.0,
+                scale,
+                2.0,
+                color,
+            );
+            responsive_rounded_fill(
+                frame,
+                width as usize,
+                height as usize,
+                center_x + 8.0,
+                center_y + 2.0,
+                4.0,
+                4.0,
+                scale,
+                2.0,
+                color,
+            );
         }
         // Import folder.
         2 => {
-            line(frame, center_x - 12.0, center_y + 5.0, center_x + 12.0, center_y + 5.0);
-            line(frame, center_x - 12.0, center_y + 5.0, center_x - 12.0, center_y + 10.0);
-            line(frame, center_x + 12.0, center_y + 5.0, center_x + 12.0, center_y + 10.0);
-            line(frame, center_x - 12.0, center_y + 10.0, center_x + 12.0, center_y + 10.0);
+            line(
+                frame,
+                center_x - 12.0,
+                center_y + 5.0,
+                center_x + 12.0,
+                center_y + 5.0,
+            );
+            line(
+                frame,
+                center_x - 12.0,
+                center_y + 5.0,
+                center_x - 12.0,
+                center_y + 10.0,
+            );
+            line(
+                frame,
+                center_x + 12.0,
+                center_y + 5.0,
+                center_x + 12.0,
+                center_y + 10.0,
+            );
+            line(
+                frame,
+                center_x - 12.0,
+                center_y + 10.0,
+                center_x + 12.0,
+                center_y + 10.0,
+            );
             line(frame, center_x, center_y - 12.0, center_x, center_y + 1.0);
-            line(frame, center_x - 6.0, center_y - 5.0, center_x, center_y + 1.0);
-            line(frame, center_x + 6.0, center_y - 5.0, center_x, center_y + 1.0);
+            line(
+                frame,
+                center_x - 6.0,
+                center_y - 5.0,
+                center_x,
+                center_y + 1.0,
+            );
+            line(
+                frame,
+                center_x + 6.0,
+                center_y - 5.0,
+                center_x,
+                center_y + 1.0,
+            );
         }
         // Favorites.
         3 => {
             let mut points = [(0.0f32, 0.0f32); 10];
             for index in 0..10 {
                 let radius = if index % 2 == 0 { 14.0 } else { 6.5 };
-                let angle = -std::f32::consts::FRAC_PI_2
-                    + index as f32 * std::f32::consts::PI / 5.0;
+                let angle =
+                    -std::f32::consts::FRAC_PI_2 + index as f32 * std::f32::consts::PI / 5.0;
                 points[index] = (
                     center_x + angle.cos() * radius,
                     center_y + angle.sin() * radius,
@@ -8101,29 +8236,83 @@ fn render_console_nav_icon(
             }
             for index in 0..10 {
                 let next = (index + 1) % 10;
-                line(frame, points[index].0, points[index].1, points[next].0, points[next].1);
+                line(
+                    frame,
+                    points[index].0,
+                    points[index].1,
+                    points[next].0,
+                    points[next].1,
+                );
             }
         }
         // Recent activity.
         4 => {
-            responsive_circle_outline(frame,width,height,center_x,center_y,13.0,2.4,scale,color);
+            responsive_circle_outline(
+                frame, width, height, center_x, center_y, 13.0, 2.4, scale, color,
+            );
             line(frame, center_x, center_y, center_x, center_y - 8.0);
             line(frame, center_x, center_y, center_x + 7.0, center_y + 4.0);
         }
         // Homebrew.
         5 => {
-            line(frame, center_x - 4.0, center_y - 13.0, center_x + 4.0, center_y - 13.0);
-            line(frame, center_x - 2.0, center_y - 13.0, center_x - 2.0, center_y - 5.0);
-            line(frame, center_x + 2.0, center_y - 13.0, center_x + 2.0, center_y - 5.0);
-            line(frame, center_x - 2.0, center_y - 5.0, center_x - 11.0, center_y + 10.0);
-            line(frame, center_x + 2.0, center_y - 5.0, center_x + 11.0, center_y + 10.0);
-            line(frame, center_x - 11.0, center_y + 10.0, center_x + 11.0, center_y + 10.0);
-            line(frame, center_x - 7.0, center_y + 3.0, center_x + 7.0, center_y + 3.0);
+            line(
+                frame,
+                center_x - 4.0,
+                center_y - 13.0,
+                center_x + 4.0,
+                center_y - 13.0,
+            );
+            line(
+                frame,
+                center_x - 2.0,
+                center_y - 13.0,
+                center_x - 2.0,
+                center_y - 5.0,
+            );
+            line(
+                frame,
+                center_x + 2.0,
+                center_y - 13.0,
+                center_x + 2.0,
+                center_y - 5.0,
+            );
+            line(
+                frame,
+                center_x - 2.0,
+                center_y - 5.0,
+                center_x - 11.0,
+                center_y + 10.0,
+            );
+            line(
+                frame,
+                center_x + 2.0,
+                center_y - 5.0,
+                center_x + 11.0,
+                center_y + 10.0,
+            );
+            line(
+                frame,
+                center_x - 11.0,
+                center_y + 10.0,
+                center_x + 11.0,
+                center_y + 10.0,
+            );
+            line(
+                frame,
+                center_x - 7.0,
+                center_y + 3.0,
+                center_x + 7.0,
+                center_y + 3.0,
+            );
         }
         // Settings.
         6 => {
-            responsive_circle_outline(frame,width,height,center_x,center_y,11.0,2.2,scale,color);
-            responsive_circle_outline(frame,width,height,center_x,center_y,4.0,2.2,scale,color);
+            responsive_circle_outline(
+                frame, width, height, center_x, center_y, 11.0, 2.2, scale, color,
+            );
+            responsive_circle_outline(
+                frame, width, height, center_x, center_y, 4.0, 2.2, scale, color,
+            );
             for index in 0..8 {
                 let angle = index as f32 * std::f32::consts::PI / 4.0;
                 line(
@@ -8137,15 +8326,69 @@ fn render_console_nav_icon(
         }
         // Power.
         7 => {
-            responsive_circle_outline(frame,width,height,center_x,center_y + 2.0,12.0,2.4,scale,color);
+            responsive_circle_outline(
+                frame,
+                width,
+                height,
+                center_x,
+                center_y + 2.0,
+                12.0,
+                2.4,
+                scale,
+                color,
+            );
             line(frame, center_x, center_y - 15.0, center_x, center_y - 1.0);
         }
         // Aceris fruit mark.
         _ => {
-            responsive_rounded_fill(frame,width as usize,height as usize,center_x - 10.0,center_y - 4.0,13.0,13.0,scale,6.5,brand::ACCENT_RED_LIGHT);
-            responsive_rounded_fill(frame,width as usize,height as usize,center_x - 1.0,center_y - 3.0,13.0,13.0,scale,6.5,brand::ACCENT_RED);
-            responsive_line(frame,width,height,center_x - 1.0,center_y - 9.0,center_x + 6.0,center_y - 14.0,2.6,scale,brand::ACCENT_GREEN_LIGHT);
-            responsive_line(frame,width,height,center_x + 1.0,center_y - 9.0,center_x + 11.0,center_y - 9.0,2.6,scale,brand::ACCENT_GREEN_LIGHT);
+            responsive_rounded_fill(
+                frame,
+                width as usize,
+                height as usize,
+                center_x - 10.0,
+                center_y - 4.0,
+                13.0,
+                13.0,
+                scale,
+                6.5,
+                brand::ACCENT_RED_LIGHT,
+            );
+            responsive_rounded_fill(
+                frame,
+                width as usize,
+                height as usize,
+                center_x - 1.0,
+                center_y - 3.0,
+                13.0,
+                13.0,
+                scale,
+                6.5,
+                brand::ACCENT_RED,
+            );
+            responsive_line(
+                frame,
+                width,
+                height,
+                center_x - 1.0,
+                center_y - 9.0,
+                center_x + 6.0,
+                center_y - 14.0,
+                2.6,
+                scale,
+                brand::ACCENT_GREEN_LIGHT,
+            );
+            responsive_line(
+                frame,
+                width,
+                height,
+                center_x + 1.0,
+                center_y - 9.0,
+                center_x + 11.0,
+                center_y - 9.0,
+                2.6,
+                scale,
+                brand::ACCENT_GREEN_LIGHT,
+            );
         }
     }
 }
@@ -8166,18 +8409,47 @@ fn render_console_hint(
 ) {
     if focused {
         responsive_panel(
-            frame, width, height, x - 8.0, y - 5.0, group_width, 34.0, scale,
+            frame,
+            width,
+            height,
+            x - 8.0,
+            y - 5.0,
+            group_width,
+            34.0,
+            scale,
             brand::SURFACE_SELECTED,
         );
     }
     responsive_panel(
-        frame, width, height, x, y, 24.0, 24.0, scale, brand::SURFACE_RAISED,
+        frame,
+        width,
+        height,
+        x,
+        y,
+        24.0,
+        24.0,
+        scale,
+        brand::SURFACE_RAISED,
     );
     responsive_text_centered(
-        frame, width, height, x + 12.0, y + 6.0, text_scale, key, brand::TEXT,
+        frame,
+        width,
+        height,
+        x + 12.0,
+        y + 6.0,
+        text_scale,
+        key,
+        brand::TEXT,
     );
     responsive_text(
-        frame, width, height, x + 34.0, y + 7.0, text_scale, label, brand::TEXT_MUTED,
+        frame,
+        width,
+        height,
+        x + 34.0,
+        y + 7.0,
+        text_scale,
+        label,
+        brand::TEXT_MUTED,
     );
 }
 
@@ -8198,13 +8470,31 @@ fn render_console_game_card(
 ) {
     if selected {
         responsive_panel(
-            frame, width, height, x - 4.0, y - 4.0, card_width + 8.0, card_height + 8.0, scale,
+            frame,
+            width,
+            height,
+            x - 4.0,
+            y - 4.0,
+            card_width + 8.0,
+            card_height + 8.0,
+            scale,
             brand::ACCENT_RED_LIGHT,
         );
     }
     responsive_panel(
-        frame, width, height, x, y, card_width, card_height, scale,
-        if selected { brand::SURFACE_SELECTED } else { brand::SURFACE_CARD },
+        frame,
+        width,
+        height,
+        x,
+        y,
+        card_width,
+        card_height,
+        scale,
+        if selected {
+            brand::SURFACE_SELECTED
+        } else {
+            brand::SURFACE_CARD
+        },
     );
     render_cover_art(
         frame,
@@ -8253,7 +8543,11 @@ fn render_console_game_card(
         y + card_height - 16.0,
         small_scale,
         &format!(".{}", extension.to_ascii_uppercase()),
-        if selected { brand::ACCENT_RED_LIGHT } else { brand::TEXT_MUTED },
+        if selected {
+            brand::ACCENT_RED_LIGHT
+        } else {
+            brand::TEXT_MUTED
+        },
     );
 }
 
@@ -8270,31 +8564,70 @@ fn render_console_empty_card(
     small_scale: usize,
 ) {
     responsive_panel(
-        frame, width, height, x, y, card_width, card_height, scale, brand::SURFACE_CARD,
+        frame,
+        width,
+        height,
+        x,
+        y,
+        card_width,
+        card_height,
+        scale,
+        brand::SURFACE_CARD,
     );
     responsive_circle_outline(
-        frame, width, height, x + card_width * 0.5, y + card_height * 0.38, 22.0, 2.4, scale,
+        frame,
+        width,
+        height,
+        x + card_width * 0.5,
+        y + card_height * 0.38,
+        22.0,
+        2.4,
+        scale,
         brand::ACCENT_GREEN_LIGHT,
     );
     responsive_line(
-        frame, width, height,
-        x + card_width * 0.5 - 9.0, y + card_height * 0.38,
-        x + card_width * 0.5 + 9.0, y + card_height * 0.38,
-        2.4, scale, brand::ACCENT_GREEN_LIGHT,
+        frame,
+        width,
+        height,
+        x + card_width * 0.5 - 9.0,
+        y + card_height * 0.38,
+        x + card_width * 0.5 + 9.0,
+        y + card_height * 0.38,
+        2.4,
+        scale,
+        brand::ACCENT_GREEN_LIGHT,
     );
     responsive_line(
-        frame, width, height,
-        x + card_width * 0.5, y + card_height * 0.38 - 9.0,
-        x + card_width * 0.5, y + card_height * 0.38 + 9.0,
-        2.4, scale, brand::ACCENT_GREEN_LIGHT,
+        frame,
+        width,
+        height,
+        x + card_width * 0.5,
+        y + card_height * 0.38 - 9.0,
+        x + card_width * 0.5,
+        y + card_height * 0.38 + 9.0,
+        2.4,
+        scale,
+        brand::ACCENT_GREEN_LIGHT,
     );
     responsive_text_centered(
-        frame, width, height, x + card_width * 0.5, y + card_height * 0.70, small_scale,
-        "IMPORTAR JOGOS", brand::TEXT,
+        frame,
+        width,
+        height,
+        x + card_width * 0.5,
+        y + card_height * 0.70,
+        small_scale,
+        "IMPORTAR JOGOS",
+        brand::TEXT,
     );
     responsive_text_centered(
-        frame, width, height, x + card_width * 0.5, y + card_height * 0.78, small_scale,
-        "SELECIONAR PASTA", brand::TEXT_MUTED,
+        frame,
+        width,
+        height,
+        x + card_width * 0.5,
+        y + card_height * 0.78,
+        small_scale,
+        "SELECIONAR PASTA",
+        brand::TEXT_MUTED,
     );
 }
 
@@ -9243,8 +9576,7 @@ mod tests {
         assert_eq!(pixel(8, 8), &brand::rgb(brand::SURFACE_HEADER));
         assert_eq!(pixel(90, 8), &brand::rgb(brand::SURFACE_BASE));
 
-        let focus_x =
-            (ui::home::CAROUSEL_X + ui::home::GAME_CARD_WIDTH * 0.5) as usize;
+        let focus_x = (ui::home::CAROUSEL_X + ui::home::GAME_CARD_WIDTH * 0.5) as usize;
         let focus_y = (ui::home::carousel_top(562.0) - 4.0) as usize;
         assert_eq!(
             pixel(focus_x, focus_y),
@@ -9259,9 +9591,7 @@ mod tests {
         library.recent.clear();
         // The fifth portrait cover is intentionally clipped by the right edge;
         // its visible portion remains a valid touch target.
-        let fifth_x = (ui::home::CAROUSEL_X
-            + 4.0 * ui::home::GAME_CARD_STEP
-            + 80.0) as i32;
+        let fifth_x = (ui::home::CAROUSEL_X + 4.0 * ui::home::GAME_CARD_STEP + 80.0) as i32;
         let y = (ui::home::carousel_top(600.0) + 40.0) as i32;
 
         assert_eq!(
@@ -9416,7 +9746,10 @@ mod tests {
         ] {
             library.select_page(LibraryPage::Home);
             let y = ui::home::sidebar_item_center_y(slot, 600.0) as i32;
-            assert_eq!(library.click_responsive(38, y, 1000, 600), ClickResult::Ignored);
+            assert_eq!(
+                library.click_responsive(38, y, 1000, 600),
+                ClickResult::Ignored
+            );
             assert_eq!(library.page(), expected);
         }
 
