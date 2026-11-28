@@ -24,7 +24,10 @@ use aceris_core::{
     },
 };
 use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
-use gamepad::{GamepadAxisProfileScope, GamepadManager};
+use gamepad::{
+    GamepadAxisProfileScope, GamepadManager, LIBRARY_NAV_CONFIRM, LIBRARY_NAV_DOWN,
+    LIBRARY_NAV_LEFT, LIBRARY_NAV_RIGHT, LIBRARY_NAV_UP,
+};
 use performance::{
     DesktopFrameKind, DesktopFrameTimings, DesktopPerformanceMonitor, performance_logging_enabled,
 };
@@ -522,6 +525,7 @@ fn run_windowed(
                 scale,
                 background.as_ref(),
                 &mut performance,
+                &settings_directory,
             )? {
                 Some(path) => path,
                 None => return Ok(()),
@@ -595,8 +599,10 @@ fn browse_library(
     scale: usize,
     background: Option<&background::Sequence>,
     performance: &mut Option<DesktopPerformanceMonitor>,
+    settings_directory: &Path,
 ) -> Result<Option<PathBuf>, String> {
     let frame_time = Duration::from_micros(16_667);
+    let mut gamepad = GamepadManager::new(settings_directory, None);
     let mut animation_frame = 0u64;
     let mut rgba = Vec::new();
     let mut bgrx = Vec::new();
@@ -686,7 +692,6 @@ fn browse_library(
                         window::CANVAS_HEIGHT as u32,
                     ) == ClickResult::Activated;
                 }
-                // Controller input only matters while a game is running.
                 window::WindowEvent::FocusLost => library.finish_search(),
                 window::WindowEvent::Game { .. } | window::WindowEvent::Pointer { .. } => {}
             }
@@ -697,6 +702,60 @@ fn browse_library(
                 }
             }
         }
+
+        let navigation = gamepad.poll_library_navigation();
+        if navigation & LIBRARY_NAV_UP != 0 {
+            library.move_selection_responsive(
+                -1,
+                window::CANVAS_WIDTH as u32,
+                window::CANVAS_HEIGHT as u32,
+            );
+        }
+        if navigation & LIBRARY_NAV_DOWN != 0 {
+            library.move_selection_responsive(
+                1,
+                window::CANVAS_WIDTH as u32,
+                window::CANVAS_HEIGHT as u32,
+            );
+        }
+        if navigation & LIBRARY_NAV_LEFT != 0 {
+            library.move_selection_horizontal_responsive(
+                -1,
+                window::CANVAS_WIDTH as u32,
+                window::CANVAS_HEIGHT as u32,
+            );
+        }
+        if navigation & LIBRARY_NAV_RIGHT != 0 {
+            library.move_selection_horizontal_responsive(
+                1,
+                window::CANVAS_WIDTH as u32,
+                window::CANVAS_HEIGHT as u32,
+            );
+        }
+        if navigation & LIBRARY_NAV_CONFIRM != 0 {
+            let activate = match library.page() {
+                aceris_core::video::library::LibraryPage::Home => {
+                    library.activate_home_selection(
+                        window::CANVAS_WIDTH as u32,
+                        window::CANVAS_HEIGHT as u32,
+                    ) == ClickResult::Activated
+                }
+                aceris_core::video::library::LibraryPage::Settings => {
+                    library.reload();
+                    false
+                }
+                _ => true,
+            };
+            service_folder_picker_request(library);
+            if activate {
+                if let Some(path) = library.selected_entry().map(|entry| entry.path.clone()) {
+                    return Ok(Some(path));
+                }
+            }
+        } else {
+            service_folder_picker_request(library);
+        }
+
         let started = Instant::now();
         let composition_started = performance.as_ref().map(|_| Instant::now());
         let background_frame = background.and_then(|sequence| sequence.frame_at(animation_frame));
