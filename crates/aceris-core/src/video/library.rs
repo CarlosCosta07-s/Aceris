@@ -10580,7 +10580,16 @@ mod tests {
             &frame[offset..offset + 3]
         };
         assert_eq!(pixel(8, 8), &brand::rgb(brand::SURFACE_HEADER));
-        assert_eq!(pixel(90, 8), &brand::rgb(brand::SURFACE_BASE));
+        assert_ne!(
+            pixel(90, 8),
+            &brand::rgb(brand::SURFACE_BASE),
+            "the top of the Home canvas should be lifted by the in-brand gradient"
+        );
+        assert_eq!(
+            pixel(90, 561),
+            &brand::rgb(brand::SURFACE_BASE),
+            "the gradient should resolve to the deep Aceris background at the bottom"
+        );
 
         let focus_x = (ui::home::CAROUSEL_X + ui::home::GAME_CARD_WIDTH * 0.5) as usize;
         let focus_y = (ui::home::carousel_top(562.0) - 4.0) as usize;
