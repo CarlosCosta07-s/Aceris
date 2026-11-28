@@ -2347,7 +2347,7 @@ impl Library {
                     ClickResult::Ignored
                 }
                 3 => {
-                    self.select_page(LibraryPage::Games);
+                    self.toggle_view_mode();
                     ClickResult::Ignored
                 }
                 _ => ClickResult::Ignored,
@@ -2525,13 +2525,13 @@ impl Library {
 
         let command_y = ui::home::command_bar_top(logical_height);
         if y >= command_y {
-            let action = if (212.0..332.0).contains(&x) {
+            let action = if (492.0..622.0).contains(&x) {
                 Some(0)
-            } else if (397.0..535.0).contains(&x) {
+            } else if (632.0..776.0).contains(&x) {
                 Some(1)
-            } else if (587.0..715.0).contains(&x) {
+            } else if (780.0..904.0).contains(&x) {
                 Some(2)
-            } else if (767.0..939.0).contains(&x) {
+            } else if (908.0..1000.0).contains(&x) {
                 Some(3)
             } else {
                 None
@@ -4813,10 +4813,10 @@ impl Library {
                 width,
                 height,
                 scale,
-                center_x - 48.0,
+                center_x - 75.0,
                 12.0,
-                96.0,
-                78.0,
+                150.0,
+                102.0,
                 entry,
                 self.smdh_icons.get(&entry.path),
                 label_scale,
@@ -4826,7 +4826,7 @@ impl Library {
                 width,
                 height,
                 center_x,
-                105.0,
+                124.0,
                 title_scale,
                 &truncate(&entry.title, 42),
                 brand::TEXT,
@@ -4848,7 +4848,7 @@ impl Library {
                 width,
                 height,
                 center_x,
-                137.0,
+                151.0,
                 label_scale,
                 &format!(
                     "NINTENDO 3DS  ·  .{}  ·  {}",
@@ -4937,19 +4937,21 @@ impl Library {
         let command_y = ui::home::command_bar_top(logical_height) + 13.0;
         let command_items = [
             (
-                220.0,
+                500.0,
                 "A",
                 if home_entries.is_empty() {
                     "IMPORTAR"
+                } else if self.selected_entry().is_some_and(|entry| self.is_recent(entry)) {
+                    "CONTINUAR"
                 } else {
                     "JOGAR"
                 },
                 0usize,
-                112.0,
+                118.0,
             ),
-            (405.0, "X", "FAVORITO", 1usize, 122.0),
-            (595.0, "+", "OPÇÕES", 2usize, 112.0),
-            (775.0, "−", "TODOS OS JOGOS", 3usize, 164.0),
+            (640.0, "X", "FAVORITO", 1usize, 132.0),
+            (788.0, "+", "OPÇÕES", 2usize, 112.0),
+            (914.0, "−", "GRADE", 3usize, 120.0),
         ];
         for (x, key, label, slot, group_width) in command_items {
             render_console_hint(
@@ -9947,23 +9949,24 @@ mod tests {
             ClickResult::Activated
         );
         assert_eq!(
-            library.click_responsive(450, 570, 1000, 600),
+            library.click_responsive(700, 570, 1000, 600),
             ClickResult::Ignored
         );
         assert_eq!(library.favorite_count(), 1);
 
         assert_eq!(
-            library.click_responsive(640, 570, 1000, 600),
+            library.click_responsive(840, 570, 1000, 600),
             ClickResult::Ignored
         );
         assert_eq!(library.page(), LibraryPage::Settings);
 
         library.select_page(LibraryPage::Home);
         assert_eq!(
-            library.click_responsive(830, 570, 1000, 600),
+            library.click_responsive(950, 570, 1000, 600),
             ClickResult::Ignored
         );
-        assert_eq!(library.page(), LibraryPage::Games);
+        assert_eq!(library.page(), LibraryPage::Home);
+        assert_eq!(library.status_message(), Some("Visualização: lista"));
 
         fs::remove_dir_all(dir).unwrap();
     }
