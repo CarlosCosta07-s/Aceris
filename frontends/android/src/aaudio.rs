@@ -3,7 +3,8 @@
 //! STATUS: compiled by CI for `aarch64-linux-android` and type-checked on Linux,
 //! never run on a device. `libaaudio.so` exists from Android 8 (API 26); on older
 //! devices (minSdk is 24) `open` returns `None` and the game runs silent.
-//! The stream is never paused while the app is in the background.
+//! The app thread pauses and flushes the stream while the Activity is in the
+//! background, the quick menu is open or no game is running.
 
 use aceris_core::System;
 use aceris_core::dsp::Resampler;
@@ -19,7 +20,13 @@ unsafe extern "C" {
 const RTLD_NOW: c_int = 2;
 const AAUDIO_DIRECTION_OUTPUT: i32 = 0;
 const AAUDIO_FORMAT_PCM_I16: i32 = 1;
-const AAUDIO_PERFORMANCE_MODE_LOW_LATENCY: i32 = 12;
+/// `AAUDIO_PERFORMANCE_MODE_NONE`: the default mixer path with a larger
+/// buffer. Low-latency mode gives a buffer of a few milliseconds, which a
+/// render loop that writes once per ~16.7 ms frame cannot keep filled.
+const AAUDIO_PERFORMANCE_MODE_NONE: i32 = 10;
+/// Target queue length. The app writes once per presented frame and frames
+/// can jitter, so roughly five frames of audio are kept in the stream.
+const TARGET_BUFFER_MILLIS: u32 = 80;
 const AAUDIO_USAGE_GAME: i32 = 14;
 /// Rate requested from the device; the core's 32728 Hz is resampled to it.
 const OUTPUT_RATE: u32 = 48_000;
@@ -32,6 +39,7 @@ type StreamFn = unsafe extern "C" fn(*mut c_void) -> i32;
 type StreamStateFn = unsafe extern "C" fn(*mut c_void) -> i32;
 type WaitForStateChangeFn = unsafe extern "C" fn(*mut c_void, i32, *mut i32, i64) -> i32;
 type WriteFn = unsafe extern "C" fn(*mut c_void, *const c_void, i32, i64) -> i32;
+type SetBufferSizeFn = unsafe extern "C" fn(*mut c_void, i32) -> i32;
 
 const AAUDIO_OK: i32 = 0;
 const STREAM_STATE_STARTING: i32 = 3;
@@ -131,7 +139,7 @@ impl AAudioOutput {
             set_rate(builder, OUTPUT_RATE as i32);
             set_channels(builder, 2);
             set_format(builder, AAUDIO_FORMAT_PCM_I16);
-            set_mode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+            set_mode(builder, AAUDIO_PERFORMANCE_MODE_NONE);
             if let Some(set_usage) = set_usage {
                 set_usage(builder, AAUDIO_USAGE_GAME);
             }
@@ -141,6 +149,26 @@ impl AAudioOutput {
         };
         if status != 0 || stream.is_null() {
             return None;
+        }
+        // Enlarge the playable part of the buffer (clamped by AAudio to its
+        // capacity) so frame-paced writes do not underrun and crackle.
+        let get_capacity: Option<StreamStateFn> =
+            load(library, "AAudioStream_getBufferCapacityInFrames");
+        let set_buffer_size: Option<SetBufferSizeFn> =
+            load(library, "AAudioStream_setBufferSizeInFrames");
+        if let (Some(get_capacity), Some(set_buffer_size)) = (get_capacity, set_buffer_size) {
+            let target =
+                i32::try_from(OUTPUT_RATE * TARGET_BUFFER_MILLIS / 1000).unwrap_or(i32::MAX);
+            // SAFETY: `stream` is open; both calls only query/resize its buffer.
+            unsafe {
+                let capacity = get_capacity(stream);
+                let frames = if capacity > 0 {
+                    target.min(capacity)
+                } else {
+                    target
+                };
+                set_buffer_size(stream, frames);
+            }
         }
         // SAFETY: `stream` is the stream just opened.
         if unsafe { start(stream) } != 0 {

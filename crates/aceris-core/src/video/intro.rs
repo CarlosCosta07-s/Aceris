@@ -10,14 +10,18 @@ use aceris_common::brand;
 
 /// Frames per second the sequence is designed for.
 pub const FPS: u32 = 60;
-/// Total number of frames (1.4 seconds at 60 Hz).
-pub const FRAME_COUNT: u32 = 84;
+/// Total number of frames (2.5 seconds at 60 Hz).
+///
+/// The earlier 84-frame cut compressed the whole timeline into 1.4 s, so the
+/// drop, bounces and wordmark flashed past and the fade-out lasted only a few
+/// frames before the launcher appeared. The sequence now plays its beats at
+/// their designed speed and holds the finished logo before fading.
+pub const FRAME_COUNT: u32 = 150;
 
 /// Frame with the finished logo, held briefly before returning to the launcher.
-pub const LOGO_FRAME: u32 = 67;
+pub const LOGO_FRAME: u32 = 120;
 
-/// Original animation timeline ends at frame 149; the new sequence samples it
-/// at a higher rate instead of dropping its visual beats.
+/// Last frame of the animation timeline the constants below are written for.
 const SOURCE_LAST_FRAME: f32 = 149.0;
 
 const DROP_END: f32 = 34.0;
@@ -27,6 +31,23 @@ const SHINE_START: f32 = 70.0;
 const SHINE_END: f32 = 96.0;
 const WORD_START: f32 = 84.0;
 const FADE_START: f32 = 134.0;
+
+/// Widest layout relative to the height (see [`render_frame_into`]).
+const LAYOUT_ASPECT_LIMIT: f32 = 1.15;
+/// Distance from the ground line to the leaf tip, in fruit units.
+const FRUIT_TOP_UNITS: f32 = 770.0;
+/// Gap between the ground line and the top of the wordmark, in fruit units.
+const WORD_GAP_UNITS: f32 = 90.0;
+
+/// Frame of the sequence that should be on screen after `elapsed_micros`.
+///
+/// Frontends whose render loop may run slower than [`FPS`] (phones, debug
+/// builds) use this so the animation keeps its real-time duration instead of
+/// slowing down; it never returns a frame past the end.
+pub fn frame_for_elapsed_micros(elapsed_micros: u64) -> u32 {
+    let frame = elapsed_micros.saturating_mul(u64::from(FPS)) / 1_000_000;
+    u32::try_from(frame).unwrap_or(u32::MAX).min(FRAME_COUNT)
+}
 
 type V2 = (f32, f32);
 
@@ -136,8 +157,10 @@ fn motion(frame: f32) -> (f32, f32) {
 
 /// Renders one frame as tightly packed RGBA8 (alpha always 255).
 ///
-/// `frame` is clamped to the last frame. Any size works; the layout is
-/// proportional to `width`, and the picture is centred vertically.
+/// `frame` is clamped to the last frame. Any size works: the fruit and the
+/// wordmark are sized from the smaller of the width and a height-derived
+/// limit, so they fit both portrait phones and wide landscape windows, and
+/// the group is centred vertically.
 pub fn render_frame(frame: u32, width: usize, height: usize) -> Vec<u8> {
     let mut output = Vec::new();
     let _ = render_frame_into(frame, width, height, &mut output);
@@ -170,8 +193,17 @@ pub fn render_frame_into(frame: u32, width: usize, height: usize, output: &mut V
     let f = source_frame as f32 * SOURCE_LAST_FRAME / (FRAME_COUNT - 1) as f32;
     let out = output.as_mut_slice();
     let (w, h) = (width as f32, height as f32);
-    let k = w * 0.40 / 630.0; // pixels per fruit unit
-    let (cx, ground) = (w * 0.5, h * 0.50);
+    // Layout width: on wide surfaces the picture is limited by the height so
+    // the fruit is never cut at the top and the wordmark never leaves the
+    // bottom of the screen.
+    let lw = w.min(h * LAYOUT_ASPECT_LIMIT);
+    let k = lw * 0.40 / 630.0; // pixels per fruit unit
+    let cell = lw * 0.80 / 35.0;
+    // Centre the whole group (leaf tip to the bottom of the wordmark).
+    let group_above_ground = FRUIT_TOP_UNITS * k;
+    let group_below_ground = WORD_GAP_UNITS * k + 7.0 * cell;
+    let cx = w * 0.5;
+    let ground = h * 0.5 + (group_above_ground - group_below_ground) * 0.5;
     let (offset, squash) = motion(f);
     let (sx, sy) = (1.0 + 0.55 * squash, 1.0 - squash);
 
@@ -189,9 +221,8 @@ pub fn render_frame_into(frame: u32, width: usize, height: usize, output: &mut V
     let brightness = fade_in * fade_out;
 
     // Word-mark layout: 6 glyphs of 5 cells with one cell between them.
-    let cell = w * 0.80 / 35.0;
     let word_left = (w - 35.0 * cell) / 2.0;
-    let word_top = ground + 90.0 * k;
+    let word_top = ground + WORD_GAP_UNITS * k;
 
     // Light sweeping across the fruit.
     let shine_t = ((f - SHINE_START) / (SHINE_END - SHINE_START)).clamp(0.0, 1.0);
@@ -209,7 +240,8 @@ pub fn render_frame_into(frame: u32, width: usize, height: usize, output: &mut V
             px = mix([0.0; 3], px, vignette.clamp(0.0, 1.0));
 
             // Glow behind the fruit.
-            let glow = (1.0 - length((p.0 - cx, p.1 - (ground - 300.0 * k))) / (w * 0.55)).max(0.0);
+            let glow =
+                (1.0 - length((p.0 - cx, p.1 - (ground - 300.0 * k))) / (lw * 0.55)).max(0.0);
             over(&mut px, red, glow * glow * 0.22);
 
             // Ground shadow shrinks as the fruit rises.
@@ -401,7 +433,7 @@ mod tests {
     #[test]
     fn fruit_is_off_screen_while_dropping_and_red_once_landed() {
         let early = render_frame(4, W, H);
-        let landed = render_frame(62, W, H);
+        let landed = render_frame(70, W, H);
         let red = |p: [u8; 3]| p[0] > 150 && p[1] < 90;
         assert!(!(0..H).any(|y| red(at(&early, W / 2, y))));
         assert!((0..H).any(|y| red(at(&landed, W / 2, y))));
@@ -410,7 +442,7 @@ mod tests {
     #[test]
     fn wordmark_appears_after_the_fruit_lands() {
         let before = render_frame(45, W, H);
-        let after = render_frame(67, W, H);
+        let after = render_frame(LOGO_FRAME, W, H);
         let bright = |frame: &[u8]| {
             frame
                 .chunks_exact(4)
@@ -450,6 +482,51 @@ mod tests {
         assert!(render_frame_into(0, 0, 0, &mut frame));
         assert!(frame.is_empty());
         assert!(!rgba_to_scaled_bgrx_into(&[], 0, 2, &mut frame));
+    }
+
+    fn red_rows(frame: &[u8], width: usize, height: usize) -> Vec<usize> {
+        (0..height)
+            .filter(|&y| {
+                (0..width).any(|x| {
+                    let i = (y * width + x) * 4;
+                    frame[i] > 150 && frame[i + 1] < 90
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn landscape_layout_keeps_fruit_and_wordmark_inside_the_frame() {
+        let (w, h) = (480, 216);
+        let frame = render_frame(LOGO_FRAME, w, h);
+        let rows = red_rows(&frame, w, h);
+        assert!(!rows.is_empty());
+        // The fruit must not touch the top edge.
+        assert!(rows[0] > 0, "fruit is cut at the top");
+        // Bright wordmark pixels must exist and end above the bottom edge.
+        let bright: Vec<usize> = (0..h)
+            .filter(|&y| {
+                (0..w).any(|x| {
+                    let i = (y * w + x) * 4;
+                    frame[i] > 220 && frame[i + 1] > 210 && frame[i + 2] > 220
+                })
+            })
+            .collect();
+        assert!(!bright.is_empty(), "wordmark missing in landscape");
+        assert!(*bright.last().unwrap() < h - 1, "wordmark leaves the frame");
+    }
+
+    #[test]
+    fn logo_is_fully_visible_while_held() {
+        let frame = render_frame(LOGO_FRAME, W, H);
+        assert!(lit(&frame) > W * H / 2);
+    }
+
+    #[test]
+    fn elapsed_time_maps_to_frames_and_stops_at_the_end() {
+        assert_eq!(frame_for_elapsed_micros(0), 0);
+        assert_eq!(frame_for_elapsed_micros(1_000_000), FPS);
+        assert_eq!(frame_for_elapsed_micros(u64::MAX), FRAME_COUNT);
     }
 
     #[test]

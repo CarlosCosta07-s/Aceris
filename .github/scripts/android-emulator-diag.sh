@@ -15,16 +15,17 @@ echo "=== after tap: pid=$(adb shell pidof org.aceris.emulator || echo DEAD)"
 adb shell screencap -p /sdcard/s.png
 adb pull /sdcard/s.png s.png >/dev/null 2>&1
 python3 - <<'PY' || true
-import zlib,struct,base64
-data=open('s.png','rb').read()
-print('SCREENSHOT_BYTES', len(data))
+import struct, zlib
+data = open('s.png', 'rb').read()
+w, h = struct.unpack('>II', data[16:24])
+print('SCREENSHOT', w, 'x', h, len(data), 'bytes')
 PY
 echo "=== logcat (Aceris / crash related)"
 adb logcat -d | grep -E "Aceris|aceris|DEBUG|libc|AndroidRuntime|FATAL|NativeActivity|linker|ActivityManager.*(org.aceris|died|Process)|tombstone|backtrace|#[0-9]{2} pc" | head -400
 echo "=== full logcat tail"
 adb logcat -d | tail -150
-echo "=== screenshot base64 (downscaled)"
-python3 -c "print(1)" >/dev/null
-if command -v convert >/dev/null; then convert s.png -resize 25% s_small.png; else cp s.png s_small.png; fi
-base64 -w0 s_small.png | head -c 400000
-echo
+if [ -z "$(adb shell pidof org.aceris.emulator)" ]; then
+  echo "::error::Aceris is not running 20 s after launch"
+  exit 1
+fi
+echo "Aceris is still running after launch and a touch."

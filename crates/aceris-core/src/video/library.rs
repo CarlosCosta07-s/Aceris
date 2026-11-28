@@ -2001,8 +2001,14 @@ impl Library {
                 }
                 return ClickResult::Ignored;
             }
+            // The large "Atualizar biblioteca" button exists only on the empty
+            // card; with games listed the same band holds game rows, which
+            // must open the game rather than rescan the folder.
+            let (refresh_top, refresh_bottom) = empty_library_refresh_band(logical_height);
             if ((168.0..222.0).contains(&y) && x >= 304.0)
-                || ((490.0..542.0).contains(&y) && (38.0..362.0).contains(&x))
+                || (self.visible_entry_count() == 0
+                    && (refresh_top..refresh_bottom).contains(&y)
+                    && (38.0..362.0).contains(&x))
             {
                 self.reload();
                 return ClickResult::Ignored;
@@ -2812,28 +2818,37 @@ impl Library {
                     scale,
                     0x21152F,
                 );
+                // Rows keep at least one text line of clearance: the "Pasta de
+                // jogos" label sits 22 units above `path_y`, and it used to
+                // overlap the second description line. Compact cards must
+                // also end inside their minimum 290-unit height.
                 let (icon_y, title_y, line_one_y, line_two_y, path_y, button_y, formats_y) =
                     if compact {
                         (
-                            card_top + 42.0,
-                            card_top + 105.0,
-                            card_top + 138.0,
-                            card_top + 160.0,
-                            card_top + 186.0,
-                            card_top + 240.0,
-                            card_top + 294.0,
+                            card_top + 38.0,
+                            card_top + 90.0,
+                            card_top + 114.0,
+                            card_top + 132.0,
+                            card_top + 170.0,
+                            card_top + 226.0,
+                            card_top + 278.0,
                         )
                     } else {
                         (
                             card_top + 58.0,
                             card_top + 130.0,
-                            card_top + 168.0,
-                            card_top + 192.0,
-                            card_top + 226.0,
-                            card_top + 285.0,
-                            card_top + 350.0,
+                            card_top + 166.0,
+                            card_top + 190.0,
+                            card_top + 246.0,
+                            card_top + 308.0,
+                            card_top + 374.0,
                         )
                     };
+                let button_height = if compact { 44.0 } else { 52.0 };
+                debug_assert_eq!(
+                    empty_library_refresh_band(logical_height),
+                    (button_y, button_y + button_height)
+                );
                 responsive_folder_icon(frame, width, height, 200.0, icon_y, scale);
                 let (empty_title, first_line, second_line, formats) =
                     if !self.search_query.is_empty() {
@@ -2925,7 +2940,7 @@ impl Library {
                     38.0,
                     button_y,
                     324.0,
-                    52.0,
+                    button_height,
                     scale,
                     brand::ACCENT_RED,
                 );
@@ -2934,7 +2949,7 @@ impl Library {
                     width,
                     height,
                     200.0,
-                    button_y + 18.0,
+                    button_y + (button_height - 16.0) / 2.0,
                     small_scale,
                     "Atualizar biblioteca",
                     brand::TEXT,
@@ -4874,6 +4889,17 @@ fn responsive_text_centered(
     let logical_text_width = glyph_width / ui_scale;
     let x = (center_x - logical_text_width * 0.5).clamp(0.0, logical_width);
     responsive_text(frame, width, height, x, y, text_scale, text, color);
+}
+
+/// Vertical span (logical units) of the portrait empty-library refresh button;
+/// shared by drawing and hit-testing so the two cannot drift apart again.
+fn empty_library_refresh_band(logical_height: f32) -> (f32, f32) {
+    const CARD_TOP: f32 = 250.0;
+    if logical_height < 720.0 {
+        (CARD_TOP + 226.0, CARD_TOP + 226.0 + 44.0)
+    } else {
+        (CARD_TOP + 308.0, CARD_TOP + 308.0 + 52.0)
+    }
 }
 
 fn responsive_folder_icon(frame: &mut [u8], width: u32, height: u32, x: f32, y: f32, scale: f32) {

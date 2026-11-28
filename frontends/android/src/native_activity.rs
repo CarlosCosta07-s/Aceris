@@ -114,7 +114,7 @@ unsafe extern "C" {
     fn AInputEvent_getSource(event: *const c_void) -> i32;
     fn AKeyEvent_getAction(event: *const c_void) -> i32;
     fn AKeyEvent_getKeyCode(event: *const c_void) -> i32;
-    fn AKeyEvent_getUnicodeChar(event: *const c_void) -> i32;
+    fn AKeyEvent_getMetaState(event: *const c_void) -> i32;
     fn AMotionEvent_getAction(event: *const c_void) -> i32;
     fn AMotionEvent_getPointerCount(event: *const c_void) -> usize;
     fn AMotionEvent_getPointerId(event: *const c_void, index: usize) -> i32;
@@ -130,6 +130,8 @@ const INPUT_EVENT_TYPE_KEY: i32 = 1;
 const INPUT_EVENT_TYPE_MOTION: i32 = 2;
 const KEY_ACTION_DOWN: i32 = 0;
 const KEY_ACTION_UP: i32 = 1;
+const META_SHIFT_ON: i32 = 0x01;
+const META_CAPS_LOCK_ON: i32 = 0x0010_0000;
 const MOTION_ACTION_MASK: i32 = 0xFF;
 const MOTION_ACTION_POINTER_INDEX_MASK: i32 = 0xFF00;
 const MOTION_ACTION_POINTER_INDEX_SHIFT: i32 = 8;
@@ -137,6 +139,10 @@ const MOTION_ACTION_UP: i32 = 1;
 const MOTION_ACTION_MOVE: i32 = 2;
 const MOTION_ACTION_CANCEL: i32 = 3;
 const MOTION_ACTION_POINTER_UP: i32 = 6;
+const MOTION_ACTION_HOVER_MOVE: i32 = 7;
+const MOTION_ACTION_SCROLL: i32 = 8;
+const MOTION_ACTION_HOVER_ENTER: i32 = 9;
+const MOTION_ACTION_HOVER_EXIT: i32 = 10;
 const INPUT_SOURCE_CLASS_MASK: u32 = 0x0000_00FF;
 const INPUT_SOURCE_CLASS_JOYSTICK: u32 = 0x0000_0010;
 const INPUT_SOURCE_GAMEPAD: u32 = 0x0000_0401;
@@ -231,6 +237,7 @@ fn jni_function<F: Copy>(handle: *mut c_void, index: usize) -> Option<F> {
     Some(unsafe { std::mem::transmute_copy::<*const c_void, F>(&address) })
 }
 
+type NewGlobalRefFn = unsafe extern "system" fn(JniEnv, JniObject) -> JniObject;
 type DeleteGlobalRefFn = unsafe extern "system" fn(JniEnv, JniObject);
 type AttachCurrentThreadFn =
     unsafe extern "system" fn(*mut c_void, *mut JniEnv, *mut c_void) -> i32;
@@ -594,9 +601,10 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
             shared: Mutex::new(Shared::default()),
             thread: Mutex::new(None),
             java_vm: Raw::new((*activity).vm),
-            // Keep the Java Activity out of the launch-critical path. JNI is
-            // optional for media-session integration and must not block the UI.
-            activity_global: Raw::default(),
+            // A global reference lets the app thread route the volume keys to
+            // game audio later. Creating it is a single non-blocking JNI call;
+            // a null result simply leaves those optional helpers disabled.
+            activity_global: activity_global_reference(&*activity),
             sdk_version: (*activity).sdk_version,
         });
         *lock(&HOST) = Some(host.clone());
@@ -629,6 +637,19 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
             }
         }
     }
+}
+
+/// Creates a JNI global reference to the Java Activity on the UI thread.
+fn activity_global_reference(activity: &NativeActivity) -> Raw {
+    let env = activity.env;
+    if env.is_null() || activity.clazz.is_null() {
+        return Raw::default();
+    }
+    let Some(new_global): Option<NewGlobalRefFn> = jni_function(env, 21) else {
+        return Raw::default();
+    };
+    // SAFETY: `env` belongs to this (UI) thread and `clazz` is the live Activity.
+    Raw::new(unsafe { new_global(env, activity.clazz) })
 }
 
 /// `<external files>/games`, falling back to the internal data directory.
@@ -1213,12 +1234,16 @@ fn drain_input(queue: Raw, app: &mut App, pointer_scratch: &mut Vec<Pointer>) {
 /// `event` must be a live key event.
 unsafe fn handle_key(event: *mut c_void, app: &mut App) -> bool {
     // SAFETY: caller guarantees a key event.
-    let (source, action, code, unicode) = unsafe {
+    // `AKeyEvent_getUnicodeChar` is not part of the NDK: referencing it made
+    // `libaceris_android.so` fail to load (`dlopen failed: cannot locate symbol`)
+    // and the app closed before the first frame. Characters are derived from
+    // the key code and meta state instead.
+    let (source, action, code, meta) = unsafe {
         (
             AInputEvent_getSource(event as *const c_void) as u32,
             AKeyEvent_getAction(event),
             AKeyEvent_getKeyCode(event),
-            AKeyEvent_getUnicodeChar(event),
+            AKeyEvent_getMetaState(event),
         )
     };
     let gamepad_source = is_gamepad_key_source(source);
@@ -1229,10 +1254,7 @@ unsafe fn handle_key(event: *mut c_void, app: &mut App) -> bool {
             } else {
                 app.key(code, true)
             };
-            if unicode > 0
-                && let Some(character) = char::from_u32(unicode as u32)
-                && !character.is_control()
-            {
+            if let Some(character) = character_from_keycode(code, meta) {
                 handled |= app.text_input(character);
             }
             handled
@@ -1246,6 +1268,46 @@ unsafe fn handle_key(event: *mut c_void, app: &mut App) -> bool {
         }
         _ => false,
     }
+}
+
+/// Printable character typed by a hardware keyboard key, if any.
+///
+/// Covers the characters the library search accepts (letters, digits and a
+/// few punctuation keys); other keys only act through [`App::key`].
+fn character_from_keycode(code: i32, meta: i32) -> Option<char> {
+    const AKEYCODE_0: i32 = 7;
+    const AKEYCODE_9: i32 = 16;
+    const AKEYCODE_A: i32 = 29;
+    const AKEYCODE_Z: i32 = 54;
+    const AKEYCODE_NUMPAD_0: i32 = 144;
+    const AKEYCODE_NUMPAD_9: i32 = 153;
+    let shift = meta & META_SHIFT_ON != 0;
+    let caps = meta & META_CAPS_LOCK_ON != 0;
+    let character = match code {
+        AKEYCODE_A..=AKEYCODE_Z => {
+            let letter = char::from(b'a' + (code - AKEYCODE_A) as u8);
+            if shift != caps {
+                letter.to_ascii_uppercase()
+            } else {
+                letter
+            }
+        }
+        AKEYCODE_0..=AKEYCODE_9 if !shift => char::from(b'0' + (code - AKEYCODE_0) as u8),
+        AKEYCODE_NUMPAD_0..=AKEYCODE_NUMPAD_9 => {
+            char::from(b'0' + (code - AKEYCODE_NUMPAD_0) as u8)
+        }
+        55 => ',',
+        56 => '.',
+        62 => ' ',
+        69 if shift => '_',
+        69 => '-',
+        70 if shift => '+',
+        70 => '=',
+        75 => '\'',
+        76 => '/',
+        _ => return None,
+    };
+    Some(character)
 }
 
 fn is_gamepad_key_source(source: u32) -> bool {
@@ -1298,9 +1360,18 @@ unsafe fn handle_motion(event: *mut c_void, app: &mut App, pointers: &mut Vec<Po
     }
 
     pointers.clear();
-    if action & MOTION_ACTION_MASK == MOTION_ACTION_CANCEL {
-        app.set_pointers(&[]);
-        return;
+    match action & MOTION_ACTION_MASK {
+        MOTION_ACTION_CANCEL => {
+            app.set_pointers(&[]);
+            return;
+        }
+        // Mouse/stylus hover and wheel events are not touches: treating them
+        // as pointers skipped the opening and pressed buttons on their own.
+        MOTION_ACTION_HOVER_MOVE
+        | MOTION_ACTION_SCROLL
+        | MOTION_ACTION_HOVER_ENTER
+        | MOTION_ACTION_HOVER_EXIT => return,
+        _ => {}
     }
 
     // SAFETY: the pointer indices are bounded by AMotionEvent_getPointerCount.
@@ -1591,6 +1662,20 @@ mod gamepad_source_tests {
             fallback_android_backend_after_failure("opengl"),
             GraphicsBackend::Software
         );
+    }
+
+    #[test]
+    fn hardware_keyboard_keys_produce_search_characters() {
+        assert_eq!(character_from_keycode(29, 0), Some('a'));
+        assert_eq!(character_from_keycode(54, META_SHIFT_ON), Some('Z'));
+        assert_eq!(character_from_keycode(29, META_CAPS_LOCK_ON), Some('A'));
+        assert_eq!(character_from_keycode(7, 0), Some('0'));
+        assert_eq!(character_from_keycode(62, 0), Some(' '));
+        assert_eq!(character_from_keycode(69, META_SHIFT_ON), Some('_'));
+        // Back, Enter and D-pad keys are not text.
+        assert_eq!(character_from_keycode(4, 0), None);
+        assert_eq!(character_from_keycode(66, 0), None);
+        assert_eq!(character_from_keycode(19, 0), None);
     }
 
     #[test]

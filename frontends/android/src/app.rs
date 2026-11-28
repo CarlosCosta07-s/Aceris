@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use aceris_core::input::{pad, pad_from_frontend_buttons, touch_from_surface_point};
 use aceris_core::input_mapping::{GamepadAxisSettings, GamepadControl, GamepadMapping};
@@ -92,6 +92,8 @@ pub struct App {
     audio: Vec<i16>,
     /// Reused half-resolution intro frame to avoid one allocation per animation tick.
     intro_buffer: Vec<u8>,
+    /// When the first opening frame was drawn; keeps the animation in real time.
+    intro_started: Option<Instant>,
 }
 
 impl App {
@@ -138,6 +140,7 @@ impl App {
             library_tap: None,
             audio: Vec::new(),
             intro_buffer: Vec::new(),
+            intro_started: None,
         }
     }
 
@@ -331,13 +334,13 @@ impl App {
                     Screen::Game => self.open_game_menu(),
                     Screen::GameMenu => self.resume_game(),
                     Screen::GameMenuConfirm { .. } => self.cancel_game_menu_confirmation(),
+                    // Back during the opening skips to the library instead of
+                    // letting NativeActivity finish (close) the app.
+                    Screen::Intro { .. } => self.screen = Screen::Library,
                     _ => {}
                 }
             }
-            return matches!(
-                self.screen,
-                Screen::Game | Screen::GameMenu | Screen::GameMenuConfirm { .. } | Screen::Library
-            );
+            return true;
         }
         if pressed && matches!(self.screen, Screen::Library) && self.library.search_is_focused() {
             match android_keycode {
@@ -479,20 +482,23 @@ impl App {
         }
         match self.screen {
             Screen::Intro { frame } => {
-                let next = frame + 1;
+                // Advance by at least one frame per tick, and further when the
+                // device renders slower than 60 Hz, so the opening keeps its
+                // real duration instead of crawling on slow phones.
+                let started = *self.intro_started.get_or_insert_with(Instant::now);
+                let elapsed = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+                let next = (frame + 1).max(intro::frame_for_elapsed_micros(elapsed));
                 self.screen = if next >= intro::FRAME_COUNT {
                     Screen::Library
                 } else {
                     Screen::Intro { frame: next }
                 };
-                // Render the procedural intro at half resolution, then scale it
-                // across the whole surface. The image stays full-screen while
-                // avoiding a fourfold increase in per-pixel CPU work on phones.
-                // Cap the procedural pixel workload on large/high-DPI phones.
-                // The image remains full-screen; only the internal sample grid is smaller.
-                let intro_scale = (self.width as f32 / 600.0)
-                    .max(self.height as f32 / 360.0)
-                    .max(1.0);
+                // The procedural opening is rendered on a smaller sample grid
+                // with a fixed pixel budget, then scaled to the whole surface.
+                // The budget is split by area (not by a landscape-only box), so
+                // a portrait phone no longer gets a blurry ~160x360 image.
+                let pixels = self.width as f32 * self.height as f32;
+                let intro_scale = (pixels / INTRO_PIXEL_BUDGET).sqrt().max(1.0);
                 let intro_width = ((self.width as f32 / intro_scale).round() as u32).max(1);
                 let intro_height = ((self.height as f32 / intro_scale).round() as u32).max(1);
                 let rendered = intro::render_frame_into(
@@ -2004,6 +2010,9 @@ mod gamepad_axis_tests {
         assert_ne!(gamepad_axes_to_circle_pad(0.12, 0.12, 16), (0, 0));
     }
 }
+
+/// Samples rendered per opening frame before scaling to the surface.
+const INTRO_PIXEL_BUDGET: f32 = 400.0 * 400.0;
 
 fn resize_rgba_frame(frame: &mut Vec<u8>, width: u32, height: u32) -> bool {
     let Some(byte_len) = (width as usize)
