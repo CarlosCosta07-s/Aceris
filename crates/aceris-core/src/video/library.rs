@@ -4691,34 +4691,6 @@ impl Library {
                 let selected = self.page == page;
                 let focused = self.home_focus == HomeFocus::Navigation
                     && self.home_navigation_selected == slot;
-                if focused {
-                    responsive_panel(
-                        frame,
-                        width,
-                        height,
-                        x - 3.0,
-                        439.0,
-                        182.0,
-                        58.0,
-                        scale,
-                        brand::ACCENT_RED_LIGHT,
-                    );
-                }
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    x,
-                    442.0,
-                    176.0,
-                    52.0,
-                    scale,
-                    if selected {
-                        brand::SURFACE_SELECTED
-                    } else {
-                        brand::SURFACE_CARD
-                    },
-                );
                 responsive_text_centered(
                     frame,
                     width,
@@ -4727,7 +4699,7 @@ impl Library {
                     462.0,
                     small_scale,
                     label,
-                    if selected {
+                    if focused || selected {
                         brand::TEXT
                     } else {
                         brand::TEXT_MUTED
