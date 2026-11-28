@@ -5633,12 +5633,8 @@ fn draw_smdh_icon(
 
     let left = (draw_x * scale).floor().max(0.0) as usize;
     let top = (draw_y * scale).floor().max(0.0) as usize;
-    let right = ((draw_x + draw_width) * scale)
-        .ceil()
-        .min(width as f32) as usize;
-    let bottom = ((draw_y + draw_height) * scale)
-        .ceil()
-        .min(height as f32) as usize;
+    let right = ((draw_x + draw_width) * scale).ceil().min(width as f32) as usize;
+    let bottom = ((draw_y + draw_height) * scale).ceil().min(height as f32) as usize;
     if left >= right || top >= bottom {
         return;
     }
@@ -5662,12 +5658,11 @@ fn draw_smdh_icon(
             } else if alpha > 0 {
                 let inverse = 255 - alpha;
                 for channel in 0..3 {
-                    frame[target_offset + channel] = ((u32::from(
-                        icon.pixels_rgba8[source_offset + channel],
-                    ) * alpha
-                        + u32::from(frame[target_offset + channel]) * inverse
-                        + 127)
-                        / 255) as u8;
+                    frame[target_offset + channel] =
+                        ((u32::from(icon.pixels_rgba8[source_offset + channel]) * alpha
+                            + u32::from(frame[target_offset + channel]) * inverse
+                            + 127)
+                            / 255) as u8;
                 }
                 frame[target_offset + 3] = 255;
             }
@@ -5949,17 +5944,7 @@ mod tests {
         let (width, height) = (4u32, 4u32);
         let mut frame = vec![0u8; width as usize * height as usize * 4];
 
-        draw_smdh_icon(
-            &mut frame,
-            width,
-            height,
-            1.0,
-            0.0,
-            0.0,
-            4.0,
-            4.0,
-            &icon,
-        );
+        draw_smdh_icon(&mut frame, width, height, 1.0, 0.0, 0.0, 4.0, 4.0, &icon);
 
         let pixel = |x: usize, y: usize| {
             let offset = (y * width as usize + x) * 4;
@@ -5973,10 +5958,7 @@ mod tests {
 
     #[test]
     fn library_reload_caches_smdh_sidecar_for_3dsx_homebrew() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-smdh-sidecar-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("aceris-smdh-sidecar-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let game_path = dir.join("homebrew.3dsx");
         fs::write(&game_path, b"fixture").unwrap();
