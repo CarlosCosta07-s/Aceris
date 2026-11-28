@@ -1268,10 +1268,10 @@ pub fn pad_from_android_keycode(code: i32) -> Option<u32> {
         20 => bit::DOWN,
         21 => bit::LEFT,
         22 => bit::RIGHT,
-        96 => bit::A,  // BUTTON_A
-        97 => bit::B,  // BUTTON_B
-        99 => bit::X,  // BUTTON_X
-        100 => bit::Y, // BUTTON_Y
+        96 => bit::A,   // BUTTON_A
+        97 => bit::B,   // BUTTON_B
+        99 => bit::X,   // BUTTON_X
+        100 => bit::Y,  // BUTTON_Y
         102 => bit::L,  // BUTTON_L1
         103 => bit::R,  // BUTTON_R1
         104 => bit::ZL, // BUTTON_L2
