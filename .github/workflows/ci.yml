@@ -18,7 +18,7 @@ jobs:
     outputs:
       ref: ${{ steps.publish.outputs.ref }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@stable
@@ -37,7 +37,7 @@ jobs:
           echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Upload resolved lockfile for pull-request checks
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: cargo-lockfile
           path: Cargo.lock
@@ -52,7 +52,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ needs.lockfile.outputs.ref }}
       - name: Install Linux gamepad build dependencies
@@ -60,7 +60,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
       - name: Use the generated lockfile for pull requests
         if: github.event_name == 'pull_request'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.2
         with:
           name: cargo-lockfile
           path: .lockfile
@@ -98,7 +98,7 @@ jobs:
         run: cargo test --release -p aceris-core --lib translated_fast_dispatch_throughput -- --ignored --nocapture
       - name: Run sparse GPU memory access profiling
         run: cargo run --release -p aceris-core --example memory_profile
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: aceris-pc-benchmark-${{ matrix.os }}
           path: |
@@ -111,12 +111,12 @@ jobs:
     needs: lockfile
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ needs.lockfile.outputs.ref }}
       - name: Use the generated lockfile for pull requests
         if: github.event_name == 'pull_request'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.2
         with:
           name: cargo-lockfile
           path: .lockfile
@@ -133,7 +133,7 @@ jobs:
       - run: cargo ndk -t arm64-v8a build -p aceris-android --release
       - run: cargo ndk -t arm64-v8a build -p aceris-android --bin aceris-benchmark --release
       - run: cargo ndk -t arm64-v8a build -p aceris-core --example memory_profile --release
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: aceris-android-benchmark-arm64-v8a
           path: |
