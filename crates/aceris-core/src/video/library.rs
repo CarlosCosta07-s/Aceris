@@ -1579,6 +1579,12 @@ impl Library {
         self.filtered_entries().len()
     }
 
+    /// True when an entry has a successful launch in the persistent Recent list.
+    pub fn is_recent(&self, entry: &Entry) -> bool {
+        library_path_id(&entry.path)
+            .is_some_and(|id| self.recent.iter().any(|recent| recent == &id))
+    }
+
     /// True when an entry is in the user's persistent favorites collection.
     pub fn is_favorite(&self, entry: &Entry) -> bool {
         library_path_id(&entry.path).is_some_and(|id| self.favorites.contains(&id))
@@ -3127,10 +3133,25 @@ impl Library {
                         self.smdh_icons.get(&entry.path),
                         index == self.selected && self.home_focus == HomeFocus::Games,
                         self.is_favorite(entry),
+                        self.is_recent(entry),
+                        self.is_recent(entry),
                         small_scale,
                         small_scale,
                     );
                 }
+            }
+            if !home_entries.is_empty() {
+                let position = self.selected.saturating_add(1).min(home_entries.len());
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    338.0,
+                    462.0,
+                    small_scale,
+                    &format!("{position}/{}", home_entries.len()),
+                    brand::ACCENT_GREEN_LIGHT,
+                );
             }
             responsive_fill(
                 frame,
@@ -4452,6 +4473,20 @@ impl Library {
                     small_scale,
                     "ADICIONE UMA PASTA COM SEUS JOGOS PARA COMEÇAR",
                     0xB7C5D0,
+                );
+            }
+
+            if !home_entries.is_empty() {
+                let position = self.selected.saturating_add(1).min(home_entries.len());
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    914.0,
+                    358.0,
+                    small_scale,
+                    &format!("{position}/{}", home_entries.len()),
+                    brand::ACCENT_GREEN_LIGHT,
                 );
             }
 
@@ -5972,6 +6007,7 @@ fn render_home_game_tile(
     smdh_icon: Option<&SmdhIcon>,
     selected: bool,
     favorite: bool,
+    recent: bool,
     title_scale: usize,
     small_scale: usize,
 ) {
@@ -6046,6 +6082,30 @@ fn render_home_game_tile(
             y + 13.0,
             small_scale,
             if compact_badges { "FOCO" } else { "EM FOCO" },
+            brand::TEXT,
+        );
+    }
+    if recent && !selected {
+        let badge_width = if compact_badges { 38.0 } else { 64.0 };
+        responsive_panel(
+            frame,
+            width,
+            height,
+            x + 8.0,
+            y + 8.0,
+            badge_width,
+            18.0,
+            scale,
+            0x245A48,
+        );
+        responsive_text_centered(
+            frame,
+            width,
+            height,
+            x + 8.0 + badge_width * 0.5,
+            y + 13.0,
+            small_scale,
+            if compact_badges { "REC." } else { "RECENTE" },
             brand::TEXT,
         );
     }
@@ -7351,7 +7411,7 @@ mod tests {
     }
 
     #[test]
-    fn home_tiles_distinguish_favorite_and_focused_games() {
+    fn home_tiles_distinguish_recent_favorite_and_focused_games() {
         let dir =
             std::env::temp_dir().join(format!("aceris-home-tile-badges-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -7365,12 +7425,24 @@ mod tests {
             }],
             dir.display().to_string(),
         );
-        library.home_focus = HomeFocus::Games;
+        library.home_focus = HomeFocus::Actions;
 
         let landscape_standard = library.render_responsive(1000, 600);
         let portrait_standard = library.render_responsive(400, 800);
-        library.favorites.insert(library_path_id(&path).unwrap());
+        library.mark_launched(&path);
 
+        let landscape_recent = library.render_responsive(1000, 600);
+        let portrait_recent = library.render_responsive(400, 800);
+        assert_ne!(
+            landscape_standard, landscape_recent,
+            "recent games must display a visible marker in landscape"
+        );
+        assert_ne!(
+            portrait_standard, portrait_recent,
+            "recent games must display a visible marker in portrait"
+        );
+
+        library.favorites.insert(library_path_id(&path).unwrap());
         let landscape_favorite = library.render_responsive(1000, 600);
         let portrait_favorite = library.render_responsive(400, 800);
         assert_ne!(
@@ -7382,15 +7454,15 @@ mod tests {
             "favorite games must display a visible marker in portrait"
         );
 
-        library.home_focus = HomeFocus::Actions;
-        let landscape_unfocused = library.render_responsive(1000, 600);
-        let portrait_unfocused = library.render_responsive(400, 800);
+        library.home_focus = HomeFocus::Games;
+        let landscape_focused = library.render_responsive(1000, 600);
+        let portrait_focused = library.render_responsive(400, 800);
         assert_ne!(
-            landscape_favorite, landscape_unfocused,
+            landscape_favorite, landscape_focused,
             "the active landscape game tile must remain visually distinct"
         );
         assert_ne!(
-            portrait_favorite, portrait_unfocused,
+            portrait_favorite, portrait_focused,
             "the active portrait game tile must remain visually distinct"
         );
 
