@@ -127,7 +127,9 @@ pub mod home {
     }
 
     pub fn sidebar_power_center_y(logical_height: f32) -> f32 {
-        logical_height * (1.0 - SIDEBAR_POWER_BOTTOM)
+        let nominal = logical_height * (1.0 - SIDEBAR_POWER_BOTTOM);
+        let minimum = sidebar_item_center_y(SIDEBAR_ITEM_COUNT - 1, logical_height) + 44.0;
+        nominal.max(minimum)
     }
 
     pub const VISIBLE_GAME_CARDS: usize = 5;
