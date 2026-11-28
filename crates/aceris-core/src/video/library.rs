@@ -3126,6 +3126,7 @@ impl Library {
                         entry,
                         self.smdh_icons.get(&entry.path),
                         index == self.selected && self.home_focus == HomeFocus::Games,
+                        self.is_favorite(entry),
                         small_scale,
                         small_scale,
                     );
@@ -3200,6 +3201,21 @@ impl Library {
                     label,
                     brand::TEXT,
                 );
+                if self.home_focus == HomeFocus::Navigation
+                    && self.home_navigation_selected == slot
+                {
+                    responsive_fill(
+                        frame,
+                        width as usize,
+                        height as usize,
+                        x + 30.0,
+                        714.0,
+                        58.0,
+                        2.0,
+                        scale,
+                        0x55C8E8,
+                    );
+                }
             }
         } else if self.page == LibraryPage::Settings {
             responsive_text(
@@ -4400,6 +4416,7 @@ impl Library {
                         entry,
                         self.smdh_icons.get(&entry.path),
                         index == self.selected && self.home_focus == HomeFocus::Games,
+                        self.is_favorite(entry),
                         text_scale,
                         small_scale,
                     );
@@ -4566,6 +4583,19 @@ impl Library {
                     label,
                     if selected { brand::TEXT } else { 0xB7C5D0 },
                 );
+                if focused {
+                    responsive_fill(
+                        frame,
+                        width as usize,
+                        height as usize,
+                        x + 48.0,
+                        489.0,
+                        80.0,
+                        2.0,
+                        scale,
+                        0x55C8E8,
+                    );
+                }
             }
         } else if self.page == LibraryPage::Settings {
             responsive_text(
@@ -5942,6 +5972,7 @@ fn render_home_game_tile(
     entry: &Entry,
     smdh_icon: Option<&SmdhIcon>,
     selected: bool,
+    favorite: bool,
     title_scale: usize,
     small_scale: usize,
 ) {
@@ -5980,6 +6011,55 @@ fn render_home_game_tile(
         scale,
         if selected { 0x55C8E8 } else { 0x344754 },
     );
+    let compact_badges = card_width < 150.0;
+    if selected {
+        let badge_width = if compact_badges { 38.0 } else { 58.0 };
+        responsive_panel(
+            frame,
+            width,
+            height,
+            x + 8.0,
+            y + 8.0,
+            badge_width,
+            18.0,
+            scale,
+            0x17485D,
+        );
+        responsive_text_centered(
+            frame,
+            width,
+            height,
+            x + 8.0 + badge_width * 0.5,
+            y + 13.0,
+            small_scale,
+            if compact_badges { "FOCO" } else { "EM FOCO" },
+            brand::TEXT,
+        );
+    }
+    if favorite {
+        let badge_width = if compact_badges { 32.0 } else { 38.0 };
+        responsive_panel(
+            frame,
+            width,
+            height,
+            x + card_width - badge_width - 8.0,
+            y + 8.0,
+            badge_width,
+            18.0,
+            scale,
+            brand::ACCENT_RED,
+        );
+        responsive_text_centered(
+            frame,
+            width,
+            height,
+            x + card_width - badge_width * 0.5 - 8.0,
+            y + 13.0,
+            small_scale,
+            "FAV",
+            brand::TEXT,
+        );
+    }
     let cover_height = (card_height - 52.0).max(70.0);
     render_cover_art(
         frame,
@@ -7267,6 +7347,44 @@ mod tests {
             ClickResult::Ignored
         );
         assert_eq!(library.page(), LibraryPage::Home);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn home_tiles_distinguish_favorite_and_focused_games() {
+        let dir = std::env::temp_dir().join(format!("aceris-home-tile-badges-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("badge-game.3ds");
+        fs::write(&path, b"fixture").unwrap();
+        let mut library = Library::new(
+            vec![Entry {
+                title: "Badge Game".into(),
+                path: path.clone(),
+            }],
+            dir.display().to_string(),
+        );
+        library.home_focus = HomeFocus::Games;
+
+        for (width, height) in [(1000, 600), (400, 800)] {
+            let standard = library.render_responsive(width, height);
+            let id = library_path_id(&path).unwrap();
+            library.favorites.insert(id);
+            let favorite = library.render_responsive(width, height);
+            assert_ne!(
+                standard, favorite,
+                "favorite games must display a visible marker in both orientations"
+            );
+
+            library.home_focus = HomeFocus::Actions;
+            let unfocused = library.render_responsive(width, height);
+            assert_ne!(
+                favorite, unfocused,
+                "the active game tile must remain visually distinct from the carousel"
+            );
+            library.home_focus = HomeFocus::Games;
+        }
 
         fs::remove_dir_all(dir).unwrap();
     }
