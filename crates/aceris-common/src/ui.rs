@@ -124,8 +124,7 @@ pub mod home {
     pub fn sidebar_item_center_y(index: usize, logical_height: f32) -> f32 {
         let span = (logical_height - SIDEBAR_BOTTOM_MARGIN).max(240.0);
         SIDEBAR_FIRST_ITEM_Y
-            + span * index.min(SIDEBAR_ITEM_COUNT - 1) as f32
-                / (SIDEBAR_ITEM_COUNT - 1) as f32
+            + span * index.min(SIDEBAR_ITEM_COUNT - 1) as f32 / (SIDEBAR_ITEM_COUNT - 1) as f32
     }
 
     pub const VISIBLE_GAME_CARDS: usize = 5;
@@ -349,7 +348,8 @@ mod tests {
         assert!(fifth_card_left + home::GAME_CARD_WIDTH > visible_content_right);
 
         let compact_height = 450.0;
-        let card_bottom = home::carousel_top(compact_height) + home::game_card_height(compact_height);
+        let card_bottom =
+            home::carousel_top(compact_height) + home::game_card_height(compact_height);
         assert!(card_bottom <= home::command_bar_top(compact_height));
         assert!(home::sidebar_item_center_y(6, compact_height) < compact_height - 70.0);
     }
