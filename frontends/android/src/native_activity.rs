@@ -224,6 +224,7 @@ type CallObjectMethodAFn =
     unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue) -> JniObject;
 type CallIntMethodAFn =
     unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue) -> i32;
+type CallVoidMethodAFn = unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue);
 type DeleteLocalRefFn = unsafe extern "system" fn(JniEnv, JniObject);
 type ExceptionCheckFn = unsafe extern "system" fn(JniEnv) -> u8;
 type ExceptionClearFn = unsafe extern "system" fn(JniEnv);
@@ -238,10 +239,11 @@ struct AttachedMediaMonitor {
 }
 
 impl AttachedMediaMonitor {
-    fn attach(java_vm: Raw, activity: Raw, sdk_version: i32) -> Option<Self> {
-        // AAudio's dedicated game usage is available from API 28. Earlier
-        // releases can report our own stream as media, so detection stays off.
-        if sdk_version < 28 || java_vm.is_null() || activity.is_null() {
+    fn attach(java_vm: Raw, activity: Raw, _sdk_version: i32) -> Option<Self> {
+        // Keep JNI attachment available on the app thread for volume routing.
+        // External-media queries are only made when AAudio exposes USAGE_GAME
+        // (API 28+), so older Android versions never call that newer API.
+        if java_vm.is_null() || activity.is_null() {
             return None;
         }
         let vm = java_vm.get();
@@ -568,11 +570,7 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
             shared: Mutex::new(Shared::default()),
             thread: Mutex::new(None),
             java_vm: Raw::new((*activity).vm),
-            activity_global: if (*activity).sdk_version >= 28 {
-                create_activity_global_ref((*activity).env, (*activity).clazz)
-            } else {
-                Raw::default()
-            },
+            activity_global: create_activity_global_ref((*activity).env, (*activity).clazz),
             sdk_version: (*activity).sdk_version,
         });
         *lock(&HOST) = Some(host.clone());
@@ -986,8 +984,8 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
                 audio = AAudioOutput::open();
                 if audio.is_none() {
                     eprintln!("Aceris Android: AAudio unavailable; game audio remains disabled, UI/emulation continue");
-                } else if audio.as_ref().is_some_and(AAudioOutput::uses_game_usage) {
-                    eprintln!("Aceris Android: attaching JNI monitor for optional external-media detection");
+                } else {
+                    eprintln!("Aceris Android: attaching optional JNI helpers after audio initialization");
                     media_monitor = AttachedMediaMonitor::attach(
                         host.java_vm,
                         host.activity_global,
@@ -996,7 +994,11 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
                     if let Some(monitor) = media_monitor.as_ref() {
                         monitor.set_volume_control_stream();
                     }
-                    app.set_external_media_detection_available(media_monitor.is_some());
+                    let media_detection_available = audio
+                        .as_ref()
+                        .is_some_and(AAudioOutput::uses_game_usage)
+                        && media_monitor.is_some();
+                    app.set_external_media_detection_available(media_detection_available);
                 }
             }
             let samples = app.take_audio();
