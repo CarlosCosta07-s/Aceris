@@ -1,0 +1,15 @@
+[package]
+name = "aceris-android-smoke"
+description = "Minimal NativeActivity smoke test for diagnosing Android startup"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true
