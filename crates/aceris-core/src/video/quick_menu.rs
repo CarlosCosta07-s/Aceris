@@ -1,16 +1,19 @@
 //! Shared, host-independent rendering and hit testing for the in-game quick menu.
 
 use super::font;
+use crate::input_mapping::{GamepadControl, GamepadMapping, PadButton};
 
-pub const ACTION_COUNT: usize = 11;
+pub const ACTION_COUNT: usize = 12;
 /// Stable index for the Android-only virtual control editor action.
 pub const ACTION_EDIT_CONTROLS: usize = 8;
 /// Stable index for the screenshot action shared by desktop and Android.
 pub const ACTION_CAPTURE_SCREENSHOT: usize = 9;
 /// Stable index for the Android diagnostics action.
 pub const ACTION_DIAGNOSTICS: usize = 10;
+/// Opens the physical gamepad mapping editor on desktop and Android.
+pub const ACTION_EDIT_GAMEPAD_MAPPING: usize = 11;
 /// Number of actions exposed by the desktop quick menu.
-pub const DESKTOP_ACTION_COUNT: usize = 8;
+pub const DESKTOP_ACTION_COUNT: usize = 9;
 
 /// A destructive action that must be confirmed before leaving the game session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -566,6 +569,271 @@ pub fn render_confirmation_overlay(
     true
 }
 
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GamepadMappingEditorHit {
+    Scope,
+    Control(usize),
+    Target(usize),
+    Reset,
+    Close,
+}
+
+#[derive(Clone, Copy)]
+struct GamepadMappingEditorGeometry {
+    panel: Rect,
+    rows: [Rect; GamepadControl::COUNT],
+    scope: Rect,
+    reset: Rect,
+    close: Rect,
+    scale: usize,
+}
+
+fn gamepad_mapping_editor_geometry(
+    width: u32,
+    height: u32,
+) -> Option<GamepadMappingEditorGeometry> {
+    if width < 220 || height < 180 || width > 4096 || height > 4096 {
+        return None;
+    }
+    let width = width as usize;
+    let height = height as usize;
+    let scale = (width.min(height) / 480).clamp(1, 3);
+    let margin = 6 * scale;
+    let panel = Rect {
+        x: margin,
+        y: margin,
+        width: width.saturating_sub(margin * 2),
+        height: height.saturating_sub(margin * 2),
+    };
+    let horizontal_padding = 10 * scale;
+    let row_top = panel.y + 38 * scale;
+    let footer_y = panel.y + panel.height.saturating_sub(24 * scale);
+    let row_gap = scale;
+    let available = footer_y.saturating_sub(row_top);
+    let row_height = available
+        .saturating_sub(row_gap * (GamepadControl::COUNT - 1))
+        .checked_div(GamepadControl::COUNT)?
+        .min(48 * scale);
+    if row_height < 7 * scale {
+        return None;
+    }
+    let row_width = panel.width.saturating_sub(horizontal_padding * 2);
+    let rows = std::array::from_fn(|index| Rect {
+        x: panel.x + horizontal_padding,
+        y: row_top + index * (row_height + row_gap),
+        width: row_width,
+        height: row_height,
+    });
+    let header_button_width = (160 * scale).min(panel.width / 2);
+    let scope = Rect {
+        x: panel.x + panel.width.saturating_sub(header_button_width + horizontal_padding),
+        y: panel.y + 7 * scale,
+        width: header_button_width,
+        height: 20 * scale,
+    };
+    let footer_button_width = (112 * scale).min(panel.width.saturating_sub(24 * scale) / 2);
+    let footer_button_height = (18 * scale).min(panel.height.saturating_sub(2 * scale));
+    let reset = Rect {
+        x: panel.x + horizontal_padding,
+        y: footer_y + 2 * scale,
+        width: footer_button_width,
+        height: footer_button_height,
+    };
+    let close = Rect {
+        x: panel.x + panel.width.saturating_sub(horizontal_padding + footer_button_width),
+        y: footer_y + 2 * scale,
+        width: footer_button_width,
+        height: footer_button_height,
+    };
+    Some(GamepadMappingEditorGeometry {
+        panel,
+        rows,
+        scope,
+        reset,
+        close,
+        scale,
+    })
+}
+
+/// Identifies the editor element at a point, using the same geometry as rendering.
+pub fn hit_test_gamepad_mapping_editor(
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+) -> Option<GamepadMappingEditorHit> {
+    let geometry = gamepad_mapping_editor_geometry(width, height)?;
+    if x < 0 || y < 0 {
+        return None;
+    }
+    let x = x as usize;
+    let y = y as usize;
+    let inside = |rect: Rect| {
+        x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
+    };
+    if inside(geometry.scope) {
+        return Some(GamepadMappingEditorHit::Scope);
+    }
+    if inside(geometry.reset) {
+        return Some(GamepadMappingEditorHit::Reset);
+    }
+    if inside(geometry.close) {
+        return Some(GamepadMappingEditorHit::Close);
+    }
+    geometry.rows.iter().enumerate().find_map(|(index, row)| {
+        if !inside(*row) {
+            return None;
+        }
+        let split = row.x + row.width * 52 / 100;
+        Some(if x >= split {
+            GamepadMappingEditorHit::Target(index)
+        } else {
+            GamepadMappingEditorHit::Control(index)
+        })
+    })
+}
+
+/// Draws a full-screen physical-gamepad mapping editor over a paused game frame.
+pub fn render_gamepad_mapping_editor(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    mapping: &GamepadMapping,
+    selected: usize,
+    scope_label: &str,
+) -> bool {
+    let Some(geometry) = gamepad_mapping_editor_geometry(width, height) else {
+        return false;
+    };
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4));
+    if expected != Some(frame.len()) {
+        return false;
+    }
+
+    let scale = geometry.scale;
+    let text_scale = if height >= 520 { scale * 2 } else { scale };
+    let canvas = Rect {
+        x: 0,
+        y: 0,
+        width: width as usize,
+        height: height as usize,
+    };
+    blend_rect(frame, width as usize, canvas, [7, 5, 16], 205, format);
+    draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
+    draw_text_for_format(
+        frame,
+        width as usize,
+        height as usize,
+        geometry.panel.x + 12 * scale,
+        geometry.panel.y + 10 * scale,
+        text_scale,
+        "MAPEAMENTO FISICO",
+        [245, 238, 248],
+        format,
+    );
+    blend_rect(frame, width as usize, geometry.scope, [54, 36, 70], 245, format);
+    draw_text_for_format(
+        frame,
+        width as usize,
+        height as usize,
+        geometry.scope.x + 6 * scale,
+        geometry.scope.y + (geometry.scope.height.saturating_sub(7 * scale)) / 2,
+        scale,
+        scope_label,
+        [190, 225, 203],
+        format,
+    );
+
+    for (index, row) in geometry.rows.iter().enumerate() {
+        let is_selected = index == selected.min(GamepadControl::COUNT - 1);
+        blend_rect(
+            frame,
+            width as usize,
+            *row,
+            if is_selected { [105, 28, 62] } else { [38, 29, 52] },
+            if is_selected { 248 } else { 226 },
+            format,
+        );
+        if is_selected {
+            blend_rect(
+                frame,
+                width as usize,
+                Rect {
+                    x: row.x,
+                    y: row.y,
+                    width: (3 * scale).min(row.width),
+                    height: row.height,
+                },
+                [255, 107, 107],
+                255,
+                format,
+            );
+        }
+        let split = row.x + row.width * 52 / 100;
+        blend_rect(
+            frame,
+            width as usize,
+            Rect {
+                x: split,
+                y: row.y + 2 * scale,
+                width: scale,
+                height: row.height.saturating_sub(4 * scale),
+            },
+            [112, 91, 132],
+            180,
+            format,
+        );
+        let text_y = row.y + (row.height.saturating_sub(7 * text_scale)) / 2;
+        draw_text_for_format(
+            frame,
+            width as usize,
+            height as usize,
+            row.x + 8 * scale,
+            text_y,
+            text_scale,
+            GamepadControl::ALL[index].label(),
+            [245, 238, 248],
+            format,
+        );
+        let target_label = mapping
+            .target(GamepadControl::ALL[index])
+            .map(PadButton::label)
+            .unwrap_or("DESLIGADO");
+        draw_text_for_format(
+            frame,
+            width as usize,
+            height as usize,
+            split + 8 * scale,
+            text_y,
+            text_scale,
+            target_label,
+            [190, 225, 203],
+            format,
+        );
+    }
+
+    for (rect, label) in [(geometry.reset, "PADRAO"), (geometry.close, "VOLTAR")] {
+        blend_rect(frame, width as usize, rect, [54, 36, 70], 245, format);
+        let label_width = font::text_width(label.chars().count(), scale);
+        draw_text_for_format(
+            frame,
+            width as usize,
+            height as usize,
+            rect.x + rect.width.saturating_sub(label_width) / 2,
+            rect.y + (rect.height.saturating_sub(7 * scale)) / 2,
+            scale,
+            label,
+            [255, 255, 255],
+            format,
+        );
+    }
+    true
+}
+
 /// Draws a dimmed, nine-action quick menu over an existing RGBA8 or BGRX8 frame.
 ///
 /// The function does not allocate and leaves the frame unchanged when its
@@ -683,6 +951,7 @@ fn render_overlay_with_action_count(
         "EDITAR CONTROLES",
         "CAPTURAR TELA",
         "DIAGNÓSTICO",
+        "MAPEAR CONTROLE",
     ];
     let row_text_scale = menu_row_text_scale(
         &geometry,

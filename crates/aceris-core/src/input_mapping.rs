@@ -57,6 +57,25 @@ impl GamepadControl {
         1u16 << (self as u8)
     }
 
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::South => "SOUTH",
+            Self::East => "EAST",
+            Self::North => "NORTH",
+            Self::West => "WEST",
+            Self::DPadUp => "DPAD UP",
+            Self::DPadDown => "DPAD DOWN",
+            Self::DPadLeft => "DPAD LEFT",
+            Self::DPadRight => "DPAD RIGHT",
+            Self::LeftShoulder => "LEFT SHOULDER",
+            Self::RightShoulder => "RIGHT SHOULDER",
+            Self::LeftTrigger => "LEFT TRIGGER",
+            Self::RightTrigger => "RIGHT TRIGGER",
+            Self::Start => "START",
+            Self::Select => "SELECT",
+        }
+    }
+
     pub const fn config_key(self) -> &'static str {
         match self {
             Self::South => "south",
@@ -97,6 +116,31 @@ pub enum PadButton {
 }
 
 impl PadButton {
+    pub const ALL: [Self; 14] = [
+        Self::A, Self::B, Self::X, Self::Y, Self::Select, Self::Start,
+        Self::Right, Self::Left, Self::Up, Self::Down, Self::R, Self::L,
+        Self::ZL, Self::ZR,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::A => "A",
+            Self::B => "B",
+            Self::X => "X",
+            Self::Y => "Y",
+            Self::Select => "SELECT",
+            Self::Start => "START",
+            Self::Right => "RIGHT",
+            Self::Left => "LEFT",
+            Self::Up => "UP",
+            Self::Down => "DOWN",
+            Self::R => "R",
+            Self::L => "L",
+            Self::ZL => "ZL",
+            Self::ZR => "ZR",
+        }
+    }
+
     pub const fn bit(self) -> u32 {
         match self {
             Self::A => pad::A,
@@ -194,6 +238,22 @@ impl GamepadMapping {
         self.targets[control as usize] = target;
     }
 
+    /// Cycles a control's destination through disabled and all supported 3DS buttons.
+    pub fn cycle_target(&mut self, control: GamepadControl, direction: i8) {
+        if direction == 0 {
+            return;
+        }
+        let current = self
+            .target(control)
+            .and_then(|target| PadButton::ALL.iter().position(|candidate| *candidate == target))
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        let count = PadButton::ALL.len() + 1;
+        let next = (current as isize + isize::from(direction.signum()))
+            .rem_euclid(count as isize) as usize;
+        self.set_target(control, next.checked_sub(1).map(|index| PadButton::ALL[index]));
+    }
+
     pub fn mask_for_held_controls(&self, held_controls: u16) -> u32 {
         GamepadControl::ALL
             .into_iter()
@@ -267,6 +327,20 @@ impl GamepadMapping {
         let game = game_identity
             .and_then(|identity| load_profile(&game_profile_path(settings_directory, identity)));
         game.or(device).unwrap_or(global)
+    }
+
+    /// Loads only the global profile, falling back to the standard controller layout.
+    pub fn load_global(settings_directory: &Path) -> Self {
+        load_profile(&settings_directory.join(GLOBAL_FILE)).unwrap_or_default()
+    }
+
+    /// Loads a title-specific profile, falling back to the global profile.
+    pub fn load_for_game_or_global(
+        settings_directory: &Path,
+        identity: GameIdentity,
+    ) -> Self {
+        load_profile(&game_profile_path(settings_directory, identity))
+            .unwrap_or_else(|| Self::load_global(settings_directory))
     }
 
     pub fn save_global(&self, settings_directory: &Path) -> io::Result<()> {
@@ -370,6 +444,16 @@ mod tests {
             GamepadMapping::from_config_str(&mapping.to_config_string()),
             Some(mapping)
         );
+    }
+
+    #[test]
+    fn target_cycle_includes_disabled_and_wraps_in_both_directions() {
+        let mut mapping = GamepadMapping::default();
+        mapping.set_target(GamepadControl::South, None);
+        mapping.cycle_target(GamepadControl::South, 1);
+        assert_eq!(mapping.target(GamepadControl::South), Some(PadButton::A));
+        mapping.cycle_target(GamepadControl::South, -1);
+        assert_eq!(mapping.target(GamepadControl::South), None);
     }
 
     #[test]
