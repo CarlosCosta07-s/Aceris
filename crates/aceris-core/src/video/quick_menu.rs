@@ -60,9 +60,13 @@ fn geometry(width: u32, height: u32, action_count: usize) -> Option<Geometry> {
     let width = width as usize;
     let height = height as usize;
     let scale = (width.min(height) / 240).clamp(1, 8);
+    let columns = if width >= 560 && width > height { 2 } else { 1 };
+    let row_count = action_count.div_ceil(columns);
     let margin = 8 * scale;
-    let panel_width = (420 * scale).min(width.saturating_sub(margin * 2));
-    let panel_height = (224 * scale).min(height.saturating_sub(margin * 2));
+    let base_panel_width = if columns == 2 { 520 } else { 420 };
+    let base_panel_height = if columns == 2 { 300 } else { 288 };
+    let panel_width = (base_panel_width * scale).min(width.saturating_sub(margin * 2));
+    let panel_height = (base_panel_height * scale).min(height.saturating_sub(margin * 2));
     if panel_width < 180 * scale || panel_height < 150 * scale {
         return None;
     }
@@ -74,14 +78,22 @@ fn geometry(width: u32, height: u32, action_count: usize) -> Option<Geometry> {
         height: panel_height,
     };
     let horizontal_padding = 12 * scale;
+    let column_gap = if columns == 2 { 8 * scale } else { 0 };
     let row_top = panel.y + 42 * scale;
-    let row_gap = 2 * scale;
-    let row_space = panel.height.saturating_sub(52 * scale);
+    let row_gap = if columns == 2 { 6 * scale } else { 2 * scale };
+    let bottom_padding = 10 * scale;
+    let row_space = panel
+        .height
+        .saturating_sub(42 * scale + bottom_padding);
     let row_height = row_space
-        .saturating_sub(row_gap * (action_count - 1))
-        .checked_div(action_count)?
-        .min(32 * scale);
-    let row_width = panel.width.saturating_sub(horizontal_padding * 2);
+        .saturating_sub(row_gap * row_count.saturating_sub(1))
+        .checked_div(row_count)?
+        .min(34 * scale);
+    let total_column_gap = column_gap * columns.saturating_sub(1);
+    let row_width = panel
+        .width
+        .saturating_sub(horizontal_padding * 2 + total_column_gap)
+        .checked_div(columns)?;
     let rows = std::array::from_fn(|index| {
         if index >= action_count {
             return Rect {
@@ -91,9 +103,11 @@ fn geometry(width: u32, height: u32, action_count: usize) -> Option<Geometry> {
                 height: 0,
             };
         }
+        let row = index / columns;
+        let column = index % columns;
         Rect {
-            x: panel.x + horizontal_padding,
-            y: row_top + index * (row_height + row_gap),
+            x: panel.x + horizontal_padding + column * (row_width + column_gap),
+            y: row_top + row * (row_height + row_gap),
             width: row_width,
             height: row_height,
         }
@@ -2266,6 +2280,33 @@ mod tests {
                 assert!(frame.chunks_exact(4).all(|pixel| pixel[3] == 255));
             }
         }
+    }
+
+    #[test]
+    fn landscape_quick_menu_uses_two_columns_and_preserves_action_indices() {
+        let (width, height) = (800u32, 480u32);
+        let layout = geometry(width, height, ACTION_COUNT).unwrap();
+        assert_eq!(layout.rows[0].y, layout.rows[1].y);
+        assert!(layout.rows[0].x < layout.rows[1].x);
+        assert_eq!(layout.rows[0].x, layout.rows[2].x);
+        assert!(layout.rows[2].y > layout.rows[0].y);
+
+        for (index, row) in layout.rows.iter().take(ACTION_COUNT).enumerate() {
+            assert_eq!(
+                hit_test(
+                    width,
+                    height,
+                    (row.x + row.width / 2) as i32,
+                    (row.y + row.height / 2) as i32,
+                ),
+                Some(index),
+                "action {index} must keep its existing hit-test index",
+            );
+        }
+
+        let portrait = geometry(400, 800, ACTION_COUNT).unwrap();
+        assert_eq!(portrait.rows[0].x, portrait.rows[1].x);
+        assert!(portrait.rows[1].y > portrait.rows[0].y);
     }
 
     #[test]
