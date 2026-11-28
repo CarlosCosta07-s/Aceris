@@ -131,9 +131,7 @@ fn geometry(width: u32, height: u32, action_count: usize) -> Option<Geometry> {
     let row_top = panel.y + 42 * scale;
     let row_gap = if columns == 2 { 6 * scale } else { 2 * scale };
     let bottom_padding = 10 * scale;
-    let row_space = panel
-        .height
-        .saturating_sub(42 * scale + bottom_padding);
+    let row_space = panel.height.saturating_sub(42 * scale + bottom_padding);
     let row_height = row_space
         .saturating_sub(row_gap * row_count.saturating_sub(1))
         .checked_div(row_count)?
