@@ -53,9 +53,17 @@ fn gamepad_home_navigation_mask(horizontal: f32, vertical: f32) -> u8 {
     }
 
     if horizontal_magnitude > vertical_magnitude {
-        if horizontal < 0.0 { GAMEPAD_HOME_NAV_LEFT } else { GAMEPAD_HOME_NAV_RIGHT }
+        if horizontal < 0.0 {
+            GAMEPAD_HOME_NAV_LEFT
+        } else {
+            GAMEPAD_HOME_NAV_RIGHT
+        }
     } else if vertical_magnitude >= THRESHOLD {
-        if vertical > 0.0 { GAMEPAD_HOME_NAV_UP } else { GAMEPAD_HOME_NAV_DOWN }
+        if vertical > 0.0 {
+            GAMEPAD_HOME_NAV_UP
+        } else {
+            GAMEPAD_HOME_NAV_DOWN
+        }
     } else if horizontal < 0.0 {
         GAMEPAD_HOME_NAV_LEFT
     } else {
@@ -266,16 +274,20 @@ impl App {
             let newly_pressed = navigation & !self.gamepad_home_navigation;
             self.gamepad_home_navigation = navigation;
             if newly_pressed & GAMEPAD_HOME_NAV_UP != 0 {
-                self.library.move_selection_responsive(-1, self.width, self.height);
+                self.library
+                    .move_selection_responsive(-1, self.width, self.height);
             }
             if newly_pressed & GAMEPAD_HOME_NAV_DOWN != 0 {
-                self.library.move_selection_responsive(1, self.width, self.height);
+                self.library
+                    .move_selection_responsive(1, self.width, self.height);
             }
             if newly_pressed & GAMEPAD_HOME_NAV_LEFT != 0 {
-                self.library.move_selection_horizontal_responsive(-1, self.width, self.height);
+                self.library
+                    .move_selection_horizontal_responsive(-1, self.width, self.height);
             }
             if newly_pressed & GAMEPAD_HOME_NAV_RIGHT != 0 {
-                self.library.move_selection_horizontal_responsive(1, self.width, self.height);
+                self.library
+                    .move_selection_horizontal_responsive(1, self.width, self.height);
             }
             return true;
         }
@@ -1892,16 +1904,25 @@ mod screenshot_tests {
         let initial = app.library.render_responsive(1000, 600);
         assert!(app.set_gamepad_axes(0.0, 0.8));
         let focused_actions = app.library.render_responsive(1000, 600);
-        assert_ne!(focused_actions, initial, "stick down should focus the home action row");
+        assert_ne!(
+            focused_actions, initial,
+            "stick down should focus the home action row"
+        );
 
         assert!(app.set_gamepad_axes(0.0, 0.8));
         let held = app.library.render_responsive(1000, 600);
-        assert_eq!(held, focused_actions, "a held stick must not repeat a focus change every frame");
+        assert_eq!(
+            held, focused_actions,
+            "a held stick must not repeat a focus change every frame"
+        );
 
         assert!(app.set_gamepad_axes(0.0, 0.0));
         assert!(app.set_gamepad_axes(0.0, 0.8));
         let focused_navigation = app.library.render_responsive(1000, 600);
-        assert_ne!(focused_navigation, held, "a new stick press should move to the next focus group");
+        assert_ne!(
+            focused_navigation, held,
+            "a new stick press should move to the next focus group"
+        );
 
         let _ = fs::remove_dir_all(directory);
     }
@@ -1909,10 +1930,19 @@ mod screenshot_tests {
     #[test]
     fn home_gamepad_stick_mapping_uses_deadzone_and_dominant_axis() {
         assert_eq!(gamepad_home_navigation_mask(0.59, 0.0), 0);
-        assert_eq!(gamepad_home_navigation_mask(-0.60, 0.0), GAMEPAD_HOME_NAV_LEFT);
+        assert_eq!(
+            gamepad_home_navigation_mask(-0.60, 0.0),
+            GAMEPAD_HOME_NAV_LEFT
+        );
         assert_eq!(gamepad_home_navigation_mask(0.0, 0.61), GAMEPAD_HOME_NAV_UP);
-        assert_eq!(gamepad_home_navigation_mask(0.0, -0.61), GAMEPAD_HOME_NAV_DOWN);
-        assert_eq!(gamepad_home_navigation_mask(0.8, 0.7), GAMEPAD_HOME_NAV_RIGHT);
+        assert_eq!(
+            gamepad_home_navigation_mask(0.0, -0.61),
+            GAMEPAD_HOME_NAV_DOWN
+        );
+        assert_eq!(
+            gamepad_home_navigation_mask(0.8, 0.7),
+            GAMEPAD_HOME_NAV_RIGHT
+        );
         assert_eq!(gamepad_home_navigation_mask(0.7, 0.8), GAMEPAD_HOME_NAV_UP);
         assert_eq!(gamepad_home_navigation_mask(f32::NAN, 0.0), 0);
     }
