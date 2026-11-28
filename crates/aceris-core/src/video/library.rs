@@ -2051,7 +2051,7 @@ impl Library {
         }
 
         // Console-style horizontal navigation shared by desktop and landscape Android.
-        if (y < 68.0) {
+        if y < 68.0 {
             let page = if (18.0..112.0).contains(&x) || (120.0..204.0).contains(&x) {
                 Some(LibraryPage::Home)
             } else if (210.0..310.0).contains(&x) {
@@ -4662,6 +4662,25 @@ fn render_library_tile(
         &extension.to_ascii_uppercase(),
         brand::ACCENT_GREEN_LIGHT,
     );
+}
+
+fn search_keyboard_top(logical_height: f32) -> f32 {
+    (logical_height - 210.0).max(150.0)
+}
+
+fn fold_search_text(text: &str) -> String {
+    text.chars()
+        .flat_map(char::to_lowercase)
+        .map(|character| match character {
+            'á' | 'à' | 'â' | 'ã' | 'ä' => 'a',
+            'ç' => 'c',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            other => other,
+        })
+        .collect()
 }
 
 fn responsive_metrics(width: u32, height: u32) -> Option<(bool, f32, f32, f32)> {
