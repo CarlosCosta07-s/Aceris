@@ -6197,31 +6197,15 @@ fn cover_palette(title: &str) -> (u32, u32, u32) {
             brand::ACCENT_RED_DARK,
             brand::ACCENT_RED_LIGHT,
         ),
-        (
-            brand::SURFACE_BASE,
-            brand::PURPLE_LIGHT,
-            brand::ACCENT_RED,
-        ),
+        (brand::SURFACE_BASE, brand::PURPLE_LIGHT, brand::ACCENT_RED),
         (
             brand::SURFACE_PANEL,
             brand::ACCENT_GREEN,
             brand::ACCENT_GREEN_LIGHT,
         ),
-        (
-            brand::SURFACE_HEADER,
-            brand::ACCENT_RED,
-            brand::TEXT,
-        ),
-        (
-            brand::PURPLE_DARK,
-            brand::PURPLE_LIGHT,
-            brand::TEXT_MUTED,
-        ),
-        (
-            brand::SURFACE_CARD,
-            brand::ACCENT_GREEN,
-            brand::TEXT,
-        ),
+        (brand::SURFACE_HEADER, brand::ACCENT_RED, brand::TEXT),
+        (brand::PURPLE_DARK, brand::PURPLE_LIGHT, brand::TEXT_MUTED),
+        (brand::SURFACE_CARD, brand::ACCENT_GREEN, brand::TEXT),
     ];
     let mut hash = 2_166_136_261u32;
     for byte in title.bytes() {
