@@ -67,6 +67,67 @@ mod tests {
         assert_eq!(hex(SURFACE_SELECTED), "#4A1D5E");
     }
 
+    fn linear_channel(value: u8) -> f64 {
+        let value = f64::from(value) / 255.0;
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    fn relative_luminance(color: u32) -> f64 {
+        let red = linear_channel((color >> 16) as u8);
+        let green = linear_channel((color >> 8) as u8);
+        let blue = linear_channel(color as u8);
+        0.2126 * red + 0.7152 * green + 0.0722 * blue
+    }
+
+    fn contrast_ratio(foreground: u32, background: u32) -> f64 {
+        let foreground = relative_luminance(foreground);
+        let background = relative_luminance(background);
+        (foreground.max(background) + 0.05) / (foreground.min(background) + 0.05)
+    }
+
+    #[test]
+    fn text_tokens_meet_aa_contrast_on_launcher_surfaces() {
+        let normal_surfaces = [
+            ("SURFACE_BASE", SURFACE_BASE),
+            ("SURFACE_HEADER", SURFACE_HEADER),
+            ("SURFACE_PANEL", SURFACE_PANEL),
+            ("SURFACE_CARD", SURFACE_CARD),
+            ("SURFACE_RAISED", SURFACE_RAISED),
+            ("SURFACE_SELECTED", SURFACE_SELECTED),
+            ("SURFACE_BUTTON", SURFACE_BUTTON),
+        ];
+        let status_surfaces = [("SUCCESS_SURFACE", SUCCESS_SURFACE)];
+        let text_tokens = [
+            ("TEXT", TEXT),
+            ("TEXT_MUTED", TEXT_MUTED),
+            ("TEXT_SUBTLE", TEXT_SUBTLE),
+        ];
+
+        for (text_name, foreground) in text_tokens {
+            for (surface_name, background) in normal_surfaces {
+                let ratio = contrast_ratio(foreground, background);
+                assert!(
+                    ratio >= 4.5,
+                    "{text_name} on {surface_name} has insufficient contrast: {ratio:.2}:1"
+                );
+            }
+        }
+
+        for (text_name, foreground) in [("TEXT", TEXT), ("TEXT_MUTED", TEXT_MUTED)] {
+            for (surface_name, background) in status_surfaces {
+                let ratio = contrast_ratio(foreground, background);
+                assert!(
+                    ratio >= 4.5,
+                    "{text_name} on {surface_name} has insufficient contrast: {ratio:.2}:1"
+                );
+            }
+        }
+    }
+
     #[test]
     fn hex_formats_with_padding() {
         assert_eq!(hex(BACKGROUND), "#2A1240");
