@@ -95,8 +95,6 @@ fn button_bit(button: Button) -> u32 {
         Button::DPadRight => pad::RIGHT,
         Button::LeftTrigger => pad::L,
         Button::RightTrigger => pad::R,
-        Button::LeftTrigger2 => pad::ZL,
-        Button::RightTrigger2 => pad::ZR,
         Button::Start => pad::START,
         Button::Select => pad::SELECT,
         _ => 0,
@@ -104,7 +102,7 @@ fn button_bit(button: Button) -> u32 {
 }
 
 fn button_mask(gamepad: &gilrs::Gamepad<'_>) -> u32 {
-    const BUTTONS: [Button; 14] = [
+    const BUTTONS: [Button; 12] = [
         Button::South,
         Button::East,
         Button::North,
@@ -115,8 +113,6 @@ fn button_mask(gamepad: &gilrs::Gamepad<'_>) -> u32 {
         Button::DPadRight,
         Button::LeftTrigger,
         Button::RightTrigger,
-        Button::LeftTrigger2,
-        Button::RightTrigger2,
         Button::Start,
         Button::Select,
     ];
@@ -160,8 +156,6 @@ mod tests {
         assert_eq!(button_bit(Button::West), pad::Y);
         assert_eq!(button_bit(Button::LeftTrigger), pad::L);
         assert_eq!(button_bit(Button::RightTrigger), pad::R);
-        assert_eq!(button_bit(Button::LeftTrigger2), pad::ZL);
-        assert_eq!(button_bit(Button::RightTrigger2), pad::ZR);
         assert_eq!(button_bit(Button::Start), pad::START);
         assert_eq!(button_bit(Button::Select), pad::SELECT);
         assert_eq!(button_bit(Button::Mode), 0);
