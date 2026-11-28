@@ -60,14 +60,15 @@
 | Layout personalizado/ajuste fino/janela separada | Não disponível | Não há editor de posição, tamanho ou espaçamento, nem janela independente por tela. |
 | Touchscreen da tela inferior | Parcial | O mapeamento usa o retângulo atual do LCD inferior nos seis modos e após a troca; ainda falta validar toque físico em aparelho e gestos complexos. |
 | Botões digitais | Parcial | O core define bits para D-pad, A/B/X/Y, L/R, Start/Select e ZL/ZR; hosts encaminham um subconjunto pelos caminhos atuais. |
-| Circle Pad analógico | Parcial | InputState possui eixo X/Y limitado a ±156, mas isso não equivale a mapeamento completo de eixos do gamepad no desktop/Android. |
+| Circle Pad analógico | Parcial | Android encaminha o eixo primário X/Y de eventos joystick USB/Bluetooth ao Circle Pad (±156), com deadzone padrão de 16% e inversão do eixo Y. Botões digitais seguem pelos eventos de tecla. Ainda faltam perfis/calibração, eixos adicionais, gamepad físico no desktop e validação em aparelho real. |
 | Perfis de controle/remapeamento | Parcial | Controles virtuais Android têm layout global e override por Title ID; o remapeamento de teclado/gamepad físico e perfis por dispositivo ainda não estão disponíveis. |
 | Deadzone/sensibilidade/inversão | Não disponível | Não existem controles de ajuste expostos para dispositivos físicos; a escala/posição dos controles virtuais é uma função separada. |
 | Controles virtuais Android | Parcial | Editor funcional para visibilidade, opacidade em níveis, escala, presets, posições por arraste, tamanho por pinça, layouts por orientação e herança/overrides por Title ID. Falta validação em aparelho físico e melhor integração com controles físicos. |
 | Multi-touch | Parcial | NativeActivity coleta ponteiros e o app mantém estado multitoque; falta validar em aparelho e todas as combinações de stylus + botões. |
+| Gamepad físico Android | Parcial | Eventos joystick da NativeActivity encaminham o eixo primário X/Y para o Circle Pad com deadzone de 16%; botões suportados chegam como eventos de tecla. Sem remapeamento, seleção de dispositivo, eixo secundário ou validação em controle físico. |
 | Menu rápido/pausa | Parcial | Android tem botão MENU e Voltar; PC usa Esc. Continuar, Reiniciar e Voltar têm confirmação preventiva; as filas host de áudio são limpas ao pausar. O menu oferece seis ações, seis layouts, troca de telas e restauração do padrão global. Atalho configurável, ajuste fino e validação física pendentes. |
 | Atalhos configuráveis | Não disponível | Existem teclas/eventos específicos do host, mas não há editor de atalhos. |
-| Screenshot durante a partida | Não disponível | Há ferramentas/dumps internos de diagnóstico, mas não existe ação de captura na UI nem escolha de destino durante a partida. |
+| Screenshot durante a partida | Parcial | Ação Capturar tela no menu rápido salva a composição atual em PNG. Android grava em `.aceris/screenshots` dentro dos dados do app; desktop grava em `screenshots` na pasta de configurações e imprime o caminho. Escolha de destino por diálogo e validação física ainda pendentes. |
 
 **Evidência principal:** crates/aceris-core/src/input.rs (InputState, InputSnapshot, pad e touch_from_surface_point), crates/aceris-core/src/video/frontend.rs, frontends/android/src/app.rs (apply_game_input, hit_virtual_button e step_game_into) e frontends/android/src/native_activity.rs.
 
@@ -77,10 +78,10 @@
 |---|---|---|
 | Modo Desempenho/Fast Memory | Disponível, avançado | Opt-in persistido em .aceris/performance_mode.txt e aplicado antes do próximo jogo. Desvia do modelo preciso de D-cache e pode causar incompatibilidade; não é ganho garantido. |
 | Log de desempenho desktop | Parcial | Opt-in por ACERIS_PERFORMANCE_LOG=1 ou arquivo .aceris/desktop_performance_log_v1.txt; imprime relatórios locais de tempo host. |
-| Overlay de diagnóstico em jogo | Não disponível | Os relatórios host são impressos localmente a cada cinco segundos quando ativados; não há overlay persistente nem painel de estado do guest. |
+| Overlay de diagnóstico em jogo | Parcial | A ação Diagnóstico do menu rápido ativa um painel em desktop e Android com PC ARM11, quantidade/primeira requisição IPC não tratada e resumo opcional de tempos/FPS apresentados pelo host. Não calcula velocidade guest. Ainda faltam métricas guest reais, refinamento do painel e validação física. |
 | Métricas de desempenho Android | Parcial | Monitor registra tentativas, apresentação, percentis e uso do presenter; relatórios são diagnósticos locais, não overlay configurável de usuário. |
 | Fast Forward/velocidade alternativa | Não disponível | Não há controle de velocidade de emulação na interface; não confundir FPS host com velocidade guest. |
-| FPS/velocidade guest em overlay | Não disponível | Métricas host de apresentação não devem ser rotuladas como velocidade da emulação nem FPS guest; ainda não há overlay de usuário. |
+| FPS/velocidade guest em overlay | Parcial | Overlay apresenta apenas métricas host claramente identificadas (FPS apresentado e tempos host, quando a coleta opt-in está ativa). FPS/velocidade guest ainda não é medido nem exibido. |
 | Mídia externa | Parcial | O host Android pode detectar mídia externa e informar estado à biblioteca; não é oferecido por todas as plataformas e não identifica o conteúdo tocado. |
 | Preferências globais completas | Não disponível | Ainda não há painel de idioma, tema, escala de interface, alto contraste ou conjunto amplo de preferências. |
 | Configurações por jogo | Parcial | Overrides de layout por Title ID, com herança global, orientação independente e restauração por título. Categorias gerais de configurações por jogo ainda não existem; 3DSX sem identidade herda o perfil global. |
