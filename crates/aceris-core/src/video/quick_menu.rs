@@ -67,7 +67,7 @@ pub fn move_selection(
         return 0;
     }
     let selected = selected.min(action_count - 1);
-    let columns = columns_for_surface(width as u32, height as u32);
+    let columns = columns_for_surface(width, height);
     let row = selected / columns;
     let column = selected % columns;
 
@@ -109,7 +109,7 @@ fn geometry(width: u32, height: u32, action_count: usize) -> Option<Geometry> {
     let width = width as usize;
     let height = height as usize;
     let scale = (width.min(height) / 240).clamp(1, 8);
-    let columns = columns_for_surface(width, height);
+    let columns = columns_for_surface(width as u32, height as u32);
     let row_count = action_count.div_ceil(columns);
     let margin = 8 * scale;
     let base_panel_width = if columns == 2 { 520 } else { 420 };
