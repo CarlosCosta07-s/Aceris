@@ -36,26 +36,26 @@ pub mod chrome {
 /// Shared geometry for the landscape game-library grid. These values are
 /// consumed by rendering, pointer hit-testing and controller navigation.
 pub mod library {
-    /// The console-style collection uses three wider cards per row.
+    /// The console collection keeps three cover tiles and a dedicated title panel.
     pub const GRID_COLUMNS: usize = 3;
-    pub const GRID_ORIGIN_X: f32 = 28.0;
-    pub const GRID_TOP: f32 = 170.0;
-    pub const GRID_CARD_WIDTH: f32 = 222.0;
+    pub const GRID_ORIGIN_X: f32 = 96.0;
+    pub const GRID_TOP: f32 = 145.0;
+    pub const GRID_CARD_WIDTH: f32 = 174.0;
     pub const GRID_CARD_HEIGHT: f32 = 166.0;
-    pub const GRID_GAP_X: f32 = 18.0;
+    pub const GRID_GAP_X: f32 = 14.0;
     pub const GRID_GAP_Y: f32 = 12.0;
     pub const GRID_STEP_X: f32 = GRID_CARD_WIDTH + GRID_GAP_X;
     pub const GRID_STEP_Y: f32 = GRID_CARD_HEIGHT + GRID_GAP_Y;
 
     /// Contextual details rail for the selected title.
-    pub const DETAILS_PANEL_X: f32 = 760.0;
-    pub const DETAILS_PANEL_TOP: f32 = 162.0;
-    pub const DETAILS_PANEL_WIDTH: f32 = 212.0;
-    pub const DETAILS_PANEL_HEIGHT: f32 = 310.0;
-    pub const DETAILS_CENTER_X: f32 = 866.0;
-    pub const DETAILS_ART_X: f32 = 820.0;
-    pub const DETAILS_ART_TOP: f32 = 190.0;
-    pub const DETAILS_ART_SIZE: f32 = 92.0;
+    pub const DETAILS_PANEL_X: f32 = 666.0;
+    pub const DETAILS_PANEL_TOP: f32 = 142.0;
+    pub const DETAILS_PANEL_WIDTH: f32 = 314.0;
+    pub const DETAILS_PANEL_HEIGHT: f32 = 366.0;
+    pub const DETAILS_CENTER_X: f32 = 823.0;
+    pub const DETAILS_ART_X: f32 = 759.0;
+    pub const DETAILS_ART_TOP: f32 = 158.0;
+    pub const DETAILS_ART_SIZE: f32 = 128.0;
     pub const DETAILS_BUTTON_X: f32 = 772.0;
     pub const DETAILS_BUTTON_WIDTH: f32 = 188.0;
     pub const DETAILS_BUTTON_HEIGHT: f32 = 32.0;
@@ -331,13 +331,15 @@ mod tests {
     }
 
     #[test]
-    fn landscape_library_grid_uses_three_wide_console_cards() {
+    fn landscape_library_uses_three_console_cover_cards_and_a_details_panel() {
         assert_eq!(library::GRID_COLUMNS, 3);
-        assert!(library::GRID_CARD_WIDTH > 168.0);
-        assert!(library::GRID_CARD_HEIGHT > 148.0);
+        assert!(library::GRID_CARD_WIDTH > 160.0);
+        assert!(library::GRID_CARD_HEIGHT > 150.0);
         let collection_width = library::GRID_COLUMNS as f32 * library::GRID_CARD_WIDTH
             + (library::GRID_COLUMNS - 1) as f32 * library::GRID_GAP_X;
-        assert_eq!(collection_width, 702.0);
+        assert_eq!(collection_width, 550.0);
+        assert!(library::GRID_ORIGIN_X + collection_width < library::DETAILS_PANEL_X);
+        assert!(library::DETAILS_PANEL_X + library::DETAILS_PANEL_WIDTH <= 1000.0);
     }
 
     #[test]
