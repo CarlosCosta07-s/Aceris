@@ -8005,10 +8005,8 @@ mod tests {
 
     #[test]
     fn ultrawide_landscape_home_keeps_five_cards_and_details_actions_visible() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-ultrawide-home-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aceris-ultrawide-home-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let entries: Vec<Entry> = (0..6)
