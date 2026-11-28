@@ -2097,11 +2097,6 @@ impl Library {
         ClickResult::Ignored
     }
 
-    fn focus_settings_control(&mut self, index: usize) {
-        self.settings_controls_focused = true;
-        self.settings_control_selected = index.min(self.settings_control_last_index());
-    }
-
     /// Changes the library section and resets its independent selection.
     pub fn select_page(&mut self, page: LibraryPage) {
         if self.page != page {
@@ -2877,18 +2872,14 @@ impl Library {
                         }
                         if (344.0..388.0).contains(&y) {
                             if (44.0..366.0).contains(&x) {
-                                self.focus_settings_control(0);
                                 self.request_folder_picker();
                             } else if (382.0..704.0).contains(&x) {
-                                self.focus_settings_control(1);
                                 self.toggle_recursive_from_settings();
                             }
                         } else if (420.0..464.0).contains(&y) {
                             if (44.0..366.0).contains(&x) {
-                                self.focus_settings_control(2);
                                 self.toggle_view_mode();
                             } else if (382.0..704.0).contains(&x) {
-                                self.focus_settings_control(3);
                                 self.toggle_sort_order();
                             }
                         }
@@ -2896,10 +2887,8 @@ impl Library {
                     SettingsSection::Performance => {
                         if (242.0..350.0).contains(&y) {
                             if (48.0..354.0).contains(&x) {
-                                self.focus_settings_control(0);
                                 self.toggle_performance_mode_from_settings();
                             } else if (390.0..696.0).contains(&x) {
-                                self.focus_settings_control(1);
                                 self.cycle_gamepad_deadzone_from_settings();
                             }
                         }
@@ -2913,13 +2902,10 @@ impl Library {
                             self.toggle_virtual_controls_from_settings();
                         } else if self.touch_keyboard_enabled && (338.0..430.0).contains(&y) {
                             if (48.0..258.0).contains(&x) {
-                                self.focus_settings_control(1);
                                 self.cycle_virtual_controls_opacity_from_settings();
                             } else if (270.0..480.0).contains(&x) {
-                                self.focus_settings_control(2);
                                 self.cycle_virtual_controls_size_from_settings();
                             } else if (492.0..704.0).contains(&x) {
-                                self.focus_settings_control(3);
                                 self.cycle_virtual_controls_preset_from_settings();
                             }
                         }
