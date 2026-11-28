@@ -1492,13 +1492,13 @@ fn menu_row_text_scale(
             8 if action_count == DESKTOP_ACTION_COUNT => "MAPEAR CONTROLE",
             _ => labels[index],
         })
-        .max_by_key(|label| font::measure_text(label, 1))
+        .max_by_key(|label| font::measure_text_with_weight(label, 1, font::TextWeight::Semibold))
         .unwrap_or("MENU");
 
     let row_height = geometry.rows[0].height;
     let vertical_scale = (row_height / 7).max(1);
     let available_width = geometry.rows[0].width.saturating_sub(24 * base_scale);
-    let glyph_width = font::measure_text(widest_label, 1).max(1);
+    let glyph_width = font::measure_text_with_weight(widest_label, 1, font::TextWeight::Semibold).max(1);
     let horizontal_scale = (available_width / glyph_width).max(1);
     (base_scale * 2)
         .min(vertical_scale)
@@ -1712,8 +1712,13 @@ fn draw_text_for_format(
     format: PixelFormat,
 ) {
     let color = channel_order(color, format);
-    font::draw_text(
-        frame, width, height, x as i32, y as i32, scale, value, color,
+    let weight = if scale >= 2 {
+        font::TextWeight::Semibold
+    } else {
+        font::TextWeight::Regular
+    };
+    font::draw_text_with_weight(
+        frame, width, height, x as i32, y as i32, scale, value, color, weight,
     );
 }
 
