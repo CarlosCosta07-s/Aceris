@@ -12,6 +12,12 @@ Este documento descreve o estado atual dos hosts do Aceris. O núcleo de emulaç
 - O presenter `aceris-graphics` usa `wgpu` para enviar os frames LCD já compostos ao host GPU. Ele acelera upload/apresentação, não substitui o rasterizador PICA200 do core nem executa DRAWARRAYS/DRAWELEMENTS.
 - O crate `aceris-gl` mantém um contexto EGL/OpenGL offscreen independente. Ele não está integrado ao `System` como rasterizador PICA.
 
+### Entrada por gamepad físico
+
+O desktop usa um adaptador Rust baseado em GilRs nos backends Windows, Linux e macOS. Durante o jogo, o Aceris acompanha a conexão/desconexão e lê o primeiro gamepad conectado; o estado dos botões é combinado com o teclado para que um dispositivo não solte uma tecla que continua pressionada no outro. O mapeamento-base usa A/B/X/Y, D-pad, L/R, Start/Select e o stick esquerdo para o Circle Pad. Ainda não há seletor de dispositivo, mapeamento personalizado, perfis por controle ou validação com hardware físico.
+
+A deadzone global pode ser ajustada em Configurações: 8%, 12%, 16%, 20% ou 24% (padrão 16%). O valor versionado é salvo em `.aceris/gamepad_settings_v1.txt` e aplicado ao próximo movimento do analógico, no desktop e no Android. Não há curva de sensibilidade nem inversão configurável.
+
 ## Android NativeActivity
 
 O aplicativo Android usa `frontends/android`, com NativeActivity e lógica do host em Rust. A interface compartilhada mostra a biblioteca, navegação, Favoritos, Recentes e Configurações. A atividade aceita rotação do sensor (`sensor`); por padrão, usa perfil Vertical em portrait e Lado a lado em landscape, com preferências separadas. Quando o modo Auto é selecionado, a geometria escolhe lado a lado em landscape e vertical em portrait; o menu permite selecionar outros layouts.
@@ -42,7 +48,7 @@ A apresentação Android ainda precisa de validação física em diferentes GPUs
 
 ### Entrada e controles
 
-A NativeActivity recebe eventos nativos de tecla, movimento/toque e eventos de joystick e encaminha o estado de entrada ao core. O mapeamento-base de teclas cobre D-pad, A/B/X/Y, L1/R1, Start e Select. L2/R2 ainda não são encaminhados como ZL/ZR: esses botões New 3DS usam a memória adicional `ir:rst`, ainda não implementada. Para eventos de joystick, o eixo primário X/Y é convertido para o Circle Pad (±156), com deadzone padrão de 16% e inversão de Y. O core publica botões e touchscreen pelo HID guest quando o título requisita os handles/memória compartilhada. Um ensaio headless com o homebrew Cookie Clicker demonstrou que toques injetados podem percorrer HID → guest → gameplay → PICA/LCD; isso não equivale à validação física de toque ou gamepad.
+A NativeActivity recebe eventos nativos de tecla, movimento/toque e eventos de joystick e encaminha o estado de entrada ao core. O mapeamento-base de teclas cobre D-pad, A/B/X/Y, L1/R1, Start e Select. L2/R2 ainda não são encaminhados como ZL/ZR: esses botões New 3DS usam a memória adicional `ir:rst`, ainda não implementada. Para eventos de joystick, o eixo primário X/Y é convertido para o Circle Pad (±156), com inversão de Y e deadzone global configurável em 8%, 12%, 16%, 20% ou 24% (padrão 16%), persistida em `.aceris/gamepad_settings_v1.txt`. O core publica botões e touchscreen pelo HID guest quando o título requisita os handles/memória compartilhada. Um ensaio headless com o homebrew Cookie Clicker demonstrou que toques injetados podem percorrer HID → guest → gameplay → PICA/LCD; isso não equivale à validação física de toque ou gamepad.
 
 A C ABI também oferece renderização e hit-test para uma camada de controles virtuais. Remapeamento, seleção/perfis de dispositivos, eixos adicionais, gatilhos e a combinação completa de múltiplos dedos, gamepad virtual e gamepad físico ainda precisam de uma rodada específica de validação no aparelho.
 
