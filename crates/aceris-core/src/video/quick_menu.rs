@@ -1645,6 +1645,7 @@ mod tests {
                 "EDITAR CONTROLES",
                 "CAPTURAR TELA",
                 "DIAGNÓSTICO",
+                "MAPEAR CONTROLE",
             ];
             assert_eq!(
                 menu_row_text_scale(
