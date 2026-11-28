@@ -37,21 +37,20 @@ Use a consistent spacing scale, predictable alignment, restrained borders, subtl
 
 ### Desktop
 
-- A fixed, narrow left rail matching the supplied concept's proportions. Place the Aceris mark at the top, followed by vertically stacked original glyphs for Início, Jogos, Importar, Favoritos, Recentes, Homebrew and Configurações, with the power symbol anchored near the bottom. Do not add text labels beside the rail icons.
-- Center the selected game's identity in the upper content area: available game icon/artwork, title and concise metadata.
-- Place one horizontal shelf of tall portrait game covers beneath the featured identity. Show five card slots, with the fifth naturally clipped at the right edge when the viewport cannot fit all five. Selection uses an unmistakable Aceris red focus frame and horizontal navigation scrolls the shelf.
-- Use a compact bottom command strip with controller/action hints. Do not restore the old horizontal Home tab bar, oversized featured panel, four-button row or collection-summary panel.
-- A responsive game-card grid with cover art when available, readable title, subtle format metadata and a clear focus/selected state.
-- A details panel for the selected title with centered square artwork, title, container format, recent/favorite state, and clear Play, Favorite, Import and Refresh actions.
-- Controller and keyboard navigation must mirror pointer navigation; focus must always be visible.
+- A fixed, narrow left rail matching the supplied concept's proportions. Place the Aceris mark at the top, followed by five vertically stacked original glyphs for Início, Jogos, Importar, Favoritos and Ajustes, with the power symbol anchored near the bottom. Do not add text labels beside the rail icons. Recentes and Homebrew are compact collection tabs, not extra rail entries.
+- Home reproduces the supplied unofficial console concept composition: selected-game identity centered above a single horizontal shelf of large portrait covers, with five positions and the fifth naturally clipped at the right edge when needed.
+- Games, Favorites, Recent and Homebrew retain the same left rail and use a compact section header, collection tabs, search/filter/sort controls, a three-column cover grid, a selected-title information panel and a compact bottom command strip.
+- Selection uses a clear Aceris red focus treatment. Game details show available cover/icon, title, container format, recent/favorite state and the relevant launch/favorite/import actions.
+- Missing cover metadata uses original Aceris geometric artwork in the existing brand palette; user-supplied SMDH icons remain the source for real game icons.
+- Do not restore the old horizontal Home tab bar, oversized administration panels or large collection-summary panel. Keep navigation and command hints consistent with the Home concept.
+- Controller, keyboard, mouse and touch navigation must map to the same actions; focus must always be visible.
 
 ### Android
 
-- Reproduce the same concept composition in landscape: fixed left icon rail, centered selected-game identity, portrait-cover shelf and bottom command hints. Keep the rail glyphs original to Aceris and sized for touch.
+- Use the same fixed five-option Aceris rail and power action across Home, Games, Favorites, Recent, Homebrew and Settings. Home retains the centered featured identity and portrait-cover shelf; collection pages use the same cover grid and details panel as desktop.
 - The Android app is landscape-only; `AndroidManifest.xml` must keep `android:screenOrientation="landscape"`.
-- Do not replace the side rail with a top or bottom navigation bar on Home.
+- Do not replace the side rail with a top or bottom navigation bar.
 - Large touch targets, safe-area awareness, horizontal shelf scrolling and responsive portrait cover cards, designed for landscape phones and tablets.
-- Home and the primary library experience are designed for landscape only. Android is locked to landscape; the legacy portrait renderer is compatibility-only and must never become an Android product mode.
 - Import and folder management must remain discoverable and usable on touch devices.
 
 ## Core screens
