@@ -748,14 +748,18 @@ mod tests {
             GamepadAxisSettings::from_config_str(&settings.to_config_string()),
             Some(settings)
         );
-        assert!(GamepadAxisSettings::from_config_str(
-            "ACERIS_GAMEPAD_AXIS_SETTINGS_V2\ninvert_x=0\ninvert_y=0\nsensitivity_percent=100\n"
-        )
-        .is_none());
-        assert!(GamepadAxisSettings::from_config_str(
-            "ACERIS_GAMEPAD_AXIS_SETTINGS_V1\ninvert_x=1\ninvert_y=0\nsensitivity_percent=201\n"
-        )
-        .is_none());
+        assert!(
+            GamepadAxisSettings::from_config_str(
+                "ACERIS_GAMEPAD_AXIS_SETTINGS_V2\ninvert_x=0\ninvert_y=0\nsensitivity_percent=100\n"
+            )
+            .is_none()
+        );
+        assert!(
+            GamepadAxisSettings::from_config_str(
+                "ACERIS_GAMEPAD_AXIS_SETTINGS_V1\ninvert_x=1\ninvert_y=0\nsensitivity_percent=201\n"
+            )
+            .is_none()
+        );
         assert!(GamepadAxisSettings::from_config_str(
             "ACERIS_GAMEPAD_AXIS_SETTINGS_V1\ninvert_x=0\ninvert_y=0\nsensitivity_percent=100\nextra=1\n"
         )
