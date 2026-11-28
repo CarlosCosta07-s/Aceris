@@ -996,7 +996,11 @@ unsafe fn handle_key(event: *mut c_void, app: &mut App) -> bool {
             handled
         }
         KEY_ACTION_UP => {
-            if gamepad_source { app.gamepad_key(code, false) } else { app.key(code, false) }
+            if gamepad_source {
+                app.gamepad_key(code, false)
+            } else {
+                app.key(code, false)
+            }
         },
         _ => false,
     }

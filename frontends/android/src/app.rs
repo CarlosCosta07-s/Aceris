@@ -931,8 +931,6 @@ impl App {
         self.key_mask = 0;
         self.gamepad_button_mask = 0;
         self.gamepad_trigger_axis_mask = 0;
-        self.gamepad_button_mask = 0;
-        self.gamepad_trigger_axis_mask = 0;
         if let Some(system) = self.system.as_mut() {
             system.input_mut().reset();
         }
@@ -997,8 +995,6 @@ impl App {
         self.key_mask = 0;
         self.gamepad_button_mask = 0;
         self.gamepad_trigger_axis_mask = 0;
-        self.gamepad_button_mask = 0;
-        self.gamepad_trigger_axis_mask = 0;
         self.controls_editor = false;
         self.control_drag = None;
         self.control_resize = None;
@@ -1021,8 +1017,6 @@ impl App {
             return;
         }
         self.key_mask = 0;
-        self.gamepad_button_mask = 0;
-        self.gamepad_trigger_axis_mask = 0;
         self.gamepad_button_mask = 0;
         self.gamepad_trigger_axis_mask = 0;
         self.controls_editor = false;
@@ -1146,8 +1140,6 @@ impl App {
                 self.key_mask = 0;
                 self.gamepad_button_mask = 0;
                 self.gamepad_trigger_axis_mask = 0;
-                self.gamepad_button_mask = 0;
-                self.gamepad_trigger_axis_mask = 0;
                 self.pointers.clear();
                 self.menu_tap = None;
                 self.menu_button_pointer = None;
@@ -1241,8 +1233,6 @@ impl App {
                 self.key_mask = 0;
                 self.gamepad_button_mask = 0;
                 self.gamepad_trigger_axis_mask = 0;
-                self.gamepad_button_mask = 0;
-                self.gamepad_trigger_axis_mask = 0;
                 self.quick_menu_selected = 0;
                 self.screen = Screen::Game;
                 self.apply_game_input();
@@ -1272,8 +1262,6 @@ impl App {
         self.current_game_path = None;
         self.audio.clear();
         self.key_mask = 0;
-        self.gamepad_button_mask = 0;
-        self.gamepad_trigger_axis_mask = 0;
         self.gamepad_button_mask = 0;
         self.gamepad_trigger_axis_mask = 0;
         self.pointers.clear();
@@ -1407,11 +1395,26 @@ mod gamepad_axis_tests {
 
     #[test]
     fn android_gamepad_keycodes_map_to_standardized_controls() {
-        assert_eq!(gamepad_control_from_android_keycode(96), Some(GamepadControl::South));
-        assert_eq!(gamepad_control_from_android_keycode(19), Some(GamepadControl::DPadUp));
-        assert_eq!(gamepad_control_from_android_keycode(102), Some(GamepadControl::LeftShoulder));
-        assert_eq!(gamepad_control_from_android_keycode(AKEYCODE_BUTTON_L2), Some(GamepadControl::LeftTrigger));
-        assert_eq!(gamepad_control_from_android_keycode(AKEYCODE_BUTTON_R2), Some(GamepadControl::RightTrigger));
+        assert_eq!(
+            gamepad_control_from_android_keycode(96),
+            Some(GamepadControl::South)
+        );
+        assert_eq!(
+            gamepad_control_from_android_keycode(19),
+            Some(GamepadControl::DPadUp)
+        );
+        assert_eq!(
+            gamepad_control_from_android_keycode(102),
+            Some(GamepadControl::LeftShoulder)
+        );
+        assert_eq!(
+            gamepad_control_from_android_keycode(AKEYCODE_BUTTON_L2),
+            Some(GamepadControl::LeftTrigger)
+        );
+        assert_eq!(
+            gamepad_control_from_android_keycode(AKEYCODE_BUTTON_R2),
+            Some(GamepadControl::RightTrigger)
+        );
         assert_eq!(gamepad_control_from_android_keycode(AKEYCODE_BUTTON_R2 + 1), None);
     }
 
@@ -1419,9 +1422,18 @@ mod gamepad_axis_tests {
     fn analog_trigger_axes_use_a_safe_digital_threshold() {
         assert_eq!(gamepad_trigger_control_mask(0.0, 0.0), 0);
         assert_eq!(gamepad_trigger_control_mask(0.49, 0.49), 0);
-        assert_eq!(gamepad_trigger_control_mask(0.5, 0.0), GamepadControl::LeftTrigger.bit());
-        assert_eq!(gamepad_trigger_control_mask(0.0, 0.5), GamepadControl::RightTrigger.bit());
-        assert_eq!(gamepad_trigger_control_mask(1.0, 1.0), GamepadControl::LeftTrigger.bit() | GamepadControl::RightTrigger.bit());
+        assert_eq!(
+            gamepad_trigger_control_mask(0.5, 0.0),
+            GamepadControl::LeftTrigger.bit()
+        );
+        assert_eq!(
+            gamepad_trigger_control_mask(0.0, 0.5),
+            GamepadControl::RightTrigger.bit()
+        );
+        assert_eq!(
+            gamepad_trigger_control_mask(1.0, 1.0),
+            GamepadControl::LeftTrigger.bit() | GamepadControl::RightTrigger.bit()
+        );
         assert_eq!(gamepad_trigger_control_mask(f32::NAN, f32::INFINITY), 0);
         assert_eq!(gamepad_trigger_control_mask(-1.0, -0.5), 0);
     }
