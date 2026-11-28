@@ -392,6 +392,7 @@ impl App {
                 pad::B => self.finish_gamepad_mapping_editor(),
                 _ => {}
             },
+            Screen::Game if self.gamepad_mapping_editor => {}
             Screen::Game if self.controls_editor && pressed && pad_bit == pad::B => {
                 self.finish_control_editor();
             }

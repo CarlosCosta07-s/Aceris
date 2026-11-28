@@ -152,6 +152,10 @@ impl GamepadManager {
         &self.axis_settings
     }
 
+    pub(crate) fn set_axis_settings_for_editor(&mut self, settings: GamepadAxisSettings) {
+        self.axis_settings = settings;
+    }
+
     pub(crate) fn load_global_axis_settings_for_editor(&self) -> GamepadAxisSettings {
         GamepadAxisSettings::load_global(&self.settings_directory)
     }

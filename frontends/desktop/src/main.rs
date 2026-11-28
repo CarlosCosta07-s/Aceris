@@ -901,11 +901,7 @@ fn emulate(
                     } else {
                         gamepad.load_global_axis_settings_for_editor()
                     };
-                    if let Err(error) =
-                        gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
-                    {
-                        eprintln!("could not load gamepad axis profile: {error}");
-                    }
+                    gamepad.set_axis_settings_for_editor(settings);
                 }
                 window::WindowEvent::Key(window::Key::Backspace)
                     if gamepad_mapping_editor_open
@@ -918,6 +914,19 @@ fn emulate(
                     ) {
                         eprintln!("could not reset gamepad axis settings: {error}");
                     }
+                }
+                window::WindowEvent::Key(window::Key::PageDown)
+                    if gamepad_mapping_editor_open
+                        && !gamepad_axis_editor_open
+                        && !gamepad.mapping_capture_active() =>
+                {
+                    gamepad_axis_editor_open = true;
+                    let settings = if gamepad_mapping_game_scope {
+                        gamepad.load_game_axis_settings_for_editor()
+                    } else {
+                        gamepad.load_global_axis_settings_for_editor()
+                    };
+                    gamepad.set_axis_settings_for_editor(settings);
                 }
                 window::WindowEvent::Key(window::Key::Up)
                     if gamepad_mapping_editor_open
@@ -982,11 +991,7 @@ fn emulate(
                     } else {
                         gamepad.load_global_axis_settings_for_editor()
                     };
-                    if let Err(error) =
-                        gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
-                    {
-                        eprintln!("could not load gamepad axis profile: {error}");
-                    }
+                    gamepad.set_axis_settings_for_editor(settings);
                 }
                 window::WindowEvent::Key(window::Key::Backspace)
                     if gamepad_mapping_editor_open
@@ -1162,11 +1167,7 @@ fn emulate(
                             } else {
                                 gamepad.load_global_axis_settings_for_editor()
                             };
-                            if let Err(error) =
-                                gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
-                            {
-                                eprintln!("could not load gamepad axis profile: {error}");
-                            }
+                            gamepad.set_axis_settings_for_editor(settings);
                         }
                         Some(quick_menu::GamepadAxisEditorHit::InvertX) => {
                             let mut settings = *gamepad.axis_settings();
@@ -1246,11 +1247,7 @@ fn emulate(
                             } else {
                                 gamepad.load_global_axis_settings_for_editor()
                             };
-                            if let Err(error) =
-                                gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
-                            {
-                                eprintln!("could not load gamepad axis profile: {error}");
-                            }
+                            gamepad.set_axis_settings_for_editor(settings);
                         }
                         Some(quick_menu::GamepadMappingEditorHit::Control(index)) => {
                             gamepad_mapping_selected = index;
@@ -1273,11 +1270,7 @@ fn emulate(
                             } else {
                                 gamepad.load_global_axis_settings_for_editor()
                             };
-                            if let Err(error) =
-                                gamepad.save_axis_settings_for_editor(settings, gamepad_mapping_game_scope)
-                            {
-                                eprintln!("could not load gamepad axis profile: {error}");
-                            }
+                            gamepad.set_axis_settings_for_editor(settings);
                         }
                         Some(quick_menu::GamepadMappingEditorHit::Capture) => {
                             if gamepad.mapping_capture_active() {

@@ -1017,7 +1017,10 @@ pub fn hit_test_gamepad_axis_editor(
         match index {
             0 => Some(GamepadAxisEditorHit::InvertX),
             1 => Some(GamepadAxisEditorHit::InvertY),
-            2 if x < row.x + row.width / 2 => Some(GamepadAxisEditorHit::SensitivityDown),
+            2 if x < row.x + row.width * 45 / 100 => None,
+            2 if x < row.x + row.width * 70 / 100 => {
+                Some(GamepadAxisEditorHit::SensitivityDown)
+            }
             2 => Some(GamepadAxisEditorHit::SensitivityUp),
             _ => None,
         }
@@ -1114,12 +1117,11 @@ pub fn render_gamepad_axis_editor(
                 format,
             );
         } else {
-            let half = row.width / 2;
             draw_text_for_format(
                 frame,
                 width as usize,
                 height as usize,
-                row.x + row.width / 4 - font::text_width(1, text_scale) / 2,
+                row.x + row.width * 58 / 100 - font::text_width(1, text_scale) / 2,
                 row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
                 text_scale,
                 "-",
@@ -1127,7 +1129,7 @@ pub fn render_gamepad_axis_editor(
                 format,
             );
             let center_value = format!("{}%", settings.sensitivity_percent());
-            let center_x = row.x + half + row.width / 4
+            let center_x = row.x + row.width * 77 / 100
                 - font::text_width(center_value.chars().count(), text_scale) / 2;
             draw_text_for_format(
                 frame,
@@ -1144,7 +1146,7 @@ pub fn render_gamepad_axis_editor(
                 frame,
                 width as usize,
                 height as usize,
-                row.x + row.width - row.width / 4 - font::text_width(1, text_scale) / 2,
+                row.x + row.width * 94 / 100 - font::text_width(1, text_scale) / 2,
                 row.y + (row.height.saturating_sub(7 * text_scale)) / 2,
                 text_scale,
                 "+",
@@ -1649,6 +1651,15 @@ mod tests {
                 hit_test_gamepad_mapping_editor(
                     width,
                     height,
+                    (geometry.axes.x + 1) as i32,
+                    (geometry.axes.y + 1) as i32,
+                ),
+                Some(GamepadMappingEditorHit::Axes)
+            );
+            assert_eq!(
+                hit_test_gamepad_mapping_editor(
+                    width,
+                    height,
                     (geometry.close.x + 1) as i32,
                     (geometry.close.y + 1) as i32,
                 ),
@@ -1673,7 +1684,12 @@ mod tests {
                 ));
             }
             for (index, row) in geometry.rows.iter().enumerate() {
-                let x = (row.x + row.width / 4) as i32;
+                let x = (row.x
+                    + if index == 2 {
+                        row.width * 58 / 100
+                    } else {
+                        row.width / 4
+                    }) as i32;
                 let y = (row.y + row.height / 2) as i32;
                 let expected = match index {
                     0 => GamepadAxisEditorHit::InvertX,
@@ -1687,7 +1703,7 @@ mod tests {
                 hit_test_gamepad_axis_editor(
                     width,
                     height,
-                    (sensitivity.x + sensitivity.width * 3 / 4) as i32,
+                    (sensitivity.x + sensitivity.width * 90 / 100) as i32,
                     (sensitivity.y + sensitivity.height / 2) as i32,
                 ),
                 Some(GamepadAxisEditorHit::SensitivityUp)
