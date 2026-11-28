@@ -1,7 +1,8 @@
 //! Original Aceris proportional UI typeface, rasterized from compact Rust glyph data.
 //!
-//! Covers ASCII letters (with dedicated lowercase), digits, Portuguese accents
-//! and launcher separators. Regular and semibold weights share one glyph source;
+//! Covers ASCII letters (with dedicated lowercase), digits, Portuguese and
+//! common Western European accents, ligatures, and launcher separators.
+//! Regular and semibold weights share one glyph source;
 //! exposed corners are softened during rendering. No OS font or external asset
 //! is required, so desktop and Android produce the same text.
 
@@ -104,6 +105,36 @@ fn lowercase_glyph(ch: char) -> Option<[u8; 7]> {
         'ú' => [
             0b00010, 0b00100, 0b10001, 0b10001, 0b10001, 0b10011, 0b01101,
         ],
+        'ä' => [0b01010, 0, 0b01110, 0b00001, 0b01111, 0b10001, 0b01111],
+        'å' => [
+            0b00100, 0b01010, 0b01110, 0b10001, 0b11111, 0b10001, 0b10001,
+        ],
+        'æ' => [0, 0, 0b01101, 0b10110, 0b11111, 0b10100, 0b01111],
+        'è' => [
+            0b01000, 0b00100, 0b01110, 0b10001, 0b11111, 0b10000, 0b01111,
+        ],
+        'ë' => [0b01010, 0, 0b01110, 0b10001, 0b11111, 0b10000, 0b01111],
+        'ì' => [0b01000, 0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b01110],
+        'ï' => [0b01010, 0, 0b01100, 0b00100, 0b00100, 0b00100, 0b01110],
+        'ñ' => [
+            0b01010, 0b10101, 0b10110, 0b11001, 0b10001, 0b10001, 0b10001,
+        ],
+        'ò' => [
+            0b01000, 0b00100, 0b01110, 0b10001, 0b10001, 0b10001, 0b01110,
+        ],
+        'ö' => [0b01010, 0, 0b01110, 0b10001, 0b10001, 0b10001, 0b01110],
+        'ø' => [
+            0, 0, 0b01110, 0b10011, 0b10101, 0b11001, 0b01110,
+        ],
+        'ù' => [
+            0b01000, 0b00100, 0b10001, 0b10001, 0b10001, 0b10011, 0b01101,
+        ],
+        'ü' => [0b01010, 0, 0b10001, 0b10001, 0b10001, 0b10011, 0b01101],
+        'ÿ' => [0b01010, 0, 0b10001, 0b10001, 0b01111, 0b00001, 0b01110],
+        'œ' => [
+            0, 0, 0b01101, 0b10010, 0b10010, 0b10010, 0b01101,
+        ],
+        'ß' => [0, 0, 0b01110, 0b10000, 0b10110, 0b10001, 0b11110],
         'ç' => [0, 0b01110, 0b10000, 0b10000, 0b10001, 0b01110, 0b00100],
         _ => return None,
     })
@@ -122,6 +153,22 @@ fn glyph(ch: char) -> [u8; 7] {
         'Ô' => 'ô',
         'Õ' => 'õ',
         'Ú' => 'ú',
+        'Ä' => 'ä',
+        'Å' => 'å',
+        'Æ' => 'æ',
+        'È' => 'è',
+        'Ë' => 'ë',
+        'Ì' => 'ì',
+        'Ï' => 'ï',
+        'Ñ' => 'ñ',
+        'Ò' => 'ò',
+        'Ö' => 'ö',
+        'Ø' => 'ø',
+        'Ù' => 'ù',
+        'Ü' => 'ü',
+        'Ÿ' => 'ÿ',
+        'Œ' => 'œ',
+        'ẞ' => 'ß',
         'Ç' => 'ç',
         _ => ch,
     };
@@ -275,6 +322,8 @@ fn glyph(ch: char) -> [u8; 7] {
             0b01010, 0b01010, 0b11111, 0b01010, 0b11111, 0b01010, 0b01010,
         ],
         '*' => [0, 0b00100, 0b10101, 0b01110, 0b10101, 0b00100, 0],
+        '¿' => [0, 0b01110, 0b00001, 0b00110, 0b00100, 0, 0b00100],
+        '¡' => [0, 0b00100, 0, 0b00100, 0b00100, 0b00100, 0b00100],
         '[' => [
             0b01110, 0b01000, 0b01000, 0b01000, 0b01000, 0b01000, 0b01110,
         ],
@@ -571,8 +620,33 @@ mod tests {
     }
 
     #[test]
+    fn western_latin_accents_and_ligatures_have_dedicated_glyphs() {
+        for (lower, upper) in [
+            ('ä', 'Ä'),
+            ('å', 'Å'),
+            ('æ', 'Æ'),
+            ('è', 'È'),
+            ('ë', 'Ë'),
+            ('ì', 'Ì'),
+            ('ï', 'Ï'),
+            ('ñ', 'Ñ'),
+            ('ò', 'Ò'),
+            ('ö', 'Ö'),
+            ('ø', 'Ø'),
+            ('ù', 'Ù'),
+            ('ü', 'Ü'),
+            ('ÿ', 'Ÿ'),
+            ('œ', 'Œ'),
+            ('ß', 'ẞ'),
+        ] {
+            assert_ne!(glyph(lower), UNKNOWN, "missing lowercase glyph {lower:?}");
+            assert_eq!(glyph(upper), glyph(lower), "uppercase mismatch for {upper:?}");
+        }
+    }
+
+    #[test]
     fn interface_separators_and_symbols_have_glyphs() {
-        for ch in ['|', '&', '–', '—', '·', '→', '%', '#', '[', ']'] {
+        for ch in ['|', '&', '–', '—', '·', '→', '¿', '¡', '%', '#', '[', ']'] {
             assert_ne!(glyph(ch), UNKNOWN, "missing glyph for {ch:?}");
         }
     }
