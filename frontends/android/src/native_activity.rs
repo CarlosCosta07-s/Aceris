@@ -883,25 +883,22 @@ fn create_android_gpu_presenter(
     }
 }
 
-#[cfg(all(
-    feature = "startup-probe-no-app",
-    feature = "startup-probe-app-frame"
-))]
+#[cfg(all(feature = "startup-probe-no-app", feature = "startup-probe-app-frame"))]
 compile_error!("select only one Android startup probe feature");
 
 /// Diagnostic worker used by side-by-side APKs. The no-app variant verifies
 /// thread/looper startup only; the app-frame variant additionally constructs
 /// App and renders one CPU frame into memory without touching ANativeWindow.
-#[cfg(any(
-    feature = "startup-probe-no-app",
-    feature = "startup-probe-app-frame"
-))]
+#[cfg(any(feature = "startup-probe-no-app", feature = "startup-probe-app-frame"))]
 fn run_startup_probe_thread(host: &Host, games_dir: PathBuf) {
     android_log(ANDROID_LOG_INFO, "STARTUP_PROBE: worker thread entered");
     // SAFETY: this worker prepares and owns its Android looper.
     let looper = unsafe { ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS) };
     if looper.is_null() {
-        android_log(ANDROID_LOG_ERROR, "STARTUP_PROBE_FAIL: ALooper_prepare returned null");
+        android_log(
+            ANDROID_LOG_ERROR,
+            "STARTUP_PROBE_FAIL: ALooper_prepare returned null",
+        );
         return;
     }
     lock(&host.shared).looper = Raw::new(looper);
