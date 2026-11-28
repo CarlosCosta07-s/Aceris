@@ -5530,7 +5530,10 @@ mod tests {
 
     #[test]
     fn gamepad_deadzone_is_versioned_persisted_and_cycles_from_settings() {
-        let root = test_directory("gamepad-deadzone");
+        let root = std::env::temp_dir().join(format!(
+            "aceris-gamepad-deadzone-{}",
+            std::process::id()
+        ));
         let settings = root.join(".aceris");
         let mut library = Library::new(Vec::new(), root.display().to_string());
         assert_eq!(library.gamepad_deadzone_percent(), 16);
