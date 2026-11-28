@@ -137,7 +137,8 @@ const MOTION_ACTION_UP: i32 = 1;
 const MOTION_ACTION_MOVE: i32 = 2;
 const MOTION_ACTION_CANCEL: i32 = 3;
 const MOTION_ACTION_POINTER_UP: i32 = 6;
-const INPUT_SOURCE_CLASS_JOYSTICK: u32 = 0x0100_0000;
+const INPUT_SOURCE_CLASS_MASK: u32 = 0x0000_00FF;
+const INPUT_SOURCE_CLASS_JOYSTICK: u32 = 0x0000_0010;
 const MOTION_AXIS_X: i32 = 0;
 const MOTION_AXIS_Y: i32 = 1;
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
@@ -989,6 +990,10 @@ unsafe fn handle_key(event: *mut c_void, app: &mut App) -> bool {
     }
 }
 
+fn is_joystick_source(source: u32) -> bool {
+    source & INPUT_SOURCE_CLASS_MASK == INPUT_SOURCE_CLASS_JOYSTICK
+}
+
 /// # Safety
 /// `event` must be a live motion event.
 unsafe fn handle_motion(event: *mut c_void, app: &mut App, pointers: &mut Vec<Pointer>) {
@@ -1004,7 +1009,7 @@ unsafe fn handle_motion(event: *mut c_void, app: &mut App, pointers: &mut Vec<Po
     // Physical joysticks arrive as motion events, separate from touchscreen
     // pointers. Use the primary stick only; digital gamepad buttons continue
     // through the key-event path above.
-    if source & INPUT_SOURCE_CLASS_JOYSTICK == INPUT_SOURCE_CLASS_JOYSTICK {
+    if is_joystick_source(source) {
         pointers.clear();
         match action & MOTION_ACTION_MASK {
             MOTION_ACTION_MOVE => {
@@ -1271,5 +1276,19 @@ unsafe fn copy_frame(frame: &[u8], width: u32, height: u32, buffer: &NativeWindo
             let destination = buffer.bits.cast::<u8>().add(row * stride_bytes);
             ptr::copy_nonoverlapping(source.as_ptr(), destination, source.len());
         }
+    }
+}
+
+
+#[cfg(test)]
+mod gamepad_source_tests {
+    use super::*;
+
+    #[test]
+    fn joystick_source_uses_android_source_class_mask() {
+        assert!(is_joystick_source(0x0100_0010));
+        assert!(is_joystick_source(0x0200_0010));
+        assert!(!is_joystick_source(0x0000_0401));
+        assert!(!is_joystick_source(0x0000_1002));
     }
 }
