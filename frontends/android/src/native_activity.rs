@@ -141,6 +141,8 @@ const INPUT_SOURCE_CLASS_MASK: u32 = 0x0000_00FF;
 const INPUT_SOURCE_CLASS_JOYSTICK: u32 = 0x0000_0010;
 const MOTION_AXIS_X: i32 = 0;
 const MOTION_AXIS_Y: i32 = 1;
+const MOTION_AXIS_LTRIGGER: i32 = 17;
+const MOTION_AXIS_RTRIGGER: i32 = 18;
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
 /// A raw pointer owned by the Android framework, stored as an address so it
@@ -1014,16 +1016,20 @@ unsafe fn handle_motion(event: *mut c_void, app: &mut App, pointers: &mut Vec<Po
         match action & MOTION_ACTION_MASK {
             MOTION_ACTION_MOVE => {
                 // SAFETY: joystick motion events expose at least one axis sample.
-                let (x, y) = unsafe {
+                let (x, y, left_trigger, right_trigger) = unsafe {
                     (
                         AMotionEvent_getAxisValue(event, MOTION_AXIS_X, 0),
                         AMotionEvent_getAxisValue(event, MOTION_AXIS_Y, 0),
+                        AMotionEvent_getAxisValue(event, MOTION_AXIS_LTRIGGER, 0),
+                        AMotionEvent_getAxisValue(event, MOTION_AXIS_RTRIGGER, 0),
                     )
                 };
                 app.set_gamepad_axes(x, y);
+                app.set_gamepad_triggers(left_trigger, right_trigger);
             }
             MOTION_ACTION_CANCEL => {
                 app.set_gamepad_axes(0.0, 0.0);
+                app.set_gamepad_triggers(0.0, 0.0);
             }
             _ => {}
         }
