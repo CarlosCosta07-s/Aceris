@@ -61,6 +61,43 @@ struct LibraryPreferences {
     view_mode: LibraryViewMode,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum SettingsSection {
+    #[default]
+    Library,
+    Performance,
+    Controls,
+}
+
+impl SettingsSection {
+    const ALL: [Self; 3] = [Self::Library, Self::Performance, Self::Controls];
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Library => "BIBLIOTECA",
+            Self::Performance => "DESEMPENHO",
+            Self::Controls => "CONTROLES",
+        }
+    }
+
+    const fn description(self) -> &'static str {
+        match self {
+            Self::Library => "Pastas monitoradas, importação e organização da coleção",
+            Self::Performance => "Ajustes de execução e resposta do controle físico",
+            Self::Controls => "Visibilidade e aparência dos controles de toque",
+        }
+    }
+
+    fn move_by(self, delta: i32) -> Self {
+        let current = Self::ALL
+            .iter()
+            .position(|section| *section == self)
+            .unwrap_or(0);
+        let next = (current as i32 + delta.signum()).clamp(0, Self::ALL.len() as i32 - 1);
+        Self::ALL[next as usize]
+    }
+}
+
 /// File-name extension filter for the game collection.
 ///
 /// This describes the container extension only; it does not imply that every
@@ -141,6 +178,7 @@ pub struct Library {
     scan_settings_directory: PathBuf,
     status: Option<String>,
     page: LibraryPage,
+    settings_section: SettingsSection,
     favorites: std::collections::HashSet<String>,
     recent: Vec<String>,
     sort_descending: bool,
@@ -891,6 +929,7 @@ impl Library {
             scan_settings_directory: settings_directory,
             status: None,
             page: LibraryPage::Home,
+            settings_section: SettingsSection::Library,
             favorites,
             recent,
             sort_descending: preferences.sort_descending,
@@ -1824,6 +1863,16 @@ impl Library {
         write_library_ids(&directory, file_name, values);
     }
 
+    fn select_settings_section(&mut self, section: SettingsSection) {
+        if self.scan_path_input_focused {
+            self.cancel_text_entry();
+        }
+        if self.settings_section != section {
+            self.settings_section = section;
+            self.status = None;
+        }
+    }
+
     /// Changes the library section and resets its independent selection.
     pub fn select_page(&mut self, page: LibraryPage) {
         if self.page != page {
@@ -2049,6 +2098,10 @@ impl Library {
         let Some((portrait, _, _, logical_height)) = responsive_metrics(width, height) else {
             return;
         };
+        if self.page == LibraryPage::Settings {
+            self.select_settings_section(self.settings_section.move_by(delta));
+            return;
+        }
         if self.page == LibraryPage::Home {
             self.move_home_selection(delta, if portrait { 3 } else { 4 });
             return;
@@ -2154,62 +2207,66 @@ impl Library {
                 }
                 return ClickResult::Ignored;
             }
-            if self.page == LibraryPage::Settings {
-                let settings_offset = if self.touch_keyboard_enabled {
-                    48.0
+            if self.page == LibraryPage::Settings && (232.0..276.0).contains(&y) {
+                let section = if x < 140.0 {
+                    SettingsSection::Library
+                } else if x < 260.0 {
+                    SettingsSection::Performance
                 } else {
-                    0.0
+                    SettingsSection::Controls
                 };
-                for index in 0..self.scan_config.directories.len().min(3) {
-                    let row_top = 300.0 + index as f32 * 32.0;
-                    if (row_top..row_top + 28.0).contains(&y) && (334.0..374.0).contains(&x) {
-                        self.remove_scan_directory_from_settings(index);
-                        return ClickResult::Ignored;
+                self.select_settings_section(section);
+                return ClickResult::Ignored;
+            }
+            if self.page == LibraryPage::Settings {
+                match self.settings_section {
+                    SettingsSection::Library => {
+                        for index in 0..self.scan_config.directories.len().min(3) {
+                            let row_top = 332.0 + index as f32 * 32.0;
+                            if (row_top..row_top + 28.0).contains(&y)
+                                && (334.0..374.0).contains(&x)
+                            {
+                                self.remove_scan_directory_from_settings(index);
+                                return ClickResult::Ignored;
+                            }
+                        }
+                        if (460.0..504.0).contains(&y) && (38.0..362.0).contains(&x) {
+                            self.toggle_recursive_from_settings();
+                        } else if (510.0..554.0).contains(&y) && (38.0..362.0).contains(&x) {
+                            self.request_folder_picker();
+                        } else if (574.0..616.0).contains(&y) && (38.0..198.0).contains(&x) {
+                            self.toggle_view_mode();
+                        } else if (574.0..616.0).contains(&y) && (202.0..362.0).contains(&x) {
+                            self.toggle_sort_order();
+                        }
                     }
-                }
-                if (430.0..474.0).contains(&y) && (38.0..362.0).contains(&x) {
-                    self.toggle_recursive_from_settings();
-                } else if (478.0..522.0).contains(&y) && (38.0..362.0).contains(&x) {
-                    self.request_folder_picker();
-                } else if (546.0..590.0).contains(&y) && (38.0..362.0).contains(&x) {
-                    if self.touch_keyboard_enabled {
-                        self.toggle_virtual_controls_from_settings();
-                    } else {
-                        self.reload();
+                    SettingsSection::Performance => {
+                        if (342.0..406.0).contains(&y) {
+                            if (38.0..198.0).contains(&x) {
+                                self.toggle_performance_mode_from_settings();
+                            } else if (202.0..362.0).contains(&x) {
+                                self.cycle_gamepad_deadzone_from_settings();
+                            }
+                        }
                     }
-                } else if self.touch_keyboard_enabled
-                    && (594.0..638.0).contains(&y)
-                    && (38.0..142.0).contains(&x)
-                {
-                    self.cycle_virtual_controls_opacity_from_settings();
-                } else if self.touch_keyboard_enabled
-                    && (594.0..638.0).contains(&y)
-                    && (148.0..252.0).contains(&x)
-                {
-                    self.cycle_virtual_controls_size_from_settings();
-                } else if self.touch_keyboard_enabled
-                    && (594.0..638.0).contains(&y)
-                    && (258.0..362.0).contains(&x)
-                {
-                    self.cycle_virtual_controls_preset_from_settings();
-                } else if (594.0 + settings_offset..638.0 + settings_offset).contains(&y)
-                    && (38.0..198.0).contains(&x)
-                {
-                    self.toggle_performance_mode_from_settings();
-                } else if (594.0 + settings_offset..638.0 + settings_offset).contains(&y)
-                    && (202.0..362.0).contains(&x)
-                {
-                    self.cycle_gamepad_deadzone_from_settings();
-                } else if logical_height >= 740.0 + settings_offset
-                    && (648.0 + settings_offset..690.0 + settings_offset).contains(&y)
-                    && (38.0..362.0).contains(&x)
-                {
-                    self.toggle_view_mode();
-                } else if logical_height >= 740.0 + settings_offset
-                    && (692.0 + settings_offset..734.0 + settings_offset).contains(&y)
-                    && (38.0..362.0).contains(&x)
-                {
-                    self.toggle_sort_order();
+                    SettingsSection::Controls => {
+                        if (342.0..398.0).contains(&y)
+                            && (38.0..362.0).contains(&x)
+                            && self.touch_keyboard_enabled
+                        {
+                            self.toggle_virtual_controls_from_settings();
+                        } else if self.touch_keyboard_enabled
+                            && (410.0..464.0).contains(&y)
+                        {
+                            if (38.0..142.0).contains(&x) {
+                                self.cycle_virtual_controls_opacity_from_settings();
+                            } else if (148.0..252.0).contains(&x) {
+                                self.cycle_virtual_controls_size_from_settings();
+                            } else if (258.0..362.0).contains(&x) {
+                                self.cycle_virtual_controls_preset_from_settings();
+                            }
+                        }
+                    }
                 }
                 return ClickResult::Ignored;
             }
@@ -2275,8 +2332,31 @@ impl Library {
             return ClickResult::Ignored;
         }
 
+        if self.page == LibraryPage::Settings
+            && (132.0..178.0).contains(&y)
+            && (28.0..730.0).contains(&x)
+        {
+            let section = if x < 262.0 {
+                SettingsSection::Library
+            } else if x < 496.0 {
+                SettingsSection::Performance
+            } else {
+                SettingsSection::Controls
+            };
+            self.select_settings_section(section);
+            return ClickResult::Ignored;
+        }
+
         // The selected-game actions remain available regardless of the current tab.
-        if self.page != LibraryPage::Home && (760.0..980.0).contains(&x) {
+        if self.page == LibraryPage::Settings && (760.0..980.0).contains(&x) {
+            if (384.0..426.0).contains(&y) {
+                self.reload();
+            }
+            return ClickResult::Ignored;
+        }
+        if self.page != LibraryPage::Home && self.page != LibraryPage::Settings
+            && (760.0..980.0).contains(&x)
+        {
             if (238.0..282.0).contains(&y) {
                 if self.selected_entry().is_some() {
                     return ClickResult::Activated;
@@ -2362,39 +2442,57 @@ impl Library {
                 ClickResult::Ignored
             }
             LibraryPage::Settings => {
-                for index in 0..self.scan_config.directories.len().min(3) {
-                    let row_top = 178.0 + index as f32 * 28.0;
-                    if (row_top..row_top + 25.0).contains(&y) && (670.0..724.0).contains(&x) {
-                        self.remove_scan_directory_from_settings(index);
-                        return ClickResult::Ignored;
+                match self.settings_section {
+                    SettingsSection::Library => {
+                        for index in 0..self.scan_config.directories.len().min(3) {
+                            let row_top = 226.0 + index as f32 * 28.0;
+                            if (row_top..row_top + 25.0).contains(&y)
+                                && (670.0..724.0).contains(&x)
+                            {
+                                self.remove_scan_directory_from_settings(index);
+                                return ClickResult::Ignored;
+                            }
+                        }
+                        if (344.0..388.0).contains(&y) {
+                            if (44.0..366.0).contains(&x) {
+                                self.request_folder_picker();
+                            } else if (382.0..704.0).contains(&x) {
+                                self.toggle_recursive_from_settings();
+                            }
+                        } else if (420.0..464.0).contains(&y) {
+                            if (44.0..366.0).contains(&x) {
+                                self.toggle_view_mode();
+                            } else if (382.0..704.0).contains(&x) {
+                                self.toggle_sort_order();
+                            }
+                        }
                     }
-                }
-
-                if (280.0..322.0).contains(&y) {
-                    if (28.0..245.0).contains(&x) {
-                        self.request_folder_picker();
-                    } else if (255.0..475.0).contains(&x) {
-                        self.toggle_recursive_from_settings();
-                    } else if (485.0..595.0).contains(&x) {
-                        self.toggle_performance_mode_from_settings();
-                    } else if (605.0..730.0).contains(&x) {
-                        self.cycle_gamepad_deadzone_from_settings();
+                    SettingsSection::Performance => {
+                        if (242.0..350.0).contains(&y) {
+                            if (48.0..354.0).contains(&x) {
+                                self.toggle_performance_mode_from_settings();
+                            } else if (390.0..696.0).contains(&x) {
+                                self.cycle_gamepad_deadzone_from_settings();
+                            }
+                        }
                     }
-                } else if (396.0..428.0).contains(&y) {
-                    if (28.0..245.0).contains(&x) {
-                        self.toggle_view_mode();
-                    } else if (255.0..475.0).contains(&x) {
-                        self.toggle_sort_order();
-                    } else if self.touch_keyboard_enabled && (485.0..730.0).contains(&x) {
-                        self.toggle_virtual_controls_from_settings();
-                    }
-                } else if self.touch_keyboard_enabled && (438.0..480.0).contains(&y) {
-                    if (485.0..564.0).contains(&x) {
-                        self.cycle_virtual_controls_opacity_from_settings();
-                    } else if (568.0..647.0).contains(&x) {
-                        self.cycle_virtual_controls_size_from_settings();
-                    } else if (651.0..730.0).contains(&x) {
-                        self.cycle_virtual_controls_preset_from_settings();
+                    SettingsSection::Controls => {
+                        if self.touch_keyboard_enabled
+                            && (246.0..324.0).contains(&y)
+                            && (48.0..696.0).contains(&x)
+                        {
+                            self.toggle_virtual_controls_from_settings();
+                        } else if self.touch_keyboard_enabled
+                            && (338.0..430.0).contains(&y)
+                        {
+                            if (48.0..258.0).contains(&x) {
+                                self.cycle_virtual_controls_opacity_from_settings();
+                            } else if (270.0..480.0).contains(&x) {
+                                self.cycle_virtual_controls_size_from_settings();
+                            } else if (492.0..704.0).contains(&x) {
+                                self.cycle_virtual_controls_preset_from_settings();
+                            }
+                        }
                     }
                 }
                 ClickResult::Ignored
@@ -2948,347 +3046,285 @@ impl Library {
                 22.0,
                 212.0,
                 small_scale,
-                "Gerencie as pastas da sua biblioteca",
+                "Escolha uma categoria para organizar suas preferências",
                 0xB6C7D5,
             );
+
+            let settings_tabs = [
+                (20.0, 120.0, SettingsSection::Library),
+                (140.0, 120.0, SettingsSection::Performance),
+                (260.0, 120.0, SettingsSection::Controls),
+            ];
+            for (x, tab_width, section) in settings_tabs {
+                let selected = self.settings_section == section;
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    x,
+                    232.0,
+                    tab_width,
+                    42.0,
+                    scale,
+                    if selected { 0x17485D } else { 0x243543 },
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    x + tab_width * 0.5,
+                    246.0,
+                    small_scale,
+                    section.label(),
+                    if selected { brand::TEXT } else { 0xB6C7D5 },
+                );
+            }
+
             responsive_panel(
                 frame,
                 width,
                 height,
                 20.0,
-                250.0,
+                284.0,
                 360.0,
-                if self.touch_keyboard_enabled {
-                    540.0
-                } else {
-                    360.0
-                },
+                (logical_height - 300.0).max(360.0),
                 scale,
                 0x192B3A,
             );
-            responsive_text(
-                frame,
-                width,
-                height,
-                38.0,
-                278.0,
-                small_scale,
-                &format!(
-                    "Pastas monitoradas ({})",
-                    self.scan_config.directories.len()
-                ),
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
-                let row_y = 300.0 + index as f32 * 32.0;
-                responsive_panel(
-                    frame, width, height, 34.0, row_y, 340.0, 28.0, scale, 0x2B4255,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    42.0,
-                    row_y + 8.0,
-                    small_scale,
-                    &tail(&directory.to_string_lossy(), 34),
-                    brand::TEXT,
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    334.0,
-                    row_y + 2.0,
-                    36.0,
-                    24.0,
-                    scale,
-                    0x17485D,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    352.0,
-                    row_y + 7.0,
-                    small_scale,
-                    "X",
-                    brand::TEXT,
-                );
-            }
-            if self.scan_config.directories.len() > 3 {
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    42.0,
-                    400.0,
-                    small_scale,
-                    &format!(
-                        "+ {} outra(s) pasta(s)",
-                        self.scan_config.directories.len() - 3
-                    ),
-                    0xB6C7D5,
-                );
-            }
-            responsive_panel(
-                frame,
-                width,
-                height,
-                38.0,
-                430.0,
-                324.0,
-                44.0,
-                scale,
-                if self.scan_config.options.recursive {
-                    0x28543F
-                } else {
-                    0x23394B
-                },
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                200.0,
-                444.0,
-                small_scale,
-                if self.scan_config.options.recursive {
-                    "BUSCA EM SUBPASTAS: ATIVADA"
-                } else {
-                    "BUSCA EM SUBPASTAS: DESATIVADA"
-                },
-                brand::TEXT,
-            );
-            responsive_panel(
-                frame,
-                width,
-                height,
-                38.0,
-                478.0,
-                324.0,
-                44.0,
-                scale,
-                if self.scan_path_input_focused {
-                    brand::ACCENT_RED
-                } else {
-                    0x23394B
-                },
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                200.0,
-                492.0,
-                small_scale,
-                "IMPORTAR PASTA",
-                brand::TEXT,
-            );
-            if self.scan_path_input_focused {
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    38.0,
-                    532.0,
-                    small_scale,
-                    &truncate(&self.search_query, 42),
-                    brand::ACCENT_GREEN_LIGHT,
-                );
-            }
-            responsive_panel(
-                frame,
-                width,
-                height,
-                38.0,
-                546.0,
-                324.0,
-                40.0,
-                scale,
-                if self.touch_keyboard_enabled && self.virtual_controls_visible {
-                    0x28543F
-                } else {
-                    brand::ACCENT_RED
-                },
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                200.0,
-                559.0,
-                small_scale,
-                if self.touch_keyboard_enabled {
-                    if self.virtual_controls_visible {
-                        "CONTROLES DE TOQUE: ATIVOS"
-                    } else {
-                        "CONTROLES DE TOQUE: OCULTOS"
+
+            match self.settings_section {
+                SettingsSection::Library => {
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        38.0,
+                        310.0,
+                        small_scale,
+                        &format!("PASTAS MONITORADAS ({})", self.scan_config.directories.len()),
+                        brand::ACCENT_GREEN_LIGHT,
+                    );
+                    for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
+                        let row_y = 332.0 + index as f32 * 32.0;
+                        responsive_panel(
+                            frame, width, height, 34.0, row_y, 340.0, 28.0, scale, 0x2B4255,
+                        );
+                        responsive_text(
+                            frame,
+                            width,
+                            height,
+                            42.0,
+                            row_y + 8.0,
+                            small_scale,
+                            &tail(&directory.to_string_lossy(), 34),
+                            brand::TEXT,
+                        );
+                        responsive_panel(
+                            frame, width, height, 334.0, row_y + 2.0, 36.0, 24.0, scale, 0x17485D,
+                        );
+                        responsive_text_centered(
+                            frame, width, height, 352.0, row_y + 7.0, small_scale, "X", brand::TEXT,
+                        );
                     }
-                } else {
-                    "ATUALIZAR BIBLIOTECA"
-                },
-                brand::TEXT,
-            );
-            let settings_offset = if self.touch_keyboard_enabled {
-                48.0
-            } else {
-                0.0
-            };
-            if logical_height >= 640.0 + settings_offset {
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    38.0,
-                    594.0 + settings_offset,
-                    158.0,
-                    44.0,
-                    scale,
-                    if self.performance_mode {
-                        0x28543F
+                    if self.scan_config.directories.len() > 3 {
+                        responsive_text(
+                            frame,
+                            width,
+                            height,
+                            42.0,
+                            430.0,
+                            small_scale,
+                            &format!("+ {} outra(s) pasta(s)", self.scan_config.directories.len() - 3),
+                            0xB6C7D5,
+                        );
+                    }
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        38.0,
+                        460.0,
+                        324.0,
+                        44.0,
+                        scale,
+                        if self.scan_config.options.recursive { 0x28543F } else { 0x23394B },
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        200.0,
+                        474.0,
+                        small_scale,
+                        if self.scan_config.options.recursive {
+                            "BUSCA EM SUBPASTAS: ATIVADA"
+                        } else {
+                            "BUSCA EM SUBPASTAS: DESATIVADA"
+                        },
+                        brand::TEXT,
+                    );
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        38.0,
+                        510.0,
+                        324.0,
+                        44.0,
+                        scale,
+                        if self.scan_path_input_focused { brand::ACCENT_RED } else { 0x23394B },
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        200.0,
+                        524.0,
+                        small_scale,
+                        "IMPORTAR PASTA",
+                        brand::TEXT,
+                    );
+                    if self.scan_path_input_focused {
+                        responsive_text(
+                            frame,
+                            width,
+                            height,
+                            38.0,
+                            562.0,
+                            small_scale,
+                            &truncate(&self.search_query, 42),
+                            brand::ACCENT_GREEN_LIGHT,
+                        );
                     } else {
-                        0x23394B
-                    },
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    117.0,
-                    608.0 + settings_offset,
-                    small_scale,
-                    if self.performance_mode {
-                        "DESEMPENHO: SIM"
+                        responsive_text(
+                            frame,
+                            width,
+                            height,
+                            38.0,
+                            570.0,
+                            small_scale,
+                            "VISUALIZAÇÃO E ORDEM",
+                            brand::ACCENT_GREEN_LIGHT,
+                        );
+                        responsive_panel(
+                            frame, width, height, 38.0, 590.0, 156.0, 40.0, scale, 0x23394B,
+                        );
+                        responsive_text_centered(
+                            frame,
+                            width,
+                            height,
+                            116.0,
+                            603.0,
+                            small_scale,
+                            if self.view_mode == LibraryViewMode::Grid {
+                                "GRADE"
+                            } else {
+                                "LISTA"
+                            },
+                            brand::TEXT,
+                        );
+                        responsive_panel(
+                            frame, width, height, 204.0, 590.0, 158.0, 40.0, scale, 0x23394B,
+                        );
+                        responsive_text_centered(
+                            frame,
+                            width,
+                            height,
+                            283.0,
+                            603.0,
+                            small_scale,
+                            if self.sort_descending { "ORDEM: Z–A" } else { "ORDEM: A–Z" },
+                            brand::TEXT,
+                        );
+                    }
+                }
+                SettingsSection::Performance => {
+                    responsive_text(
+                        frame, width, height, 38.0, 310.0, small_scale,
+                        "MODO DE EXECUÇÃO", brand::ACCENT_GREEN_LIGHT,
+                    );
+                    responsive_panel(
+                        frame, width, height, 38.0, 342.0, 324.0, 64.0, scale,
+                        if self.performance_mode { 0x28543F } else { 0x23394B },
+                    );
+                    responsive_text(
+                        frame, width, height, 52.0, 354.0, small_scale,
+                        if self.performance_mode { "MODO DESEMPENHO: ATIVO" } else { "MODO DESEMPENHO: DESATIVADO" },
+                        brand::TEXT,
+                    );
+                    responsive_text(
+                        frame, width, height, 52.0, 380.0, small_scale,
+                        "Aplicado ao iniciar o próximo jogo",
+                        0xB6C7D5,
+                    );
+                    responsive_text(
+                        frame, width, height, 38.0, 426.0, small_scale,
+                        "CONTROLE FÍSICO", brand::ACCENT_GREEN_LIGHT,
+                    );
+                    responsive_panel(
+                        frame, width, height, 38.0, 450.0, 324.0, 64.0, scale, 0x23394B,
+                    );
+                    responsive_text(
+                        frame, width, height, 52.0, 462.0, small_scale,
+                        "ZONA MORTA DO ANALÓGICO", brand::TEXT,
+                    );
+                    responsive_text(
+                        frame, width, height, 52.0, 488.0, small_scale,
+                        &format!("{}%  ·  toque para alterar", self.gamepad_deadzone_percent),
+                        0xB6C7D5,
+                    );
+                }
+                SettingsSection::Controls => {
+                    responsive_text(
+                        frame, width, height, 38.0, 310.0, small_scale,
+                        "CONTROLES VIRTUAIS", brand::ACCENT_GREEN_LIGHT,
+                    );
+                    if self.touch_keyboard_enabled {
+                        responsive_panel(
+                            frame, width, height, 38.0, 342.0, 324.0, 56.0, scale,
+                            if self.virtual_controls_visible { 0x28543F } else { 0x23394B },
+                        );
+                        responsive_text_centered(
+                            frame, width, height, 200.0, 360.0, small_scale,
+                            if self.virtual_controls_visible {
+                                "CONTROLES DE TOQUE: ATIVOS"
+                            } else {
+                                "CONTROLES DE TOQUE: OCULTOS"
+                            },
+                            brand::TEXT,
+                        );
+                        let control_options = [
+                            (38.0, "OPACIDADE", format!("{}%", self.virtual_controls_opacity_percent())),
+                            (148.0, "TAMANHO", format!("{}%", self.virtual_controls_size_percent())),
+                            (258.0, "LAYOUT", self.virtual_controls_preset.label().to_string()),
+                        ];
+                        for (x, label, value) in control_options {
+                            responsive_panel(
+                                frame, width, height, x, 424.0, 104.0, 64.0, scale, 0x23394B,
+                            );
+                            responsive_text_centered(
+                                frame, width, height, x + 52.0, 438.0, small_scale, label, 0xB6C7D5,
+                            );
+                            responsive_text_centered(
+                                frame, width, height, x + 52.0, 462.0, small_scale, &value, brand::TEXT,
+                            );
+                        }
                     } else {
-                        "DESEMPENHO: NÃO"
-                    },
-                    brand::TEXT,
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    204.0,
-                    594.0 + settings_offset,
-                    158.0,
-                    44.0,
-                    scale,
-                    0x23394B,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    283.0,
-                    608.0 + settings_offset,
-                    small_scale,
-                    &format!("ZONA MORTA: {}%", self.gamepad_deadzone_percent),
-                    brand::TEXT,
-                );
-            }
-            if logical_height >= 740.0 + settings_offset {
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    38.0,
-                    642.0 + settings_offset,
-                    small_scale,
-                    "PREFERÊNCIAS DA BIBLIOTECA",
-                    brand::ACCENT_GREEN_LIGHT,
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    38.0,
-                    650.0 + settings_offset,
-                    324.0,
-                    38.0,
-                    scale,
-                    0x23394B,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    200.0,
-                    663.0 + settings_offset,
-                    small_scale,
-                    if self.view_mode == LibraryViewMode::Grid {
-                        "GRADE (PAISAGEM)"
-                    } else {
-                        "LISTA (PAISAGEM)"
-                    },
-                    brand::TEXT,
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    38.0,
-                    694.0 + settings_offset,
-                    324.0,
-                    38.0,
-                    scale,
-                    0x23394B,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    200.0,
-                    707.0 + settings_offset,
-                    small_scale,
-                    if self.sort_descending {
-                        "ORDEM: Z–A"
-                    } else {
-                        "ORDEM: A–Z"
-                    },
-                    brand::TEXT,
-                );
-            }
-            if self.touch_keyboard_enabled {
-                responsive_panel(
-                    frame, width, height, 38.0, 594.0, 104.0, 40.0, scale, 0x23394B,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    90.0,
-                    607.0,
-                    small_scale,
-                    &format!("OP: {}%", self.virtual_controls_opacity_percent()),
-                    brand::TEXT,
-                );
-                responsive_panel(
-                    frame, width, height, 148.0, 594.0, 104.0, 40.0, scale, 0x23394B,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    200.0,
-                    607.0,
-                    small_scale,
-                    &format!("TAM: {}%", self.virtual_controls_size_percent()),
-                    brand::TEXT,
-                );
-                responsive_panel(
-                    frame, width, height, 258.0, 594.0, 104.0, 40.0, scale, 0x23394B,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    310.0,
-                    607.0,
-                    small_scale,
-                    self.virtual_controls_preset.label(),
-                    brand::TEXT,
-                );
+                        responsive_panel(
+                            frame, width, height, 38.0, 342.0, 324.0, 100.0, scale, 0x23394B,
+                        );
+                        responsive_text(
+                            frame, width, height, 52.0, 364.0, small_scale,
+                            "Os controles de toque são disponibilizados",
+                            brand::TEXT,
+                        );
+                        responsive_text(
+                            frame, width, height, 52.0, 390.0, small_scale,
+                            "pelos frontends com suporte a tela sensível ao toque.",
+                            0xB6C7D5,
+                        );
+                    }
+                }
             }
         } else {
             let count = self.visible_entry_count();
@@ -4217,271 +4253,310 @@ impl Library {
                 30.0,
                 109.0,
                 text_scale,
-                "Pastas, desempenho e preferências da biblioteca",
+                "Todas as opções organizadas por categoria",
                 0xB6C7D5,
             );
+
+            let settings_tabs = [
+                (40.0, 217.0, SettingsSection::Library),
+                (271.0, 217.0, SettingsSection::Performance),
+                (502.0, 217.0, SettingsSection::Controls),
+            ];
+            for (x, tab_width, section) in settings_tabs {
+                let selected = self.settings_section == section;
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    x,
+                    138.0,
+                    tab_width,
+                    38.0,
+                    scale,
+                    if selected { 0x17485D } else { 0x243543 },
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    x + tab_width * 0.5,
+                    151.0,
+                    text_scale,
+                    section.label(),
+                    if selected { brand::TEXT } else { 0xB6C7D5 },
+                );
+            }
             responsive_panel(
                 frame,
                 width,
                 height,
                 28.0,
-                132.0,
+                184.0,
                 702.0,
-                (bottom - 132.0).max(270.0),
+                (bottom - 184.0).max(270.0),
                 scale,
                 0x192B3A,
             );
-            responsive_text(
-                frame,
-                width,
-                height,
-                48.0,
-                151.0,
-                text_scale,
-                &format!(
-                    "PASTAS MONITORADAS ({})",
-                    self.scan_config.directories.len()
-                ),
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
-                let row_y = 178.0 + index as f32 * 28.0;
-                responsive_panel(
-                    frame, width, height, 44.0, row_y, 620.0, 24.0, scale, 0x2B4255,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    54.0,
-                    row_y + 7.0,
-                    small_scale,
-                    &tail(&directory.to_string_lossy(), 76),
-                    brand::TEXT,
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    670.0,
-                    row_y + 1.0,
-                    48.0,
-                    22.0,
-                    scale,
-                    0x17485D,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    694.0,
-                    row_y + 6.0,
-                    small_scale,
-                    "REM",
-                    brand::TEXT,
-                );
-            }
-            if self.scan_config.directories.len() > 3 {
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    54.0,
-                    266.0,
-                    small_scale,
-                    &format!(
-                        "+ {} outra(s) pasta(s)",
-                        self.scan_config.directories.len() - 3
-                    ),
-                    0xB6C7D5,
-                );
-            }
-            let settings_actions = [
-                (
-                    28.0,
-                    280.0,
-                    217.0,
-                    "IMPORTAR PASTA",
-                    if self.scan_path_input_focused {
-                        brand::ACCENT_RED
-                    } else {
-                        0x23394B
-                    },
-                ),
-                (
-                    255.0,
-                    280.0,
-                    220.0,
-                    if self.scan_config.options.recursive {
-                        "SUBPASTAS: SIM"
-                    } else {
-                        "SUBPASTAS: NÃO"
-                    },
-                    if self.scan_config.options.recursive {
-                        0x28543F
-                    } else {
-                        0x23394B
-                    },
-                ),
-                (
-                    485.0,
-                    280.0,
-                    110.0,
-                    if self.performance_mode {
-                        "RÁPIDO: SIM"
-                    } else {
-                        "RÁPIDO: NÃO"
-                    },
-                    if self.performance_mode {
-                        0x28543F
-                    } else {
-                        0x23394B
-                    },
-                ),
-            ];
-            for (x, y, card_width, label, color) in settings_actions {
-                responsive_panel(frame, width, height, x, y, card_width, 42.0, scale, color);
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    x + card_width * 0.5,
-                    y + 14.0,
-                    small_scale,
-                    label,
-                    brand::TEXT,
-                );
-            }
-            responsive_panel(
-                frame, width, height, 605.0, 280.0, 125.0, 42.0, scale, 0x23394B,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                667.0,
-                289.0,
-                small_scale,
-                "ZONA MORTA",
-                brand::TEXT,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                667.0,
-                306.0,
-                small_scale,
-                &format!("{}%", self.gamepad_deadzone_percent),
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            if self.scan_path_input_focused {
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    48.0,
-                    340.0,
-                    small_scale,
-                    &truncate(&self.search_query, 100),
-                    brand::ACCENT_GREEN_LIGHT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    48.0,
-                    360.0,
-                    small_scale,
-                    "Digite o caminho completo da pasta e pressione Enter/OK.",
-                    0xB6C7D5,
-                );
-            }
-            responsive_text(
-                frame,
-                width,
-                height,
-                48.0,
-                382.0,
-                small_scale,
-                "PREFERÊNCIAS DA BIBLIOTECA",
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            let view_label = if self.view_mode == LibraryViewMode::Grid {
-                "VISTA: GRADE"
-            } else {
-                "VISTA: LISTA"
-            };
-            let sort_label = if self.sort_descending {
-                "ORDEM: Z–A"
-            } else {
-                "ORDEM: A–Z"
-            };
-            let settings_footer = [
-                (28.0, 396.0, 217.0, view_label),
-                (255.0, 396.0, 220.0, sort_label),
-            ];
-            for (x, y, card_width, label) in settings_footer {
-                responsive_panel(
-                    frame, width, height, x, y, card_width, 32.0, scale, 0x23394B,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    x + card_width * 0.5,
-                    y + 10.0,
-                    small_scale,
-                    label,
-                    brand::TEXT,
-                );
-            }
-            if self.touch_keyboard_enabled {
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    485.0,
-                    396.0,
-                    245.0,
-                    32.0,
-                    scale,
-                    if self.virtual_controls_visible {
-                        0x28543F
-                    } else {
-                        0x23394B
-                    },
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    607.0,
-                    406.0,
-                    small_scale,
-                    if self.virtual_controls_visible {
-                        "CONTROLES: ATIVOS"
-                    } else {
-                        "CONTROLES: OCULTOS"
-                    },
-                    brand::TEXT,
-                );
-                if logical_height >= 540.0 {
-                    let control_options =
-                        [(485.0, "OPACIDADE"), (568.0, "TAMANHO"), (651.0, "LAYOUT")];
-                    for (x, label) in control_options {
+
+            match self.settings_section {
+                SettingsSection::Library => {
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        48.0,
+                        204.0,
+                        text_scale,
+                        &format!("PASTAS MONITORADAS ({})", self.scan_config.directories.len()),
+                        brand::ACCENT_GREEN_LIGHT,
+                    );
+                    for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
+                        let row_y = 226.0 + index as f32 * 28.0;
                         responsive_panel(
-                            frame, width, height, x, 438.0, 79.0, 38.0, scale, 0x23394B,
+                            frame, width, height, 44.0, row_y, 620.0, 24.0, scale, 0x2B4255,
+                        );
+                        responsive_text(
+                            frame,
+                            width,
+                            height,
+                            54.0,
+                            row_y + 7.0,
+                            small_scale,
+                            &tail(&directory.to_string_lossy(), 76),
+                            brand::TEXT,
+                        );
+                        responsive_panel(
+                            frame, width, height, 670.0, row_y + 1.0, 48.0, 22.0, scale, 0x17485D,
+                        );
+                        responsive_text_centered(
+                            frame, width, height, 694.0, row_y + 6.0, small_scale, "REM", brand::TEXT,
+                        );
+                    }
+                    if self.scan_config.directories.len() > 3 {
+                        responsive_text(
+                            frame,
+                            width,
+                            height,
+                            54.0,
+                            312.0,
+                            small_scale,
+                            &format!("+ {} outra(s) pasta(s)", self.scan_config.directories.len() - 3),
+                            0xB6C7D5,
+                        );
+                    }
+                    responsive_panel(
+                        frame, width, height, 44.0, 344.0, 322.0, 44.0, scale, 0x23394B,
+                    );
+                    responsive_text_centered(
+                        frame, width, height, 205.0, 358.0, small_scale, "IMPORTAR PASTA", brand::TEXT,
+                    );
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        382.0,
+                        344.0,
+                        322.0,
+                        44.0,
+                        scale,
+                        if self.scan_config.options.recursive { 0x28543F } else { 0x23394B },
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        543.0,
+                        358.0,
+                        small_scale,
+                        if self.scan_config.options.recursive {
+                            "BUSCA EM SUBPASTAS: ATIVA"
+                        } else {
+                            "BUSCA EM SUBPASTAS: INATIVA"
+                        },
+                        brand::TEXT,
+                    );
+                    if self.scan_path_input_focused {
+                        responsive_text(
+                            frame, width, height, 48.0, 402.0, small_scale,
+                            &truncate(&self.search_query, 100), brand::ACCENT_GREEN_LIGHT,
+                        );
+                        responsive_text(
+                            frame, width, height, 48.0, 426.0, small_scale,
+                            "Digite o caminho completo e pressione Enter/OK.",
+                            0xB6C7D5,
+                        );
+                    } else {
+                        responsive_text(
+                            frame, width, height, 48.0, 402.0, small_scale,
+                            "PREFERÊNCIAS DA BIBLIOTECA", brand::ACCENT_GREEN_LIGHT,
+                        );
+                        responsive_panel(
+                            frame, width, height, 44.0, 420.0, 322.0, 42.0, scale, 0x23394B,
                         );
                         responsive_text_centered(
                             frame,
                             width,
                             height,
-                            x + 39.5,
-                            451.0,
+                            205.0,
+                            434.0,
                             small_scale,
-                            label,
+                            if self.view_mode == LibraryViewMode::Grid {
+                                "VISUALIZAÇÃO: GRADE"
+                            } else {
+                                "VISUALIZAÇÃO: LISTA"
+                            },
                             brand::TEXT,
+                        );
+                        responsive_panel(
+                            frame, width, height, 382.0, 420.0, 322.0, 42.0, scale, 0x23394B,
+                        );
+                        responsive_text_centered(
+                            frame,
+                            width,
+                            height,
+                            543.0,
+                            434.0,
+                            small_scale,
+                            if self.sort_descending { "ORDEM: Z–A" } else { "ORDEM: A–Z" },
+                            brand::TEXT,
+                        );
+                    }
+                }
+                SettingsSection::Performance => {
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        48.0,
+                        210.0,
+                        text_scale,
+                        "MODO DE EXECUÇÃO",
+                        brand::ACCENT_GREEN_LIGHT,
+                    );
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        48.0,
+                        244.0,
+                        306.0,
+                        118.0,
+                        scale,
+                        if self.performance_mode { 0x28543F } else { 0x23394B },
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        201.0,
+                        270.0,
+                        text_scale,
+                        if self.performance_mode { "DESEMPENHO ATIVO" } else { "DESEMPENHO DESATIVADO" },
+                        brand::TEXT,
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        201.0,
+                        306.0,
+                        small_scale,
+                        "Aplicado ao iniciar o próximo jogo",
+                        0xB6C7D5,
+                    );
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        390.0,
+                        210.0,
+                        text_scale,
+                        "CONTROLE FÍSICO",
+                        brand::ACCENT_GREEN_LIGHT,
+                    );
+                    responsive_panel(
+                        frame, width, height, 390.0, 244.0, 306.0, 118.0, scale, 0x23394B,
+                    );
+                    responsive_text_centered(
+                        frame, width, height, 543.0, 270.0, text_scale,
+                        "ZONA MORTA DO ANALÓGICO", brand::TEXT,
+                    );
+                    responsive_text_centered(
+                        frame, width, height, 543.0, 306.0, text_scale,
+                        &format!("{}%", self.gamepad_deadzone_percent),
+                        brand::ACCENT_GREEN_LIGHT,
+                    );
+                    responsive_text_centered(
+                        frame, width, height, 543.0, 336.0, small_scale,
+                        "Toque para alterar o nível", 0xB6C7D5,
+                    );
+                }
+                SettingsSection::Controls => {
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        48.0,
+                        210.0,
+                        text_scale,
+                        "CONTROLES VIRTUAIS",
+                        brand::ACCENT_GREEN_LIGHT,
+                    );
+                    if self.touch_keyboard_enabled {
+                        responsive_panel(
+                            frame,
+                            width,
+                            height,
+                            48.0,
+                            244.0,
+                            644.0,
+                            72.0,
+                            scale,
+                            if self.virtual_controls_visible { 0x28543F } else { 0x23394B },
+                        );
+                        responsive_text_centered(
+                            frame,
+                            width,
+                            height,
+                            370.0,
+                            272.0,
+                            text_scale,
+                            if self.virtual_controls_visible {
+                                "CONTROLES DE TOQUE: ATIVOS"
+                            } else {
+                                "CONTROLES DE TOQUE: OCULTOS"
+                            },
+                            brand::TEXT,
+                        );
+                        let control_options = [
+                            (48.0, "OPACIDADE", format!("{}%", self.virtual_controls_opacity_percent())),
+                            (270.0, "TAMANHO", format!("{}%", self.virtual_controls_size_percent())),
+                            (492.0, "LAYOUT", self.virtual_controls_preset.label().to_string()),
+                        ];
+                        for (x, label, value) in control_options {
+                            responsive_panel(
+                                frame, width, height, x, 338.0, 210.0, 92.0, scale, 0x23394B,
+                            );
+                            responsive_text_centered(
+                                frame, width, height, x + 105.0, 360.0, small_scale, label, 0xB6C7D5,
+                            );
+                            responsive_text_centered(
+                                frame, width, height, x + 105.0, 394.0, text_scale, &value, brand::TEXT,
+                            );
+                        }
+                    } else {
+                        responsive_panel(
+                            frame, width, height, 48.0, 244.0, 644.0, 112.0, scale, 0x23394B,
+                        );
+                        responsive_text_centered(
+                            frame, width, height, 370.0, 278.0, text_scale,
+                            "CONTROLES DE TOQUE NÃO ESTÃO ATIVOS NESTE FRONTEND",
+                            brand::TEXT,
+                        );
+                        responsive_text_centered(
+                            frame, width, height, 370.0, 312.0, small_scale,
+                            "As opções aparecem nos frontends com suporte a toque.",
+                            0xB6C7D5,
                         );
                     }
                 }
@@ -4808,8 +4883,71 @@ impl Library {
             }
         }
 
-        // Detail and management actions stay on library pages. Home uses the full width.
+        // Keep the right rail contextual: collection actions on game pages,
+        // a compact health/refresh summary on Settings.
         if self.page != LibraryPage::Home {
+            if self.page == LibraryPage::Settings {
+                responsive_text(
+                    frame, width, height, 780.0, 174.0, small_scale, "RESUMO", brand::ACCENT_GREEN_LIGHT,
+                );
+                responsive_text(
+                    frame, width, height, 780.0, 205.0, small_scale, "PASTAS ATIVAS", 0xB6C7D5,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    780.0,
+                    226.0,
+                    text_scale,
+                    &self.scan_config.directories.len().to_string(),
+                    brand::TEXT,
+                );
+                responsive_text(
+                    frame, width, height, 780.0, 266.0, small_scale, "JOGOS E HOMEbrew".to_uppercase().as_str(),
+                    0xB6C7D5,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    780.0,
+                    288.0,
+                    text_scale,
+                    &format!("{} / {}", game_count, homebrew_count),
+                    brand::TEXT,
+                );
+                responsive_text(
+                    frame, width, height, 780.0, 330.0, small_scale, "CATEGORIA ATUAL", 0xB6C7D5,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    780.0,
+                    351.0,
+                    small_scale,
+                    self.settings_section.label(),
+                    brand::TEXT,
+                );
+                responsive_panel(
+                    frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, 0x17485D,
+                );
+                responsive_text_centered(
+                    frame, width, height, 870.0, 398.0, small_scale, "ATUALIZAR BIBLIOTECA", brand::TEXT,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    780.0,
+                    (bottom - 34.0).max(0.0),
+                    small_scale,
+                    "PASTAS E JOGOS LOCAIS",
+                    0xB6C7D5,
+                );
+            } else {
+                
             responsive_text(
                 frame,
                 width,
@@ -4962,6 +5100,8 @@ impl Library {
                 ),
                 0xB6C7D5,
             );
+        
+            }
         }
         if let Some(status) = &self.status {
             responsive_text(
@@ -5843,13 +5983,26 @@ fn responsive_panel(
         color,
     );
     responsive_fill(
-        frame, width as usize, height as usize,
-        x + 7.0, y + 2.0, rect_width - 14.0, 1.0, scale, 0x6C91A5,
+        frame,
+        width as usize,
+        height as usize,
+        x + 7.0,
+        y + 2.0,
+        rect_width - 14.0,
+        1.0,
+        scale,
+        0x6C91A5,
     );
     responsive_fill(
-        frame, width as usize, height as usize,
-        x + 7.0, y + rect_height - 2.0, rect_width - 14.0, 1.0,
-        scale, 0x172635,
+        frame,
+        width as usize,
+        height as usize,
+        x + 7.0,
+        y + rect_height - 2.0,
+        rect_width - 14.0,
+        1.0,
+        scale,
+        0x172635,
     );
 }
 
@@ -6981,11 +7134,12 @@ mod tests {
         assert!(!library.performance_mode());
         library.select_page(LibraryPage::Settings);
 
-        // Landscape 1000x600: performance and deadzone have separate hit targets.
-        library.click_responsive(540, 301, 1000, 600);
+        // Landscape 1000x600: open the Performance category before changing its options.
+        library.click_responsive(380, 150, 1000, 600);
+        library.click_responsive(200, 290, 1000, 600);
         assert!(library.performance_mode());
         assert!(Library::from_scan_settings(&settings, &root).performance_mode());
-        library.click_responsive(667, 301, 1000, 600);
+        library.click_responsive(550, 290, 1000, 600);
         assert_eq!(library.gamepad_deadzone_percent(), 20);
         assert_eq!(
             Library::from_scan_settings(&settings, &root).gamepad_deadzone_percent(),
@@ -6993,11 +7147,12 @@ mod tests {
         );
         assert_eq!(library.render_responsive(1000, 600).len(), 1000 * 600 * 4);
 
-        // Portrait 400x800: both controls move below "ATUALIZAR BIBLIOTECA".
-        library.click_responsive(117, 616, 400, 800);
+        // Portrait 400x800: use the Performance category and its two independent cards.
+        library.click_responsive(200, 253, 400, 800);
+        library.click_responsive(117, 370, 400, 800);
         assert!(!library.performance_mode());
         assert!(!Library::from_scan_settings(&settings, &root).performance_mode());
-        library.click_responsive(283, 616, 400, 800);
+        library.click_responsive(283, 370, 400, 800);
         assert_eq!(library.gamepad_deadzone_percent(), 24);
         assert_eq!(
             Library::from_scan_settings(&settings, &root).gamepad_deadzone_percent(),
@@ -7022,17 +7177,17 @@ mod tests {
         assert!(!library.is_list_view());
         assert!(!library.sort_descending);
 
-        // Desktop / landscape settings expose both choices in the library settings card.
-        library.click_responsive(136, 410, 1000, 600);
-        library.click_responsive(365, 410, 1000, 600);
+        // Desktop / landscape Library category groups view and sort side by side.
+        library.click_responsive(136, 440, 1000, 600);
+        library.click_responsive(365, 440, 1000, 600);
         assert!(library.is_list_view());
         assert!(library.sort_descending);
 
         let mut library = Library::from_scan_settings(&settings, &root);
         library.select_page(LibraryPage::Settings);
-        // Tall Android portrait settings expose the same choices below the existing options.
-        library.click_responsive(200, 670, 400, 800);
-        library.click_responsive(200, 714, 400, 800);
+        // Tall Android portrait exposes the same two choices in the Library category.
+        library.click_responsive(116, 610, 400, 800);
+        library.click_responsive(280, 610, 400, 800);
         assert!(!library.is_list_view());
         assert!(!library.sort_descending);
 
@@ -7042,6 +7197,40 @@ mod tests {
         assert_eq!(reopened.render_responsive(1000, 600).len(), 1000 * 600 * 4);
         assert_eq!(reopened.render_responsive(400, 800).len(), 400 * 800 * 4);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn settings_categories_switch_by_touch_and_horizontal_navigation() {
+        let root = std::env::temp_dir().join(format!(
+            "aceris-settings-sections-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let mut library = Library::new(Vec::new(), root.display().to_string());
+        library.select_page(LibraryPage::Settings);
+
+        assert_eq!(library.settings_section, SettingsSection::Library);
+        library.click_responsive(380, 150, 1000, 600);
+        assert_eq!(library.settings_section, SettingsSection::Performance);
+        library.click_responsive(200, 290, 1000, 600);
+        assert!(library.performance_mode());
+
+        library.click_responsive(600, 150, 1000, 600);
+        assert_eq!(library.settings_section, SettingsSection::Controls);
+        library.set_touch_keyboard_enabled(true);
+        library.click_responsive(600, 280, 1000, 600);
+        assert!(!library.virtual_controls_visible());
+
+        library.move_selection_horizontal_responsive(-1, 1000, 600);
+        assert_eq!(library.settings_section, SettingsSection::Performance);
+        library.move_selection_horizontal_responsive(-1, 1000, 600);
+        assert_eq!(library.settings_section, SettingsSection::Library);
+
+        let portrait = library.render_responsive(400, 800);
+        let landscape = library.render_responsive(1000, 600);
+        assert_eq!(portrait.len(), 400 * 800 * 4);
+        assert_eq!(landscape.len(), 1000 * 600 * 4);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -7393,10 +7582,10 @@ mod tests {
         library.select_page(LibraryPage::Settings);
         assert_eq!(library.entries().len(), 1);
 
-        library.click_responsive(365, 301, 1000, 600);
+        library.click_responsive(540, 365, 1000, 600);
         assert!(library.scan_config().options.recursive);
 
-        library.click_responsive(136, 301, 1000, 600);
+        library.click_responsive(200, 365, 1000, 600);
         assert!(library.take_folder_picker_request());
         library.begin_add_folder_path();
         assert!(library.search_is_focused());
@@ -7409,11 +7598,11 @@ mod tests {
         assert_eq!(library.entries().len(), 2);
         assert!(!library.search_is_focused());
 
-        library.click_responsive(694, 218, 1000, 600);
+        library.click_responsive(694, 260, 1000, 600);
         assert_eq!(library.scan_config().directories.len(), 1);
         assert_eq!(library.entries().len(), 1);
 
-        library.click_responsive(694, 185, 1000, 600);
+        library.click_responsive(694, 232, 1000, 600);
         assert_eq!(library.scan_config().directories.len(), 1);
         assert_eq!(
             library.status_message(),
@@ -7456,7 +7645,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let mut library = Library::new(Vec::new(), dir.display().to_string());
         library.select_page(LibraryPage::Settings);
-        library.click_responsive(136, 301, 1000, 600);
+        library.click_responsive(200, 365, 1000, 600);
         assert!(library.take_folder_picker_request());
         library.begin_add_folder_path();
         for character in "/path/that/does/not/exist".chars() {
@@ -7585,8 +7774,9 @@ mod tests {
         library.set_touch_keyboard_enabled(true);
         assert!(library.virtual_controls_visible());
 
-        // The portrait control replaces the duplicated refresh action on touch hosts.
-        library.click_responsive(200, 580, 400, 800);
+        // The Controls category contains a dedicated visibility switch.
+        library.click_responsive(320, 253, 400, 800);
+        library.click_responsive(200, 370, 400, 800);
         assert!(!library.virtual_controls_visible());
 
         let reopened = Library::new(Vec::new(), dir.display().to_string());
@@ -7596,25 +7786,26 @@ mod tests {
         library.select_page(LibraryPage::Settings);
         library.set_touch_keyboard_enabled(true);
         library.set_virtual_controls_visible(true).unwrap();
-        library.click_responsive(600, 410, 1000, 600);
+        library.click_responsive(600, 150, 1000, 600);
+        library.click_responsive(600, 280, 1000, 600);
         assert!(!library.virtual_controls_visible());
 
-        // Opacity, size and preset occupy separate thirds of the landscape row.
+        // Opacity, size and preset occupy separate cards in the Controls category.
         assert_eq!(library.virtual_controls_size_percent(), 100);
         assert_eq!(
             library.virtual_controls_preset(),
             VirtualControlPreset::Standard
         );
-        library.click_responsive(525, 458, 1000, 600);
+        library.click_responsive(150, 380, 1000, 600);
         assert_eq!(library.virtual_controls_opacity(), 204);
-        library.click_responsive(607, 458, 1000, 600);
+        library.click_responsive(375, 380, 1000, 600);
         assert_eq!(library.virtual_controls_size_percent(), 120);
-        library.click_responsive(690, 458, 1000, 600);
+        library.click_responsive(600, 380, 1000, 600);
         assert_eq!(
             library.virtual_controls_preset(),
             VirtualControlPreset::Compact
         );
-        library.click_responsive(690, 458, 1000, 600);
+        library.click_responsive(600, 380, 1000, 600);
         assert_eq!(
             library.virtual_controls_preset(),
             VirtualControlPreset::LeftHanded
@@ -7632,11 +7823,12 @@ mod tests {
         let mut portrait = reopened;
         portrait.select_page(LibraryPage::Settings);
         portrait.set_touch_keyboard_enabled(true);
-        portrait.click_responsive(90, 616, 400, 800);
+        portrait.click_responsive(320, 253, 400, 800);
+        portrait.click_responsive(90, 440, 400, 800);
         assert_eq!(portrait.virtual_controls_opacity(), 153);
-        portrait.click_responsive(200, 616, 400, 800);
+        portrait.click_responsive(200, 440, 400, 800);
         assert_eq!(portrait.virtual_controls_size_percent(), 80);
-        portrait.click_responsive(310, 616, 400, 800);
+        portrait.click_responsive(310, 440, 400, 800);
         assert_eq!(
             portrait.virtual_controls_preset(),
             VirtualControlPreset::RightHanded
